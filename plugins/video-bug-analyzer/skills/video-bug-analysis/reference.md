@@ -1,7 +1,6 @@
 # Video Bug Analysis — Reference
 
-Supporting detail for the `video-bug-analysis` skill. Load when you need the full
-checklist, the reliability matrix, or extraction tuning.
+Detail for the `video-bug-analysis` skill: checklist, reliability matrix, extraction tuning.
 
 ## Diagnosis checklist
 
@@ -38,13 +37,12 @@ checklist, the reliability matrix, or extraction tuning.
 | Slow/steady-state bug | `--fps 1` over the relevant span is fine |
 | Cheap timeline overview | `--start <a> --end <b> --fps 3 --contact` then dense on the hit |
 
-Higher fps = more frames to read = more tokens; tighten the `--start/--end` window rather
-than raising fps across the whole clip.
+Higher fps = more frames = more tokens; tighten the `--start/--end` window rather than
+raising fps across the whole clip.
 
-**Contact-sheet mode (`--contact`)** tiles the sampled frames into one image (grid size via
-`--cols`/`--rows`, per-tile width via `--tile-width`). Use it to scan a span in a single
-read and locate the symptom region, then re-extract that region densely (no `--contact`)
-when you need legible detail. Tiles are ordered left-to-right, top-to-bottom in time.
+**Contact-sheet mode (`--contact`)** tiles frames into one image (grid via `--cols`/`--rows`,
+tile width via `--tile-width`), ordered left-to-right, top-to-bottom in time. Scan it to
+locate the symptom region, then re-extract that region densely (no `--contact`) for detail.
 
 ## When frames aren't enough
 

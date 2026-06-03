@@ -71,6 +71,32 @@ else
   fail "marketplace.json structure invalid (see error above)"
 fi
 
+# --- 2b. marketplace <-> plugins consistency ------------------------------------------
+section "marketplace <-> plugins consistency"
+if python3 <<'PY'
+import glob, json, os
+mp = json.load(open(".claude-plugin/marketplace.json"))
+registered = {os.path.normpath(e["source"]): e for e in mp["plugins"]}
+# Every plugin directory on disk must be registered (no orphan plugins).
+for pj in glob.glob("plugins/*/.claude-plugin/plugin.json"):
+    d = os.path.dirname(os.path.dirname(pj))
+    assert d in registered, f"plugin dir {d} is not registered in marketplace.json"
+# Every registered entry must have a plugin.json whose name matches entry + directory.
+for src, entry in registered.items():
+    pj = os.path.join(src, ".claude-plugin", "plugin.json")
+    assert os.path.isfile(pj), f"missing {pj} for marketplace entry '{entry['name']}'"
+    pdata = json.load(open(pj))
+    assert pdata["name"] == entry["name"], (
+        f"name mismatch: plugin.json '{pdata['name']}' vs marketplace '{entry['name']}'")
+    assert pdata["name"] == os.path.basename(src), (
+        f"name '{pdata['name']}' != directory '{os.path.basename(src)}'")
+PY
+then
+  pass "every plugin is registered and names match (entry == plugin.json == dir)"
+else
+  fail "marketplace/plugin mismatch (see error above)"
+fi
+
 # --- 3. plugin.json required fields ---------------------------------------------------
 section "plugin.json required fields"
 for pj in plugins/*/.claude-plugin/plugin.json; do
@@ -84,6 +110,23 @@ PY
     pass "has name/version/license: $pj"
   else
     fail "missing required field: $pj"
+  fi
+done
+
+# --- 3b. semver + README version sync -------------------------------------------------
+section "versions: semver + README sync"
+for pj in plugins/*/.claude-plugin/plugin.json; do
+  ver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$pj")"
+  name="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$pj")"
+  if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    pass "semver $ver: $name"
+  else
+    fail "non-semver version '$ver': $pj"
+  fi
+  if grep -qF "$ver" README.md; then
+    pass "README lists $name $ver"
+  else
+    fail "README does not mention $name version $ver"
   fi
 done
 

@@ -5,76 +5,55 @@ description: Analyze a screen-recording / video of a bug by extracting frames an
 
 # Video Bug Analysis
 
-You are diagnosing a bug from a **screen-recording video**. You cannot watch video — you
-only ever see **still frames** that `ffmpeg` extracts. Everything you conclude about
-"what happens" is reconstructed from a discrete set of snapshots plus what the user tells
-you. Follow this workflow; it is built around that limitation.
+You can't watch video — only **still frames** `ffmpeg` extracts. Reconstruct the bug from
+those snapshots plus what the user tells you. Work this way:
 
-## Step 1 — Gather context before extracting anything
+## 1. Get context first
 
-Ask the user (skip any they've already given):
+Ask for whatever's missing:
 
-- **When** does the bug appear? An approximate timestamp or range (e.g. "around 0:12") is
-  the single biggest lever on accuracy — it lets you sample densely at the right moment.
-- **Repro steps** and **expected vs. actual** behavior.
-- Any **console output, network errors, or logs** — these do not appear in the video
-  unless devtools are literally on screen, and they are often the real cause.
-- The **relevant code area / repo**, if known.
+- **When** the bug appears (a timestamp/range like "~0:12") — the biggest accuracy lever.
+- **Repro steps** and **expected vs. actual**.
+- **Console / network / logs** — invisible in the video unless devtools are on screen, and
+  often the real cause.
+- **Relevant code area**, if known.
 
-If the user can give a **still screenshot of the exact bad moment**, prefer it — a single
-correct frame is more reliable than asking you to find the moment inside a long clip.
+A **still screenshot of the bad moment** beats hunting inside a clip — prefer it.
 
-## Step 2 — Extract frames
-
-Use the bundled script:
+## 2. Extract frames
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/skills/video-bug-analysis/scripts/extract-frames.sh \
-  --video <path> [--start <ts>] [--end <ts>] [--fps <n>] [--scene <thr>] \
-  [--contact] [--out <dir>]
+  --video <path> [--start <ts>] [--end <ts>] [--fps <n>] [--scene <thr>] [--contact]
 ```
 
-Guidance:
+- **Known moment:** dense (`--fps 4`–`10`) over a tight `--start`/`--end`. Never 1 fps
+  across the whole clip — transient glitches fall between samples.
+- **Unknown moment:** `--scene 0.1` first to find transitions, then re-extract densely.
+- **Overview cheaply:** `--contact` tiles frames into one image; read it to locate the
+  region, then re-extract that region densely. Fewer files, fewer tokens.
 
-- **Known timestamp:** extract **densely** (`--fps 4` to `--fps 10`) over a tight
-  `--start`/`--end` window around it. Do NOT sample 1 fps across the whole clip — that is
-  how transient glitches get missed.
-- **Unknown timestamp:** first pass with **scene-change mode** (`--scene 0.1`) to find
-  transitions cheaply, then re-extract densely around the interesting region.
-- **Overview first (cheap):** add `--contact` to tile the sampled frames into a single
-  **contact sheet** image instead of many PNGs. Read that one image to spot which region
-  holds the symptom, then re-extract that region densely (without `--contact`) for detail.
-  This reads the whole timeline in one file and far fewer tokens.
-- The script prints the output directory and the number of images it wrote.
-- `ffmpeg` is pre-installed by this plugin's SessionStart hook where possible; the script
-  also installs it on first use as a fallback.
+`ffmpeg` is auto-installed (SessionStart hook, with on-first-use fallback).
 
-## Step 3 — Read the frames in order
+## 3. Build a timeline
 
-Read the extracted PNGs sequentially and build a **timeline** of observed UI states: what
-is on screen, what changes between consecutive frames, where an error/glitch first
-appears. Note the frame filename (it encodes order) for anything you reference.
+Read the PNGs in filename order; note what's on screen, what changes between frames, and
+where the symptom first appears. Cite frames by filename.
 
-## Step 4 — Cross-reference the code
+## 4. Confirm in the code
 
-The video gives you the **symptom and its location**. The **fix comes from reading the
-actual source.** Locate the implicated component/handler/state before proposing any
-change. Do not patch based on pixels alone.
+Frames give the symptom and its location; the fix comes from the **source**. Read the
+implicated component/handler/state before proposing a change — never patch from pixels alone.
 
-## Step 5 — Report with explicit confidence
+## 5. Report with confidence + caveats
 
-State what you saw, what you infer, and **how confident you are**, and call out the
-limitations that apply (see `reference.md` for the full reliability matrix):
+Label what you saw vs. inferred, and how sure you are. Call out the limits that apply:
 
-- Frames **between** samples are unseen — a fast flicker or one-frame render glitch can
-  fall in a gap and look like "no bug."
-- **Timing/race** bugs are poorly served by frames; you have no true sense of duration.
-- **Small text and subtle visual diffs** can be misread, and you can occasionally
-  hallucinate plausible-but-wrong details — verify against the code.
-- **Off-screen state** (console, network, memory) is invisible unless rendered.
+- Gaps between samples hide fast flickers / one-frame glitches.
+- Timing/race bugs: frames give no real sense of duration.
+- Small text / subtle diffs are easy to misread or hallucinate — verify against code.
+- Off-screen state (console/network/memory) is invisible.
 
-When uncertain, ask for a denser extraction, a tighter timestamp, or a still screenshot
-rather than guessing.
+When unsure, ask for a denser extraction, a tighter timestamp, or a still — don't guess.
 
-See `reference.md` (in this skill directory) for the diagnosis checklist, the
-reliable-vs-unreliable matrix, and recommended fps per bug class.
+See `reference.md` for the reliability matrix, fps-per-bug-class table, and checklist.

@@ -69,9 +69,11 @@ ensure_ffmpeg() {
   echo "ffmpeg not found; attempting to install it..." >&2
   if command -v apt-get >/dev/null 2>&1; then
     if command -v sudo >/dev/null 2>&1; then
-      sudo apt-get update -y >/dev/null 2>&1 && sudo apt-get install -y ffmpeg >/dev/null 2>&1 || true
+      sudo apt-get update -y >/dev/null 2>&1 || true
+      sudo apt-get install -y ffmpeg >/dev/null 2>&1 || true
     else
-      apt-get update -y >/dev/null 2>&1 && apt-get install -y ffmpeg >/dev/null 2>&1 || true
+      apt-get update -y >/dev/null 2>&1 || true
+      apt-get install -y ffmpeg >/dev/null 2>&1 || true
     fi
   elif command -v brew >/dev/null 2>&1; then
     brew install ffmpeg >/dev/null 2>&1 || true

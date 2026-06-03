@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 0.1.0 · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
+> **Version:** 0.2.0 · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
 
 This is the **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace.
 Add it once, then install any plugin below in your local CLI or any repo — including
@@ -12,7 +12,7 @@ ephemeral Claude Code web sessions where user-global config doesn't persist.
 
 | Plugin | Version | What it does |
 | :-- | :-- | :-- |
-| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 0.1.0 | Extract frames from a screen-recording and diagnose the bug shown in it |
+| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 0.2.0 | Extract frames from a screen-recording and diagnose the bug shown in it |
 
 ### `video-bug-analyzer`
 
@@ -69,7 +69,16 @@ plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh \
   --video bug.mov --start 0:11 --end 0:14 --fps 8
 ```
 
-Requires `ffmpeg` (the script installs it automatically where possible).
+Add `--contact` to tile the sampled frames into a single **contact-sheet** image — a
+cheap, one-file overview of a span to find the symptom region before extracting it densely:
+
+```
+plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh \
+  --video bug.mov --start 0:08 --end 0:16 --fps 3 --contact
+```
+
+Requires `ffmpeg`. A bundled **SessionStart hook** pre-installs it where possible, and the
+extraction script also installs it on first use as a fallback.
 
 ## Running the tests
 

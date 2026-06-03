@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "portka-tools",
+  "owner": {
+    "name": "Chris Portka",
+    "email": "chrisportka@gmail.com"
+  },
+  "description": "Chris Portka's Claude Code plugins",
+  "plugins": [
+    {
+      "name": "video-bug-analyzer",
+      "source": "./plugins/video-bug-analyzer",
+      "description": "Extract frames from a screen-recording and diagnose the bug shown in it",
+      "category": "debugging",
+      "tags": ["video", "screen-recording", "debugging", "bug"]
+    }
+  ]
+}

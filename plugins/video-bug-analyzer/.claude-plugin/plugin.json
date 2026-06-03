@@ -1,0 +1,12 @@
+{
+  "name": "video-bug-analyzer",
+  "version": "0.1.0",
+  "description": "Analyze screen-recording videos of bugs by extracting frames and diagnosing the issue.",
+  "author": {
+    "name": "Chris Portka"
+  },
+  "homepage": "https://github.com/cportka/claude-plugins",
+  "repository": "https://github.com/cportka/claude-plugins",
+  "license": "MIT",
+  "keywords": ["video", "bug", "screen-recording", "debugging", "claude-code-plugin"]
+}

@@ -33,7 +33,7 @@ SCRIPT="plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-fra
 # --- 1. JSON manifests parse ----------------------------------------------------------
 section "JSON manifests parse"
 shopt -s nullglob
-manifests=(.claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json)
+manifests=(.claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json plugins/*/hooks/hooks.json)
 if [[ ${#manifests[@]} -eq 0 ]]; then
   fail "no JSON manifests found"
 fi
@@ -97,6 +97,54 @@ for skill in plugins/*/skills/*/SKILL.md; do
     fail "frontmatter missing '---'/name/description: $skill"
   fi
 done
+
+# --- 4b. plugin hooks (if any) --------------------------------------------------------
+section "plugin hooks"
+hooks_found=0
+for hj in plugins/*/hooks/hooks.json; do
+  hooks_found=1
+  hook_dir="$(dirname "$hj")"
+  if python3 - "$hj" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+hooks = d.get("hooks", {})
+assert isinstance(hooks, dict) and hooks, "'hooks' must be a non-empty object"
+for event, entries in hooks.items():
+    assert isinstance(entries, list) and entries, f"{event} must be a non-empty list"
+    for entry in entries:
+        for h in entry.get("hooks", []):
+            assert h.get("command"), "hook entry missing 'command'"
+PY
+  then
+    pass "valid hooks config: $hj"
+  else
+    fail "invalid hooks config: $hj"
+    continue
+  fi
+  # Every ${CLAUDE_PLUGIN_ROOT}-relative script the hooks reference must exist.
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    target="$hook_dir/../$rel"
+    if [[ ! -f "$target" ]]; then
+      fail "hook script missing: $rel (referenced by $hj)"
+    elif [[ ! -x "$target" ]]; then
+      fail "hook script not executable: $rel"
+    else
+      pass "hook script present + executable: $rel"
+    fi
+  done < <(python3 - "$hj" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for entries in d.get("hooks", {}).values():
+    for entry in entries:
+        for h in entry.get("hooks", []):
+            cmd = h.get("command", "")
+            if "${CLAUDE_PLUGIN_ROOT}/" in cmd:
+                print(cmd.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].split()[0])
+PY
+)
+done
+[[ $hooks_found -eq 1 ]] || skip "no plugin hooks to validate"
 
 # --- 5. extraction script present + executable ----------------------------------------
 section "extraction script present + executable"
@@ -176,6 +224,13 @@ if command -v ffmpeg >/dev/null 2>&1; then
       pass "scene mode ran successfully"
     else
       fail "scene mode errored"
+    fi
+    # Contact-sheet mode: should tile frames into at least one contact_*.png.
+    if bash "$SCRIPT" --video "$clip" --start 0 --end 3 --fps 4 --contact --out "$tmp/contact" >/dev/null 2>&1 \
+       && [[ "$(find "$tmp/contact" -name 'contact_*.png' | wc -l)" -gt 0 ]]; then
+      pass "contact-sheet mode produced a sheet"
+    else
+      fail "contact-sheet mode produced no sheet"
     fi
   else
     fail "could not generate test clip with ffmpeg"

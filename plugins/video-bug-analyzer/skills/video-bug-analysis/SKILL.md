@@ -30,7 +30,8 @@ Use the bundled script:
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/skills/video-bug-analysis/scripts/extract-frames.sh \
-  --video <path> [--start <ts>] [--end <ts>] [--fps <n>] [--scene <thr>] [--out <dir>]
+  --video <path> [--start <ts>] [--end <ts>] [--fps <n>] [--scene <thr>] \
+  [--contact] [--out <dir>]
 ```
 
 Guidance:
@@ -40,7 +41,13 @@ Guidance:
   how transient glitches get missed.
 - **Unknown timestamp:** first pass with **scene-change mode** (`--scene 0.1`) to find
   transitions cheaply, then re-extract densely around the interesting region.
-- The script prints the output directory and the number of frames it wrote.
+- **Overview first (cheap):** add `--contact` to tile the sampled frames into a single
+  **contact sheet** image instead of many PNGs. Read that one image to spot which region
+  holds the symptom, then re-extract that region densely (without `--contact`) for detail.
+  This reads the whole timeline in one file and far fewer tokens.
+- The script prints the output directory and the number of images it wrote.
+- `ffmpeg` is pre-installed by this plugin's SessionStart hook where possible; the script
+  also installs it on first use as a fallback.
 
 ## Step 3 — Read the frames in order
 

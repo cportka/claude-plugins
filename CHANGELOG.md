@@ -5,6 +5,21 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [0.2.0] - 2026-06-03
+
+### Added
+- `video-bug-analyzer` **contact-sheet mode** (`--contact`, with `--cols`/`--rows`/
+  `--tile-width`): tiles sampled frames into a single image so a whole span can be read in
+  one file with far fewer tokens, then re-extracted densely on the symptom region.
+- `video-bug-analyzer` **SessionStart hook** (`hooks/hooks.json` + `hooks/ensure-ffmpeg.sh`)
+  that best-effort pre-installs ffmpeg at session start; idempotent and non-blocking, and
+  reports via `additionalContext` when a restricted network prevents installation.
+- Test coverage for the new hook (JSON + script lint) and contact-sheet extraction.
+
+### Changed
+- Bumped `video-bug-analyzer` to 0.2.0; updated SKILL.md, reference.md, and README to
+  document contact-sheet mode and the ffmpeg hook.
+
 ## [0.1.0] - 2026-06-03
 
 ### Added
@@ -18,4 +33,5 @@ version and adds an entry below.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[0.2.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.1.0

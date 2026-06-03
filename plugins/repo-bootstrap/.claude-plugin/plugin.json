@@ -1,6 +1,6 @@
 {
   "name": "repo-bootstrap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bootstrap a repository to use Claude Code plugins from a marketplace: writes .claude/settings.json and optional CI.",
   "author": {
     "name": "Chris Portka"

@@ -5,6 +5,22 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [0.3.1] - 2026-06-03
+
+Polish only — no behavior changes.
+
+### Changed
+- Trimmed the `video-bug-analysis` and `repo-bootstrap` skill docs (and `reference.md`) for
+  lower token use while keeping every caveat and instruction exact.
+- Rewrote the README far more concisely (kept all essential guidance).
+- Bumped `video-bug-analyzer` to 0.2.1 and `repo-bootstrap` to 0.1.1 (doc-only).
+
+### Added
+- `IMPROVEMENTS.md`: pros / cons / weaknesses and improvement ideas per plugin and for the
+  tests, kept out of the skills to keep in-context instructions lean.
+- Tests: marketplace↔plugin consistency (no orphans, name matches dir + entry), semver check
+  on each `plugin.json`, and a README version-sync check.
+
 ## [0.3.0] - 2026-06-03
 
 ### Added
@@ -48,6 +64,7 @@ version and adds an entry below.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[0.3.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.3.1
 [0.3.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.1.0

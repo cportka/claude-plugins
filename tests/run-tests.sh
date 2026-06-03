@@ -29,6 +29,7 @@ skip() { printf '  \033[33mSKIP\033[0m  %s\n' "$1"; SKIP=$((SKIP + 1)); }
 section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 SCRIPT="plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh"
+BOOTSTRAP="plugins/repo-bootstrap/skills/repo-bootstrap/scripts/bootstrap-repo.sh"
 
 # --- 1. JSON manifests parse ----------------------------------------------------------
 section "JSON manifests parse"
@@ -238,6 +239,64 @@ if command -v ffmpeg >/dev/null 2>&1; then
   rm -rf "$tmp"
 else
   skip "ffmpeg not installed (end-to-end extraction)"
+fi
+
+# --- 11. repo-bootstrap end-to-end ----------------------------------------------------
+section "repo-bootstrap end-to-end"
+if [[ -f "$BOOTSTRAP" ]]; then
+  # --help exits 0.
+  if bash "$BOOTSTRAP" --help >/dev/null 2>&1; then
+    pass "bootstrap --help exits 0"
+  else
+    fail "bootstrap --help did not exit 0"
+  fi
+  # Unknown argument exits 2.
+  bash "$BOOTSTRAP" --bogus >/dev/null 2>&1
+  bcode=$?
+  if [[ $bcode -eq 2 ]]; then
+    pass "bootstrap rejects unknown args (exit 2)"
+  else
+    fail "bootstrap exited $bcode on unknown arg (expected 2)"
+  fi
+  # Scaffolds a valid settings.json + CI workflow, merges idempotently, preserves keys.
+  bt="$(mktemp -d)"
+  if bash "$BOOTSTRAP" --plugin video-bug-analyzer --ci --dir "$bt" >/dev/null 2>&1 \
+     && [[ -f "$bt/.github/workflows/validate.yml" ]] \
+     && python3 - "$bt/.claude/settings.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["extraKnownMarketplaces"]["portka-tools"]["source"]["repo"] == "cportka/claude-plugins"
+assert d["enabledPlugins"]["video-bug-analyzer@portka-tools"] is True
+PY
+  then
+    pass "bootstrap writes valid settings.json + CI workflow"
+  else
+    fail "bootstrap did not produce expected settings.json / workflow"
+  fi
+  # Re-run with an extra plugin and a pre-existing custom key: must merge, not clobber.
+  python3 - "$bt/.claude/settings.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["customKey"] = "keep-me"
+json.dump(d, open(p, "w"), indent=2)
+PY
+  if bash "$BOOTSTRAP" --plugin other-plugin --dir "$bt" >/dev/null 2>&1 \
+     && python3 - "$bt/.claude/settings.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["customKey"] == "keep-me", "clobbered an existing key"
+assert d["enabledPlugins"]["video-bug-analyzer@portka-tools"] is True
+assert d["enabledPlugins"]["other-plugin@portka-tools"] is True
+PY
+  then
+    pass "bootstrap merges idempotently and preserves existing keys"
+  else
+    fail "bootstrap merge clobbered or dropped data"
+  fi
+  rm -rf "$bt"
+else
+  fail "bootstrap script not found: $BOOTSTRAP"
 fi
 
 # --- Summary --------------------------------------------------------------------------

@@ -5,6 +5,21 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [0.3.0] - 2026-06-03
+
+### Added
+- New **`repo-bootstrap`** plugin (v0.1.0): a `repo-bootstrap` skill plus
+  `bootstrap-repo.sh`, which writes/merges a repo's `.claude/settings.json` to enable
+  `portka-tools` plugins (so they load in ephemeral Claude Code web sessions) and can add a
+  `validate` CI workflow. JSON merges are non-clobbering and idempotent.
+- Always-on end-to-end tests for `repo-bootstrap` (settings scaffolding, `--ci` workflow,
+  merge-safety) — these run even without ffmpeg.
+
+### Changed
+- README: explicit "Adding a plugin to a repo or session" instructions covering local CLI,
+  a specific repo / web session (via `repo-bootstrap` or by hand), and one-off session use;
+  added the `repo-bootstrap` plugin and usage sections; bumped to repo v0.3.0.
+
 ## [0.2.0] - 2026-06-03
 
 ### Added
@@ -33,5 +48,6 @@ version and adds an entry below.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[0.3.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.2.0
 [0.1.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.1.0

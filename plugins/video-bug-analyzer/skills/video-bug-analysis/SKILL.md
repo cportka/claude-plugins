@@ -1,6 +1,6 @@
 ---
 name: video-bug-analysis
-description: Analyze a screen-recording / video of a bug by extracting frames and diagnosing it. Use when the user provides a video or screen recording of a bug, glitch, crash, freeze, or UI problem to investigate or fix.
+description: Diagnose a UI or rendering bug from a screen recording by extracting frames and reasoning over them. Use when the user shares a video or screen recording (e.g. a .mov or .mp4) of a bug, glitch, flicker, crash, freeze, or incorrect rendering — especially with an approximate timestamp — and wants it investigated or fixed.
 ---
 
 # Video Bug Analysis

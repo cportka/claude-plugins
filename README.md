@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 0.5.0 · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+> **Version:** 0.5.1 · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -11,7 +11,7 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 
 | Plugin | Version | What it does |
 | :-- | :-- | :-- |
-| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 0.3.0 | Diagnose a bug in a screen recording — extract frames (overview contact sheet, scene cuts, or per-timestamp zoom + before/after strips) and reason over them. Strong on persistent visual bugs; honest about flickers, timing, and off-screen state. |
+| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 0.3.1 | Diagnose a bug in a screen recording — extract frames (overview contact sheet, scene cuts, or per-timestamp zoom + before/after strips) and reason over them. Strong on persistent visual bugs; honest about flickers, timing, and off-screen state. |
 | [`repo-bootstrap`](./plugins/repo-bootstrap) | 0.1.1 | Onboard a repo to this marketplace — write/merge `.claude/settings.json` (+ optional CI). |
 
 ## Add a plugin
@@ -19,7 +19,7 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 You never copy plugin code into your repo — only a marketplace reference.
 
 - **All local repos (CLI):** `/plugin marketplace add cportka/claude-plugins`, then
-  `/plugin install <name>@portka-tools`. Persists in `~/.claude`.
+  `/plugin install video-bug-analyzer@portka-tools` (or any `<name>@portka-tools`). Persists in `~/.claude`.
 - **A specific repo / web session:** commit `.claude/settings.json` (below). Web containers
   start fresh each session, so this committed file is what loads the plugin. Let
   `repo-bootstrap` write it, or add it by hand.

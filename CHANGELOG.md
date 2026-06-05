@@ -5,6 +5,20 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [0.5.1] - 2026-06-05
+
+Submission-prep for the Anthropic community marketplace — docs/metadata only, no behavior
+change.
+
+### Changed
+- `video-bug-analyzer` 0.3.1: `plugin.json` description now matches the submission copy
+  (overview contact sheet / scene-cut / per-timestamp zoom with before/after strips,
+  ffmpeg auto-install); `homepage` points at the plugin directory.
+- Tightened the `video-bug-analysis` skill frontmatter description to be more
+  trigger-precise (explicit `.mov`/`.mp4` + approximate-timestamp cues).
+- Aligned the marketplace entry description with the above.
+- Validated with `claude plugin validate --strict` (plugin + marketplace): passes clean.
+
 ## [0.5.0] - 2026-06-05
 
 Driven by a first-user report: the method works well; getting ffmpeg installed is the whole
@@ -111,6 +125,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[0.5.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.5.1
 [0.5.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.5.0
 [0.4.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.4.1
 [0.4.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.4.0

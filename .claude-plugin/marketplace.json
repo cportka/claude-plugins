@@ -10,7 +10,7 @@
     {
       "name": "video-bug-analyzer",
       "source": "./plugins/video-bug-analyzer",
-      "description": "Extract frames from a screen-recording and diagnose the bug shown in it",
+      "description": "Diagnose UI/rendering bugs from a screen recording — extract frames (contact sheet, scene cuts, or per-timestamp zoom with before/after strips) and reason over them to pinpoint the defect.",
       "category": "debugging",
       "tags": ["video", "screen-recording", "debugging", "bug"]
     },

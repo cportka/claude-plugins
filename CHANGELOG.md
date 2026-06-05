@@ -5,6 +5,36 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.1] - 2026-06-05
+
+First release candidate. Both plugins (`video-bug-analyzer`, `repo-bootstrap`) are at
+`1.0.0-rc.1`; the final `1.0.0` follows after debugging + dogfooding (see the manual gate).
+
+### Fixed
+- **Token bomb in dense/scene extraction** (`extract-frames.sh`): dense (`--fps`) and scene
+  (`--scene`) frames are now width-capped via a new `--max-width` (default 1280, never
+  upscales) — previously they emitted native resolution, so a 4K recording dumped multi-MB
+  PNGs into context. Contact/timestamp modes already scaled. `reference.md` corrected to
+  describe the actual per-mode scaling.
+- **Self-defeating SessionStart hook** (`ensure-ffmpeg.sh`): removed the slow static
+  download from the hook — under its 120s timeout it was killed mid-download, so it neither
+  installed ffmpeg nor reached its warning. The hook now does fast installs only (apt/brew +
+  cached binary) and immediately emits its `additionalContext` fallback; the uncapped static
+  download stays in `extract-frames.sh` on first use. Test section 12 updated to match.
+- **Broken CHANGELOG release links**: cutting `v1.0.0-rc.1` as a real annotated tag/release so
+  the `[1.0.0-rc.1]` link resolves (historical links may still 404 until back-tagged).
+- **Description drift**: the `marketplace.json` entry now matches the canonical `plugin.json`
+  description verbatim (the 0.5.1 "aligned" claim is now actually true).
+
+### Added
+- `repo-bootstrap`: `--list` to print known plugin names, and a non-fatal warning when a
+  `--plugin` name isn't found in a locatable `marketplace.json`.
+- Tightened the README version-sync test to a structured plugin-table parse (was a loose
+  substring grep); added tests for the bootstrap warning/`--list`.
+
+### Changed
+- All versions → `1.0.0-rc.1`; README header + plugin table + CHANGELOG consistent.
+
 ## [0.5.1] - 2026-06-05
 
 Submission-prep for the Anthropic community marketplace — docs/metadata only, no behavior
@@ -125,6 +155,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.1
 [0.5.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.5.1
 [0.5.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.5.0
 [0.4.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.4.1

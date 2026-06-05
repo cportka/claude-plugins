@@ -53,11 +53,13 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 **Weaknesses / cons**
 - Requires `python3` (assumed present; no pure-bash fallback).
 - Generated CI is intentionally minimal (runs `tests/run-tests.sh` if present).
-- Doesn't validate that the named plugin actually exists in the marketplace.
 - No `CLAUDE.md` or test-harness scaffolding yet.
 
+**Shipped**
+- 1.0.0-rc.1: `--list`, and a non-fatal warning when a `--plugin` name isn't in a locatable
+  `marketplace.json`.
+
 **Ideas**
-- Validate `--plugin` names against the marketplace; add `--list`.
 - Optional `CLAUDE.md` and `tests/run-tests.sh` starters.
 - `jq` fallback when `python3` is absent.
 

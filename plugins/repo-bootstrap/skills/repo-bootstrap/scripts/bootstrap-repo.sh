@@ -12,10 +12,12 @@
 #                     [--marketplace-repo <owner/repo>] [--ci] [--dir <path>] [--force]
 #
 # Options:
-#   --plugin <name>            Enable plugin <name>@<marketplace-name>. Repeatable.
+#   --plugin <name>            Enable plugin <name>@<marketplace-name>. Repeatable. If the
+#                              marketplace.json is locatable, unknown names warn (non-fatal).
 #   --marketplace-name <name>  Marketplace handle. Default: portka-tools.
 #   --marketplace-repo <o/r>   GitHub repo hosting the marketplace.
 #                              Default: cportka/claude-plugins.
+#   --list                     List known plugin names (if marketplace.json is locatable).
 #   --ci                       Also add .github/workflows/validate.yml (runs
 #                              tests/run-tests.sh when present).
 #   --dir <path>               Target repo root. Default: current directory.
@@ -25,6 +27,7 @@
 # Examples:
 #   bootstrap-repo.sh --plugin video-bug-analyzer --ci
 #   bootstrap-repo.sh --plugin video-bug-analyzer --plugin other-plugin
+#   bootstrap-repo.sh --list
 #
 set -euo pipefail
 
@@ -34,9 +37,40 @@ PLUGINS=()
 ADD_CI=""
 DIR="."
 FORCE=""
+LIST=""   # ADDED: --list flag
+
+# ADDED: resolve where this script lives, so we can find the marketplace manifest when the
+# script is run from a checkout of the marketplace repo.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+}
+
+# ADDED: locate marketplace.json (env override, the target repo, or this repo checkout).
+locate_marketplace() {
+  local c
+  for c in \
+    "${VBA_MARKETPLACE_JSON:-}" \
+    "$DIR/.claude-plugin/marketplace.json" \
+    "$SCRIPT_DIR/../../../../../.claude-plugin/marketplace.json"; do
+    [[ -n "$c" && -f "$c" ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  return 1
+}
+
+# ADDED: print the plugin names declared in a marketplace.json, one per line.
+known_plugin_names() {
+  python3 - "$1" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    for p in d.get("plugins", []):
+        if p.get("name"):
+            print(p["name"])
+except Exception:
+    pass
+PY
 }
 
 while [[ $# -gt 0 ]]; do
@@ -44,6 +78,7 @@ while [[ $# -gt 0 ]]; do
     --plugin) PLUGINS+=("${2:-}"); shift 2 ;;
     --marketplace-name) MARKET_NAME="${2:-}"; shift 2 ;;
     --marketplace-repo) MARKET_REPO="${2:-}"; shift 2 ;;
+    --list)  LIST="1"; shift ;;   # ADDED
     --ci)    ADD_CI="1"; shift ;;
     --dir)   DIR="${2:-}"; shift 2 ;;
     --force) FORCE="1"; shift ;;
@@ -57,9 +92,32 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+# ADDED: --list known plugins, then exit.
+if [[ -n "$LIST" ]]; then
+  if _mj="$(locate_marketplace)"; then
+    echo "Known plugins in $MARKET_NAME ($_mj):"
+    known_plugin_names "$_mj" | sed 's/^/  /'
+  else
+    echo "Could not locate marketplace.json (run from the marketplace repo or set VBA_MARKETPLACE_JSON)." >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 if [[ ! -d "$DIR" ]]; then
   echo "Error: target dir not found: $DIR" >&2
   exit 1
+fi
+
+# ADDED: warn (non-fatal) about --plugin names that aren't in the marketplace, when we can
+# see it. A user may legitimately bootstrap before a plugin exists locally, so don't fail.
+if [[ ${#PLUGINS[@]} -gt 0 ]] && _mj="$(locate_marketplace)"; then
+  mapfile -t _known < <(known_plugin_names "$_mj")
+  for _p in "${PLUGINS[@]}"; do
+    _hit=0
+    for _k in "${_known[@]:-}"; do [[ "$_p" == "$_k" ]] && { _hit=1; break; }; done
+    [[ "$_hit" -eq 1 ]] || echo "warning: '$_p' is not a known $MARKET_NAME plugin (continuing anyway)." >&2
+  done
 fi
 
 SETTINGS_DIR="$DIR/.claude"

@@ -10,7 +10,7 @@
 #   extract-frames.sh --video <path> [--start <ts>] [--end <ts>] [--fps <n>]
 #                     [--scene <thr>] [--contact] [--cols <n>] [--rows <n>]
 #                     [--tile-width <px>] [--timestamps <t1,t2,...>] [--window <sec>]
-#                     [--frame-width <px>] [--out <dir>]
+#                     [--frame-width <px>] [--max-width <px>] [--out <dir>]
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -31,6 +31,8 @@
 #                       great for showing a flagged transient. Ignores --scene/--contact.
 #   --window <sec>      Half-width of each timestamp burst, in seconds. Default: 0.5.
 #   --frame-width <px>  Width burst frames are scaled to. Default: 820 (keeps text legible).
+#   --max-width <px>    Cap width for dense/scene frames so native (e.g. 4K) PNGs don't blow
+#                       tokens. Never upscales smaller clips. Default: 1280.
 #   --out <dir>         Output directory for PNG frames. Default: ./.frames
 #   -h, --help          Show this help.
 #
@@ -57,6 +59,7 @@ TILEW="320"
 TIMESTAMPS=""
 WINDOW="0.5"
 FRAMEW="820"
+MAXW="1280"   # ADDED: cap width for dense/scene frames so native 4K doesn't blow tokens
 OUT="./.frames"
 
 usage() {
@@ -82,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     --timestamps) TIMESTAMPS="${2:-}"; shift 2 ;;
     --window) WINDOW="${2:-}"; shift 2 ;;
     --frame-width) FRAMEW="${2:-}"; shift 2 ;;
+    --max-width) MAXW="${2:-}"; shift 2 ;;   # ADDED: cap for dense/scene frame width
     --out)   OUT="${2:-}";   shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -257,15 +261,17 @@ elif [[ -n "$CONTACT" ]]; then
     "$OUT/contact_%04d.png"
 elif [[ -n "$SCENE" ]]; then
   echo "Scene-change mode (threshold=$SCENE) -> $OUT" >&2
+  # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   ffmpeg -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "$SELECT" \
+    -vf "${SELECT},scale='min(${MAXW},iw)':-1" \
     "$OUT/scene_%04d.png"
 else
   echo "Dense mode (fps=$FPS) -> $OUT" >&2
+  # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   ffmpeg -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" \
-    -vf "$SELECT" \
+    -vf "${SELECT},scale='min(${MAXW},iw)':-1" \
     "$OUT/frame_%04d.png"
 fi
 

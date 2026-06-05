@@ -5,6 +5,21 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [0.4.0] - 2026-06-05
+
+### Fixed
+- `video-bug-analyzer` 0.2.2: `extract-frames.sh` now uses `-fps_mode vfr` on modern ffmpeg
+  (≥5.1) instead of the deprecated `-vsync vfr`, falling back to `-vsync` on older builds —
+  fixes deprecation warnings and scene/contact-mode misbehavior on recent ffmpeg. Also
+  prints the ffmpeg version at startup to aid troubleshooting.
+
+### Added
+- `docs/INTEGRATE.md`: portable drop-in guide for adopting the marketplace in another repo
+  or session (enable steps, verification, ffmpeg troubleshooting).
+- GitHub issue form `.github/ISSUE_TEMPLATE/plugin-feedback.yml` (+ `config.yml`) to collect
+  structured feedback that drives new versions.
+- Tests: validate any `.github/ISSUE_TEMPLATE/*.yml` is non-empty with `name:`/`description:`.
+
 ## [0.3.1] - 2026-06-03
 
 Polish only — no behavior changes.
@@ -64,6 +79,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[0.4.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.4.0
 [0.3.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.3.1
 [0.3.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.3.0
 [0.2.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.2.0

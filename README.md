@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 0.3.1 · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+> **Version:** 0.4.0 · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -11,7 +11,7 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 
 | Plugin | Version | What it does |
 | :-- | :-- | :-- |
-| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 0.2.1 | Diagnose a bug in a screen recording — extract frames (or a contact sheet) and reason over them. Strong on persistent visual bugs; honest about flickers, timing, and off-screen state. |
+| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 0.2.2 | Diagnose a bug in a screen recording — extract frames (or a contact sheet) and reason over them. Strong on persistent visual bugs; honest about flickers, timing, and off-screen state. |
 | [`repo-bootstrap`](./plugins/repo-bootstrap) | 0.1.1 | Onboard a repo to this marketplace — write/merge `.claude/settings.json` (+ optional CI). |
 
 ## Add a plugin
@@ -39,6 +39,9 @@ Generate that with `repo-bootstrap`:
 plugins/repo-bootstrap/skills/repo-bootstrap/scripts/bootstrap-repo.sh --plugin video-bug-analyzer --ci
 ```
 
+Onboarding another repo or session? Drop in **[docs/INTEGRATE.md](./docs/INTEGRATE.md)** —
+a portable guide with enable steps, verification, and ffmpeg troubleshooting.
+
 ## Usage
 
 **video-bug-analyzer** — give Claude a screen recording and roughly when the bug happens; it
@@ -63,6 +66,12 @@ bash tests/run-tests.sh
 Self-contained: validates manifests, marketplace↔plugin consistency, versions, skill
 frontmatter, hooks, script behavior, and the bootstrap scaffolding; ffmpeg/shellcheck steps
 run when available, else `SKIP`. Powers the [`validate`](./.github/workflows/validate.yml) CI.
+
+## Feedback
+
+Hit a problem? Open a **Plugin feedback** issue (Issues → New issue → *Plugin feedback*)
+with the plugin version, environment, `ffmpeg -version`, command, and error. It's triaged
+into a fix and a new version.
 
 ## Versioning
 

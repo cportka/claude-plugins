@@ -110,6 +110,26 @@ EOF
 
 ensure_ffmpeg
 
+# Diagnostic: which ffmpeg is in use (cite this when reporting extraction problems).
+echo "ffmpeg: $(ffmpeg -version 2>/dev/null | head -n1)" >&2
+
+# Newer ffmpeg (>=5.1) replaced "-vsync vfr" with "-fps_mode vfr". Pick what this build
+# supports so variable-rate frame selection works without deprecation warnings; fall back
+# to -vsync on older builds (or if the version string can't be parsed).
+VFR=()
+set_vfr_flag() {
+  local ver major minor
+  ver="$(ffmpeg -version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+' | head -n1)"
+  major="${ver%%.*}"
+  minor="${ver#*.}"
+  if [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] \
+     && { (( major > 5 )) || { (( major == 5 )) && (( minor >= 1 )); }; }; then
+    VFR=(-fps_mode vfr)
+  else
+    VFR=(-vsync vfr)
+  fi
+}
+
 mkdir -p "$OUT"
 
 # Build the leading seek/duration args (apply -ss/-to before -i for speed/accuracy).
@@ -120,11 +140,10 @@ PRE_ARGS=()
 # Choose how frames are selected: scene-change boundaries or a fixed sample rate.
 if [[ -n "$SCENE" ]]; then
   SELECT="select='gt(scene,${SCENE})'"
-  VSYNC=(-vsync vfr)
+  set_vfr_flag
   MODE_DESC="scene-change (threshold=$SCENE)"
 else
   SELECT="fps=${FPS}"
-  VSYNC=()
   MODE_DESC="dense (fps=$FPS)"
 fi
 
@@ -133,13 +152,13 @@ if [[ -n "$CONTACT" ]]; then
   # whole timeline is one image (or a few). Spills into contact_0002.png, ... if needed.
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
   ffmpeg -hide_banner -loglevel error \
-    "${PRE_ARGS[@]}" -i "$VIDEO" "${VSYNC[@]}" \
+    "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
     -vf "${SELECT},scale=${TILEW}:-1,tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
 elif [[ -n "$SCENE" ]]; then
   echo "Scene-change mode (threshold=$SCENE) -> $OUT" >&2
   ffmpeg -hide_banner -loglevel error \
-    "${PRE_ARGS[@]}" -i "$VIDEO" "${VSYNC[@]}" \
+    "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
     -vf "$SELECT" \
     "$OUT/scene_%04d.png"
 else

@@ -190,6 +190,21 @@ PY
 done
 [[ $hooks_found -eq 1 ]] || skip "no plugin hooks to validate"
 
+# --- 4c. issue templates (if any) -----------------------------------------------------
+section "issue templates"
+it_found=0
+for tmpl in .github/ISSUE_TEMPLATE/*.yml; do
+  base="$(basename "$tmpl")"
+  [[ "$base" == "config.yml" ]] && continue   # config.yml is settings, not a form
+  it_found=1
+  if [[ -s "$tmpl" ]] && grep -q '^name:' "$tmpl" && grep -q '^description:' "$tmpl"; then
+    pass "issue form has name + description: $tmpl"
+  else
+    fail "issue form empty or missing name/description: $tmpl"
+  fi
+done
+[[ $it_found -eq 1 ]] || skip "no issue form templates"
+
 # --- 5. extraction script present + executable ----------------------------------------
 section "extraction script present + executable"
 if [[ -f "$SCRIPT" ]]; then

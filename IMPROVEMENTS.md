@@ -1,7 +1,8 @@
 # Improvements & Known Weaknesses
 
 Honest notes on what each plugin does well, where it's weak, and how it could improve. Kept
-here — not in the skills — so the in-context instructions stay lean.
+here — not in the skills — so the in-context instructions stay lean. User-reported problems
+arrive via the **Plugin feedback** issue form and are triaged into the items below.
 
 ## video-bug-analyzer
 
@@ -23,6 +24,10 @@ here — not in the skills — so the in-context instructions stay lean.
 - Auto-fallback to a contact sheet when frame count would blow a token budget.
 - Optional per-frame timestamp burn-in for clearer timeline references.
 - A crop/region flag to zoom on a UI area and cut tokens.
+
+**Shipped**
+- 0.2.2: `-fps_mode vfr` on modern ffmpeg (was deprecated `-vsync`), with `-vsync` fallback
+  and an ffmpeg-version diagnostic line.
 
 ## repo-bootstrap
 

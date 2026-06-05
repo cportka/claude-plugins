@@ -1,0 +1,61 @@
+name: Plugin feedback
+description: Report a problem or suggestion for a portka-tools plugin so it can drive a new version.
+title: "[feedback] <short summary>"
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the feedback! The more concrete the detail, the faster it turns into a fix.
+        For ffmpeg problems, please paste the `ffmpeg: ...` line the extractor prints at start.
+  - type: dropdown
+    id: plugin
+    attributes:
+      label: Plugin
+      options:
+        - video-bug-analyzer
+        - repo-bootstrap
+        - other / not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: From the README table or plugin.json (e.g. 0.2.2).
+      placeholder: "0.2.2"
+    validations:
+      required: false
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Claude Code CLI (local)
+        - Claude Code on the web
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: ffmpeg
+    attributes:
+      label: ffmpeg version
+      description: Output of `ffmpeg -version` (first line). Leave blank if not applicable.
+      placeholder: "ffmpeg version 6.0 ..."
+  - type: textarea
+    id: command
+    attributes:
+      label: What you ran
+      description: The exact command or the request you made to Claude.
+      render: shell
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What happened vs. what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / logs
+      render: shell

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Integration guide
+    url: https://github.com/cportka/claude-plugins/blob/main/docs/INTEGRATE.md
+    about: How to add a portka-tools plugin to your repo or Claude Code session.

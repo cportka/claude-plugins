@@ -19,7 +19,7 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 You never copy plugin code into your repo — only a marketplace reference.
 
 - **All local repos (CLI):** `/plugin marketplace add cportka/claude-plugins`, then
-  `/plugin install <name>@portka-tools`. Persists in `~/.claude`.
+  `/plugin install video-bug-analyzer@portka-tools` (or any `<name>@portka-tools`). Persists in `~/.claude`.
 - **A specific repo / web session:** commit `.claude/settings.json` (below). Web containers
   start fresh each session, so this committed file is what loads the plugin. Let
   `repo-bootstrap` write it, or add it by hand.

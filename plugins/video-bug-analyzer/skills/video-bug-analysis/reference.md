@@ -31,18 +31,23 @@ Detail for the `video-bug-analysis` skill: checklist, reliability matrix, extrac
 
 | Situation | Suggested flags |
 | :-- | :-- |
+| Cheap timeline overview (do this first) | `--fps 2 --contact` |
+| Zoom on flagged moment(s) | `--timestamps 0:12,0:34 --fps 8` (burst + before/after strip) |
 | Known timestamp, normal UI bug | `--start <t-1s> --end <t+1s> --fps 4` |
-| Known timestamp, fast/flicker bug | `--start <t-0.5s> --end <t+0.5s> --fps 15` |
+| Known timestamp, fast/flicker bug | `--timestamps <t> --fps 15 --window 0.5` |
 | Unknown moment, long clip | `--scene 0.1` first pass, then dense around the hit |
 | Slow/steady-state bug | `--fps 1` over the relevant span is fine |
-| Cheap timeline overview | `--start <a> --end <b> --fps 3 --contact` then dense on the hit |
 
-Higher fps = more frames = more tokens; tighten the `--start/--end` window rather than
-raising fps across the whole clip.
+Higher fps = more frames = more tokens; tighten the window rather than raising fps across
+the whole clip. Frames scale to legible width by default (contact tiles `--tile-width` 320;
+burst frames `--frame-width` 820, enough to read transcript/UI text).
 
-**Contact-sheet mode (`--contact`)** tiles frames into one image (grid via `--cols`/`--rows`,
-tile width via `--tile-width`), ordered left-to-right, top-to-bottom in time. Scan it to
-locate the symptom region, then re-extract that region densely (no `--contact`) for detail.
+**Contact-sheet (`--contact`)** tiles frames into one image (`--cols`/`--rows`), ordered
+left-to-right, top-to-bottom in time. Scan it, then zoom.
+
+**Timestamps (`--timestamps "t1,t2"`)** — per moment, a dense `--fps` burst over a
+`±--window` (default 0.5s) plus a `tsNN_strip.png` **before/after strip** (first & last burst
+frame side by side). The strip is the clearest way to show the user a one-frame transient.
 
 ## When frames aren't enough
 

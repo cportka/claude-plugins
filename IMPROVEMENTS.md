@@ -25,12 +25,24 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - Optional per-frame timestamp burn-in for clearer timeline references.
 - A crop/region flag to zoom on a UI area and cut tokens.
 
+**Hard constraint (not fixable in the plugin)**
+- Claude Code's auto-mode classifier will **not silently run a download-and-execute of an
+  agent-chosen binary** — the user must approve it. So ffmpeg can't fully self-install in a
+  fresh sandbox; the screenshot path is the only zero-friction option there. Docs lean into
+  this (approve the install, or use a screenshot).
+
 **Shipped**
 - 0.2.2: `-fps_mode vfr` on modern ffmpeg (was deprecated `-vsync`), with `-vsync` fallback
   and an ffmpeg-version diagnostic line.
-- 0.2.3: static-ffmpeg download fallback (apt → brew → static build → screenshot advice) in
-  both the extractor and the SessionStart hook, for sessions where the package manager
-  can't install ffmpeg. Only helps where outbound https is allowed.
+- 0.2.3: static-ffmpeg download fallback in the extractor and SessionStart hook.
+- 0.3.0: GitHub (BtbN) static build as the primary download source (reachable where apt
+  isn't); `--timestamps` dense-burst + before/after strip; `--window`/`--frame-width`;
+  screenshot-fallback promoted to first-class.
+
+**Still open**
+- A slim, self-hosted ffmpeg release asset on this repo (allowlisted, lighter than BtbN's
+  ~100MB) — needs a binary published as a release asset; wire the installer to prefer it.
+- `ffprobe`-based auto-duration / suggested fps and window.
 
 ## repo-bootstrap
 

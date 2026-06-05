@@ -28,6 +28,9 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 **Shipped**
 - 0.2.2: `-fps_mode vfr` on modern ffmpeg (was deprecated `-vsync`), with `-vsync` fallback
   and an ffmpeg-version diagnostic line.
+- 0.2.3: static-ffmpeg download fallback (apt → brew → static build → screenshot advice) in
+  both the extractor and the SessionStart hook, for sessions where the package manager
+  can't install ffmpeg. Only helps where outbound https is allowed.
 
 ## repo-bootstrap
 

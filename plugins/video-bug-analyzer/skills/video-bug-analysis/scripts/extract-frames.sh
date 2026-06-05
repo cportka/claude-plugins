@@ -78,6 +78,43 @@ if [[ ! -f "$VIDEO" ]]; then
 fi
 
 # --- Ensure ffmpeg is available -------------------------------------------------------
+# Cache dir for a downloaded static ffmpeg; shared with the SessionStart hook so either
+# can populate it and this script will find it.
+FFMPEG_CACHE="${HOME:-/tmp}/.cache/portka-video-bug-analyzer/bin"
+
+# Last resort when apt/brew aren't available: download a static ffmpeg build (no root
+# needed) into the cache dir and add it to PATH for this run. Best-effort; returns
+# non-zero if it can't (e.g. no network, no curl/wget/tar). Only helps where outbound
+# https is permitted.
+install_ffmpeg_static() {
+  local a url tmp found bindir
+  command -v tar >/dev/null 2>&1 || return 1
+  command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || return 1
+  case "$(uname -m)" in
+    x86_64|amd64)  a=amd64 ;;
+    aarch64|arm64) a=arm64 ;;
+    *) return 1 ;;
+  esac
+  url="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${a}-static.tar.xz"
+  tmp="$(mktemp -d)" || return 1
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --max-time 180 "$url" -o "$tmp/ff.tar.xz" || { rm -rf "$tmp"; return 1; }
+  else
+    wget -q --timeout=180 -O "$tmp/ff.tar.xz" "$url" || { rm -rf "$tmp"; return 1; }
+  fi
+  tar -xJf "$tmp/ff.tar.xz" -C "$tmp" 2>/dev/null || { rm -rf "$tmp"; return 1; }
+  found="$(find "$tmp" -type f -name ffmpeg -print -quit 2>/dev/null)"
+  [[ -n "$found" ]] || { rm -rf "$tmp"; return 1; }
+  bindir="$(dirname "$found")"
+  mkdir -p "$FFMPEG_CACHE" || { rm -rf "$tmp"; return 1; }
+  cp "$bindir/ffmpeg" "$FFMPEG_CACHE/" 2>/dev/null || true
+  if [[ -f "$bindir/ffprobe" ]]; then cp "$bindir/ffprobe" "$FFMPEG_CACHE/" 2>/dev/null || true; fi
+  chmod +x "$FFMPEG_CACHE/ffmpeg" 2>/dev/null || true
+  rm -rf "$tmp"
+  export PATH="$FFMPEG_CACHE:$PATH"
+  command -v ffmpeg >/dev/null 2>&1
+}
+
 ensure_ffmpeg() {
   if command -v ffmpeg >/dev/null 2>&1; then
     return 0
@@ -97,16 +134,21 @@ ensure_ffmpeg() {
   if command -v ffmpeg >/dev/null 2>&1; then
     return 0
   fi
+  echo "Package manager unavailable or blocked; trying a static ffmpeg build..." >&2
+  install_ffmpeg_static && return 0
   cat >&2 <<'EOF'
-Error: ffmpeg is required but could not be installed automatically.
-Install it and re-run:
-  - Debian/Ubuntu: sudo apt-get install -y ffmpeg
-  - macOS (Homebrew): brew install ffmpeg
-  - Other: https://ffmpeg.org/download.html
-(If this is a sandboxed/web session, network access may be restricted by policy.)
+Error: ffmpeg is required but could not be installed automatically (apt/brew and a static
+build all failed — outbound network is likely restricted by policy).
+Options:
+  - Install it manually:  sudo apt-get install -y ffmpeg   |   brew install ffmpeg
+  - Static build (no root): https://johnvansickle.com/ffmpeg/  (needs https access)
+  - Or skip the video: give Claude a still screenshot of the exact bad moment instead.
 EOF
   return 1
 }
+
+# Reuse a previously cached static build (e.g. installed by the SessionStart hook).
+[[ -x "$FFMPEG_CACHE/ffmpeg" ]] && export PATH="$FFMPEG_CACHE:$PATH"
 
 ensure_ffmpeg
 

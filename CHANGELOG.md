@@ -5,6 +5,17 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [0.4.1] - 2026-06-05
+
+### Fixed
+- `video-bug-analyzer` 0.2.3: when `apt`/`brew` are unavailable or blocked, `extract-frames.sh`
+  and the SessionStart hook now fall back to downloading a **static ffmpeg build** (arch-
+  detected) into a shared cache and adding it to PATH — addresses sessions where ffmpeg
+  simply isn't installed and the package manager can't run. If that also fails (fully
+  offline), the give-up message points to a still screenshot. A `find | head` pipe in the
+  installer was replaced with `-print -quit` to avoid a `pipefail`/SIGPIPE edge under
+  `set -e`.
+
 ## [0.4.0] - 2026-06-05
 
 ### Fixed
@@ -79,6 +90,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[0.4.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.4.1
 [0.4.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.4.0
 [0.3.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.3.1
 [0.3.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.3.0

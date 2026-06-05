@@ -14,26 +14,36 @@ set -uo pipefail
 # to PATH on use — so a build installed here is found even if it's not on the session PATH.
 FFMPEG_CACHE="${HOME:-/tmp}/.cache/portka-video-bug-analyzer/bin"
 
-# Best-effort static ffmpeg download (no root/apt). Returns non-zero if it can't.
+# Best-effort static ffmpeg download (no root/apt). Tries GitHub release assets first
+# (reachable in many sandboxes), then johnvansickle. Override with $VBA_FFMPEG_URL.
+# Returns non-zero if it can't.
 install_ffmpeg_static() {
-  local a url tmp found bindir
+  local gh_a jv_a u tmp found bindir
   command -v tar >/dev/null 2>&1 || return 1
   command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || return 1
   case "$(uname -m)" in
-    x86_64|amd64)  a=amd64 ;;
-    aarch64|arm64) a=arm64 ;;
+    x86_64|amd64)  gh_a=linux64;    jv_a=amd64 ;;
+    aarch64|arm64) gh_a=linuxarm64; jv_a=arm64 ;;
     *) return 1 ;;
   esac
-  url="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${a}-static.tar.xz"
+  local urls=(
+    "${VBA_FFMPEG_URL:-}"
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-${gh_a}-gpl.tar.xz"
+    "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${jv_a}-static.tar.xz"
+  )
   tmp="$(mktemp -d)" || return 1
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --max-time 180 "$url" -o "$tmp/ff.tar.xz" || { rm -rf "$tmp"; return 1; }
-  else
-    wget -q --timeout=180 -O "$tmp/ff.tar.xz" "$url" || { rm -rf "$tmp"; return 1; }
-  fi
-  tar -xJf "$tmp/ff.tar.xz" -C "$tmp" 2>/dev/null || { rm -rf "$tmp"; return 1; }
-  found="$(find "$tmp" -type f -name ffmpeg -print -quit 2>/dev/null)"
-  [[ -n "$found" ]] || { rm -rf "$tmp"; return 1; }
+  for u in "${urls[@]}"; do
+    [[ -n "$u" ]] || continue
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL --max-time 300 "$u" -o "$tmp/ff.tar.xz" 2>/dev/null || continue
+    else
+      wget -q --timeout=300 -O "$tmp/ff.tar.xz" "$u" 2>/dev/null || continue
+    fi
+    tar -xJf "$tmp/ff.tar.xz" -C "$tmp" 2>/dev/null || continue
+    found="$(find "$tmp" -type f -name ffmpeg -print -quit 2>/dev/null)"
+    [[ -n "$found" ]] && break
+  done
+  [[ -n "${found:-}" ]] || { rm -rf "$tmp"; return 1; }
   bindir="$(dirname "$found")"
   mkdir -p "$FFMPEG_CACHE" || { rm -rf "$tmp"; return 1; }
   cp "$bindir/ffmpeg" "$FFMPEG_CACHE/" 2>/dev/null || true

@@ -18,22 +18,32 @@ Ask for whatever's missing:
   often the real cause.
 - **Relevant code area**, if known.
 
-A **still screenshot of the bad moment** beats hunting inside a clip — prefer it.
+A **still screenshot of the bad moment** beats hunting inside a clip — **prefer it, and ask
+for one** whenever a timestamp is fuzzy or ffmpeg isn't available (see the ffmpeg note below).
 
 ## 2. Extract frames
 
 ```
 ${CLAUDE_PLUGIN_ROOT}/skills/video-bug-analysis/scripts/extract-frames.sh \
-  --video <path> [--start <ts>] [--end <ts>] [--fps <n>] [--scene <thr>] [--contact]
+  --video <path> [--fps <n>] [--scene <thr>] [--contact] [--timestamps <t1,t2>]
 ```
 
-- **Known moment:** dense (`--fps 4`–`10`) over a tight `--start`/`--end`. Never 1 fps
-  across the whole clip — transient glitches fall between samples.
-- **Unknown moment:** `--scene 0.1` first to find transitions, then re-extract densely.
-- **Overview cheaply:** `--contact` tiles frames into one image; read it to locate the
-  region, then re-extract that region densely. Fewer files, fewer tokens.
+Default workflow:
 
-`ffmpeg` is auto-installed (SessionStart hook, with on-first-use fallback).
+1. **Overview:** `--fps 2 --contact` → one contact sheet of the whole span; read it to find
+   where the symptom is.
+2. **Zoom:** `--timestamps 0:12,0:34 --fps 8` → per moment, a dense burst (catches
+   sub-second transients) plus a **before/after strip** (`tsNN_strip.png`) that's the best
+   way to show the user a one-frame change.
+
+Other knobs: `--scene 0.1` to find transitions when the moment is unknown; `--start/--end`
+for a manual window; `--window`/`--frame-width` to tune bursts. Tighten the window rather
+than raising fps across the whole clip.
+
+**ffmpeg note:** the plugin tries to install ffmpeg (apt → brew → a GitHub static build), but
+a sandbox often **blocks the download or makes you approve it** — it cannot silently
+self-install. If the extractor reports it can't get ffmpeg, **don't keep retrying — ask the
+user to approve the install OR (simpler) paste a still screenshot of the bad moment.**
 
 ## 3. Build a timeline
 

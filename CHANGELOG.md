@@ -5,6 +5,27 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [0.5.0] - 2026-06-05
+
+Driven by a first-user report: the method works well; getting ffmpeg installed is the whole
+ballgame in sandboxes.
+
+### Added
+- `video-bug-analyzer` 0.3.0 **`--timestamps`** mode: for each moment, extract a dense burst
+  over a `--window` plus a **before/after strip** (`hstack` of the first & last frame) — the
+  by-hand "show the transient" workflow, now built in. New `--window` and `--frame-width`
+  (default 820px, keeps text legible) flags.
+
+### Changed
+- Installer now tries a **GitHub static build** (BtbN/FFmpeg-Builds, pinned `n7.1`) before
+  johnvansickle, since GitHub release assets are reachable in many sandboxes where apt and
+  other hosts are blocked. Override with `$VBA_FFMPEG_URL`. Applies to `extract-frames.sh`
+  and the SessionStart hook.
+- Skill + docs make the **still-screenshot fallback first-class** (not a last resort) and
+  make **"commit `.claude/settings.json`, then start a NEW session"** the loud first step.
+- `docs/INTEGRATE.md` documents the permission reality: a downloaded binary can't be silently
+  self-installed — the user must approve it (with the exact `permissions.allow` rule shown).
+
 ## [0.4.1] - 2026-06-05
 
 ### Fixed
@@ -90,6 +111,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[0.5.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.5.0
 [0.4.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.4.1
 [0.4.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.4.0
 [0.3.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.3.1

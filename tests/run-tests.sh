@@ -291,6 +291,14 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "contact-sheet mode produced no sheet"
     fi
+    # Timestamp mode: a burst + a before/after strip per timestamp.
+    if bash "$SCRIPT" --video "$clip" --timestamps 1,2 --fps 6 --window 0.4 --out "$tmp/ts" >/dev/null 2>&1 \
+       && [[ "$(find "$tmp/ts" -name 'ts01_[0-9]*.png' | wc -l)" -gt 0 ]] \
+       && [[ -f "$tmp/ts/ts01_strip.png" ]]; then
+      pass "timestamp mode produced burst + before/after strip"
+    else
+      fail "timestamp mode did not produce burst/strip"
+    fi
   else
     fail "could not generate test clip with ffmpeg"
   fi

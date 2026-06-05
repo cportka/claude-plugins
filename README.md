@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 0.4.1 · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+> **Version:** 0.5.0 · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -11,7 +11,7 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 
 | Plugin | Version | What it does |
 | :-- | :-- | :-- |
-| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 0.2.3 | Diagnose a bug in a screen recording — extract frames (or a contact sheet) and reason over them. Strong on persistent visual bugs; honest about flickers, timing, and off-screen state. |
+| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 0.3.0 | Diagnose a bug in a screen recording — extract frames (overview contact sheet, scene cuts, or per-timestamp zoom + before/after strips) and reason over them. Strong on persistent visual bugs; honest about flickers, timing, and off-screen state. |
 | [`repo-bootstrap`](./plugins/repo-bootstrap) | 0.1.1 | Onboard a repo to this marketplace — write/merge `.claude/settings.json` (+ optional CI). |
 
 ## Add a plugin
@@ -48,11 +48,15 @@ a portable guide with enable steps, verification, and ffmpeg troubleshooting.
 runs the `video-bug-analysis` skill. Or extract frames directly:
 
 ```
-plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh --video bug.mov --start 0:11 --end 0:14 --fps 8
-# add --contact for a one-image overview of a span
+S=plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh
+"$S" --video bug.mov --fps 2 --contact            # 1) cheap overview contact sheet
+"$S" --video bug.mov --timestamps 0:12,0:34 --fps 8  # 2) zoom + before/after strip per moment
 ```
 
-Needs `ffmpeg` (auto-installed where possible).
+Needs `ffmpeg`. The plugin tries to install it (apt → brew → a GitHub static build), **but a
+sandbox may block the download or require you to approve it** — see
+[docs/INTEGRATE.md](./docs/INTEGRATE.md). If it can't install, give Claude a **still
+screenshot** of the bad moment instead — that always works.
 
 **repo-bootstrap** — see [Add a plugin](#add-a-plugin). Flags: `--plugin` (repeatable),
 `--marketplace-name`, `--marketplace-repo`, `--ci`, `--dir`, `--force`. Needs `python3`.

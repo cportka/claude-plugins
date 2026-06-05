@@ -113,20 +113,33 @@ PY
   fi
 done
 
-# --- 3b. semver + README version sync -------------------------------------------------
-section "versions: semver + README sync"
+# --- 3b. semver + README table version sync -------------------------------------------
+section "versions: semver + README table sync"
 for pj in plugins/*/.claude-plugin/plugin.json; do
   ver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$pj")"
   name="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$pj")"
-  if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  # CHANGED: accept an optional SemVer pre-release suffix (e.g. 1.0.0-rc.1).
+  if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
     pass "semver $ver: $name"
   else
     fail "non-semver version '$ver': $pj"
   fi
-  if grep -qF "$ver" README.md; then
-    pass "README lists $name $ver"
+  # CHANGED: structured parse of the README plugin table (was a loose substring grep) — the
+  # version cell of the plugin's own row must equal its plugin.json version.
+  if python3 - "$name" "$ver" <<'PY'
+import sys
+name, ver = sys.argv[1], sys.argv[2]
+rows = [ln for ln in open("README.md").read().splitlines()
+        if ln.lstrip().startswith("|") and f"`{name}`" in ln]
+assert rows, f"no README plugin-table row references `{name}`"
+cells = [c.strip() for c in rows[0].strip().strip("|").split("|")]
+assert len(cells) >= 2, f"row for `{name}` has too few columns: {rows[0]!r}"
+assert cells[1] == ver, f"README table shows '{cells[1]}' for {name}, plugin.json says '{ver}'"
+PY
+  then
+    pass "README table version matches plugin.json: $name $ver"
   else
-    fail "README does not mention $name version $ver"
+    fail "README table version mismatch for $name (want $ver)"
   fi
 done
 
@@ -360,6 +373,19 @@ PY
   else
     fail "bootstrap merge clobbered or dropped data"
   fi
+  # ADDED: unknown --plugin names warn (non-fatal) when the marketplace is locatable.
+  if bash "$BOOTSTRAP" --plugin definitely-not-a-real-plugin --dir "$bt" 2>"$bt/uerr" >/dev/null \
+     && grep -qi "not a known" "$bt/uerr"; then
+    pass "bootstrap warns on an unknown plugin name"
+  else
+    fail "bootstrap did not warn on an unknown plugin name"
+  fi
+  # ADDED: --list prints known plugin names.
+  if bash "$BOOTSTRAP" --list 2>/dev/null | grep -q 'video-bug-analyzer'; then
+    pass "bootstrap --list shows known plugins"
+  else
+    fail "bootstrap --list did not list known plugins"
+  fi
   rm -rf "$bt"
 else
   fail "bootstrap script not found: $BOOTSTRAP"
@@ -367,15 +393,24 @@ fi
 
 # --- 12. ffmpeg static fallback wired -------------------------------------------------
 section "ffmpeg static fallback"
-for f in \
-  plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh \
-  plugins/video-bug-analyzer/hooks/ensure-ffmpeg.sh; do
-  if grep -q 'install_ffmpeg_static' "$f"; then
-    pass "static ffmpeg fallback present: $f"
-  else
-    fail "static ffmpeg fallback missing: $f"
-  fi
-done
+# CHANGED: the static download now lives ONLY in extract-frames.sh (the hook defers it to
+# first use to avoid its 120s timeout). So check the extractor for the installer, and the
+# hook for its immediate degraded-path message instead.
+EXTRACT="plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh"
+HOOK="plugins/video-bug-analyzer/hooks/ensure-ffmpeg.sh"
+if grep -q 'install_ffmpeg_static' "$EXTRACT"; then
+  pass "static ffmpeg fallback present: $EXTRACT"
+else
+  fail "static ffmpeg fallback missing: $EXTRACT"
+fi
+# ADDED: the hook must NOT do the slow download, but MUST surface the SessionStart fallback.
+if grep -q 'install_ffmpeg_static' "$HOOK"; then
+  fail "hook should not run the slow static download (install_ffmpeg_static present): $HOOK"
+elif grep -q 'additionalContext' "$HOOK" && grep -qi 'screenshot' "$HOOK"; then
+  pass "hook surfaces SessionStart fallback (additionalContext + screenshot): $HOOK"
+else
+  fail "hook missing additionalContext/screenshot fallback message: $HOOK"
+fi
 
 # --- Summary --------------------------------------------------------------------------
 printf '\n\033[1mSummary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"

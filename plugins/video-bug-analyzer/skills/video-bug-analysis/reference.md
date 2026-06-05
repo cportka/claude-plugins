@@ -39,8 +39,10 @@ Detail for the `video-bug-analysis` skill: checklist, reliability matrix, extrac
 | Slow/steady-state bug | `--fps 1` over the relevant span is fine |
 
 Higher fps = more frames = more tokens; tighten the window rather than raising fps across
-the whole clip. Frames scale to legible width by default (contact tiles `--tile-width` 320;
-burst frames `--frame-width` 820, enough to read transcript/UI text).
+the whole clip. Frames are width-scaled by mode: contact tiles to `--tile-width` (320),
+timestamp bursts to `--frame-width` (820, enough to read transcript/UI text), and dense /
+scene frames are capped at `--max-width` (1280) so native 4K recordings don't blow tokens
+(smaller clips are never upscaled).
 
 **Contact-sheet (`--contact`)** tiles frames into one image (`--cols`/`--rows`), ordered
 left-to-right, top-to-bottom in time. Scan it, then zoom.

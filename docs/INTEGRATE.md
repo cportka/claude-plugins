@@ -63,7 +63,7 @@ plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh \
 
 | Symptom | Fix |
 | :-- | :-- |
-| `ffmpeg not found` / install fails | Restricted-network policy blocked the SessionStart install. Install manually: `apt-get install -y ffmpeg` or `brew install ffmpeg`. The script retries on first use. |
+| `ffmpeg not found` (not installed at all) | The plugin (≥0.2.3) tries `apt` → `brew` → a **static build download** automatically. If all fail, the network is fully locked down — install manually (`apt-get install -y ffmpeg` / `brew install ffmpeg`), grab a [static build](https://johnvansickle.com/ffmpeg/), or give Claude a **still screenshot** of the bad moment instead. |
 | Deprecation warnings / scene mode misbehaves (`-vsync`) | Fixed in `video-bug-analyzer` ≥ 0.2.2 (uses `-fps_mode` on modern ffmpeg). Update: `/plugin marketplace update portka-tools`, or re-fetch the marketplace in a fresh web session. |
 | Scene mode writes 0 frames | Lower the threshold (`--scene 0.05`) or switch to dense (`--fps 4`). |
 | Too many frames / token blowup | Tighten `--start/--end`, lower `--fps`, or use `--contact` for an overview first. |

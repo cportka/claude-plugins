@@ -10,7 +10,41 @@
 #
 set -uo pipefail
 
-if command -v ffmpeg >/dev/null 2>&1; then
+# Cache dir for a downloaded static ffmpeg; shared with extract-frames.sh, which adds this
+# to PATH on use — so a build installed here is found even if it's not on the session PATH.
+FFMPEG_CACHE="${HOME:-/tmp}/.cache/portka-video-bug-analyzer/bin"
+
+# Best-effort static ffmpeg download (no root/apt). Returns non-zero if it can't.
+install_ffmpeg_static() {
+  local a url tmp found bindir
+  command -v tar >/dev/null 2>&1 || return 1
+  command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || return 1
+  case "$(uname -m)" in
+    x86_64|amd64)  a=amd64 ;;
+    aarch64|arm64) a=arm64 ;;
+    *) return 1 ;;
+  esac
+  url="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-${a}-static.tar.xz"
+  tmp="$(mktemp -d)" || return 1
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --max-time 180 "$url" -o "$tmp/ff.tar.xz" || { rm -rf "$tmp"; return 1; }
+  else
+    wget -q --timeout=180 -O "$tmp/ff.tar.xz" "$url" || { rm -rf "$tmp"; return 1; }
+  fi
+  tar -xJf "$tmp/ff.tar.xz" -C "$tmp" 2>/dev/null || { rm -rf "$tmp"; return 1; }
+  found="$(find "$tmp" -type f -name ffmpeg -print -quit 2>/dev/null)"
+  [[ -n "$found" ]] || { rm -rf "$tmp"; return 1; }
+  bindir="$(dirname "$found")"
+  mkdir -p "$FFMPEG_CACHE" || { rm -rf "$tmp"; return 1; }
+  cp "$bindir/ffmpeg" "$FFMPEG_CACHE/" 2>/dev/null || true
+  if [[ -f "$bindir/ffprobe" ]]; then cp "$bindir/ffprobe" "$FFMPEG_CACHE/" 2>/dev/null || true; fi
+  chmod +x "$FFMPEG_CACHE/ffmpeg" 2>/dev/null || true
+  rm -rf "$tmp"
+  export PATH="$FFMPEG_CACHE:$PATH"
+  command -v ffmpeg >/dev/null 2>&1
+}
+
+if command -v ffmpeg >/dev/null 2>&1 || [[ -x "$FFMPEG_CACHE/ffmpeg" ]]; then
   exit 0
 fi
 
@@ -30,9 +64,12 @@ if command -v ffmpeg >/dev/null 2>&1; then
   exit 0
 fi
 
+# Package manager unavailable/blocked — try a static build into the shared cache.
+install_ffmpeg_static && exit 0
+
 # Could not install (likely a restricted-network policy). Surface it as context but let
 # the session continue; extract-frames.sh will retry on first use.
 cat <<'JSON'
-{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"video-bug-analyzer: ffmpeg is not installed and could not be auto-installed at session start (network policy may be restricting package installs). extract-frames.sh will retry on first use; if it still fails, ask the user for still screenshots of the bug instead of frames."}}
+{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"video-bug-analyzer: ffmpeg is not installed and could not be auto-installed at session start (apt/brew and a static download all failed — outbound network is likely restricted by policy). extract-frames.sh will retry on first use; if it still fails, ask the user for a still screenshot of the exact bad moment instead of video frames."}}
 JSON
 exit 0

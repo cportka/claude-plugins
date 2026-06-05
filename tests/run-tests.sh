@@ -357,6 +357,18 @@ else
   fail "bootstrap script not found: $BOOTSTRAP"
 fi
 
+# --- 12. ffmpeg static fallback wired -------------------------------------------------
+section "ffmpeg static fallback"
+for f in \
+  plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh \
+  plugins/video-bug-analyzer/hooks/ensure-ffmpeg.sh; do
+  if grep -q 'install_ffmpeg_static' "$f"; then
+    pass "static ffmpeg fallback present: $f"
+  else
+    fail "static ffmpeg fallback missing: $f"
+  fi
+done
+
 # --- Summary --------------------------------------------------------------------------
 printf '\n\033[1mSummary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 if [[ $FAIL -gt 0 ]]; then

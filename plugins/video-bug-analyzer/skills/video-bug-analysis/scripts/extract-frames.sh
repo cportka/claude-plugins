@@ -8,9 +8,10 @@
 #
 # Usage:
 #   extract-frames.sh --video <path> [--start <ts>] [--end <ts>] [--fps <n>]
-#                     [--scene <thr>] [--contact] [--cols <n>] [--rows <n>]
+#                     [--scene <thr>] [--contact] [--text] [--cols <n>] [--rows <n>]
 #                     [--tile-width <px>] [--timestamps <t1,t2,...>] [--window <sec>]
 #                     [--frame-width <px>] [--max-width <px>] [--out <dir>]
+#   extract-frames.sh --strip <before.png,after.png> [--out <dir>]   # stitch existing frames
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -23,9 +24,14 @@
 #   --contact           Contact-sheet mode: tile the sampled frames into a single image
 #                       (or a few), so the whole timeline can be read in one file with
 #                       far fewer tokens. Combines with --fps or --scene for selection.
+#   --text              Contact preset for code/transcript UIs: bumps tile width to 640
+#                       (unless --tile-width is given) so on-screen text stays readable.
 #   --cols <n>          Columns per contact sheet. Default: 4. (Contact mode only.)
 #   --rows <n>          Rows per contact sheet. Default: 4. (Contact mode only.)
-#   --tile-width <px>   Width each frame is scaled to in a contact sheet. Default: 320.
+#   --tile-width <px>   Width each frame is scaled to in a contact sheet. Default: 480.
+#   --strip <a,b>       (alias --compare) Stitch two EXISTING frames into a before/after
+#                       strip (hstack) at <out>/strip.png. No --video needed. Best artifact
+#                       for a UI-state-transition bug.
 #   --timestamps <list> Comma-separated moments (e.g. "0:12,0:34"). For each, extract a
 #                       dense burst over a +/-window plus a before/after strip image —
 #                       great for showing a flagged transient. Ignores --scene/--contact.
@@ -36,14 +42,15 @@
 #   --out <dir>         Output directory for PNG frames. Default: ./.frames
 #   -h, --help          Show this help.
 #
-# ffmpeg is required. If it's missing this tries apt -> brew -> a static build from GitHub
-# (BtbN) then johnvansickle. In a locked-down sandbox the install may be blocked or need
-# your approval — then give Claude a still screenshot of the bad moment instead.
+# ffmpeg is required. It's already on PATH in many environments; if it's missing this tries
+# apt -> brew -> a static build from GitHub (BtbN) then johnvansickle. A locked-down sandbox
+# may block that or require approval — then give Claude a still screenshot of the bad moment.
 #
 # Examples:
-#   extract-frames.sh --video bug.mov --fps 2 --contact             # cheap overview
+#   extract-frames.sh --video bug.mov --fps 2 --contact --text       # legible overview
 #   extract-frames.sh --video bug.mov --timestamps 0:12,0:34 --fps 8 # zoom + strips
 #   extract-frames.sh --video bug.mov --start 0:11 --end 0:14 --fps 8
+#   extract-frames.sh --strip .frames/frame_0003.png,.frames/frame_0009.png  # before/after
 #
 set -euo pipefail
 
@@ -55,7 +62,10 @@ SCENE=""
 CONTACT=""
 COLS="4"
 ROWS="4"
-TILEW="320"
+TILEW="480"        # CHANGED: was 320 — too small for text/code UIs (per DedTxt dogfood)
+TILEW_SET=""       # ADDED: track whether --tile-width was passed explicitly
+TEXT=""            # ADDED: --text preset (legible tiles for code/transcript UIs)
+STRIP=""           # ADDED: --strip a,b -> hstack two existing frames (no --video needed)
 TIMESTAMPS=""
 WINDOW="0.5"
 FRAMEW="820"
@@ -81,7 +91,9 @@ while [[ $# -gt 0 ]]; do
     --contact) CONTACT="1"; shift ;;
     --cols)  COLS="${2:-}";  shift 2 ;;
     --rows)  ROWS="${2:-}";  shift 2 ;;
-    --tile-width) TILEW="${2:-}"; shift 2 ;;
+    --tile-width) TILEW="${2:-}"; TILEW_SET=1; shift 2 ;;   # CHANGED: mark explicit override
+    --text) TEXT="1"; shift ;;                              # ADDED: legible-tiles preset
+    --strip|--compare) STRIP="${2:-}"; shift 2 ;;           # ADDED: hstack two existing frames
     --timestamps) TIMESTAMPS="${2:-}"; shift 2 ;;
     --window) WINDOW="${2:-}"; shift 2 ;;
     --frame-width) FRAMEW="${2:-}"; shift 2 ;;
@@ -92,15 +104,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$VIDEO" ]]; then
-  echo "Error: --video is required." >&2
-  echo "Run with --help for usage." >&2
-  exit 2
-fi
+# ADDED: --text preset bumps contact tiles to a code/transcript-legible width unless the
+# user set --tile-width explicitly.
+[[ -n "$TEXT" && -z "$TILEW_SET" ]] && TILEW="640"
 
-if [[ ! -f "$VIDEO" ]]; then
-  echo "Error: video file not found: $VIDEO" >&2
-  exit 1
+# CHANGED: --video is required EXCEPT in --strip mode (which operates on existing frames).
+if [[ -z "$STRIP" ]]; then
+  if [[ -z "$VIDEO" ]]; then
+    echo "Error: --video is required." >&2
+    echo "Run with --help for usage." >&2
+    exit 2
+  fi
+  if [[ ! -f "$VIDEO" ]]; then
+    echo "Error: video file not found: $VIDEO" >&2
+    exit 1
+  fi
 fi
 
 # --- Ensure ffmpeg is available -------------------------------------------------------
@@ -208,6 +226,24 @@ set_vfr_flag() {
 }
 
 mkdir -p "$OUT"
+
+# ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
+# The single most useful artifact for a UI-state-transition bug (per DedTxt dogfood).
+if [[ -n "$STRIP" ]]; then
+  IFS=',' read -r _sa _sb <<<"$STRIP"
+  if [[ -z "${_sa:-}" || -z "${_sb:-}" ]]; then
+    echo "Error: --strip needs two frames: --strip before.png,after.png" >&2
+    exit 2
+  fi
+  for _img in "$_sa" "$_sb"; do
+    [[ -f "$_img" ]] || { echo "Error: --strip frame not found: $_img" >&2; exit 1; }
+  done
+  echo "Strip mode: $_sa | $_sb -> $OUT/strip.png" >&2
+  ffmpeg -hide_banner -loglevel error -i "$_sa" -i "$_sb" \
+    -filter_complex hstack -frames:v 1 "$OUT/strip.png"
+  echo "Wrote $OUT/strip.png (before/after; left=$_sa right=$_sb)."
+  exit 0
+fi
 
 # Build the leading seek/duration args (apply -ss/-to before -i for speed/accuracy).
 PRE_ARGS=()

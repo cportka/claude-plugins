@@ -93,7 +93,20 @@ S=plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh
 
 ## 7. Report a problem → drives a new version
 
-If something still breaks, open a **Plugin feedback** issue at
-`cportka/claude-plugins` (Issues → New issue → *Plugin feedback*). Include the plugin
-version, environment (CLI/web), `ffmpeg -version`, the exact command, and the error output.
-That intake is triaged into a fix and a new plugin version.
+Run the bundled assembler — it auto-collects the plugin/ffmpeg/OS details and prints a
+copy-paste report **plus a prefilled one-click GitHub issue link**:
+
+```
+plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/report-feedback.sh \
+  --ran "<commands>" --outcome "<what happened>" --notes "<suggestions>"
+```
+
+Open that link in **any browser** to file it — it needs no GitHub token, no repo scope, and
+no network from the session itself.
+
+**Why not fully automatic?** A session can't silently submit feedback: outbound network is
+governed by the environment allowlist, the GitHub MCP is scoped to *your* repo (not
+`cportka/claude-plugins`), and the permission model blocks silent posting. So if your
+session's GitHub MCP can reach `cportka/claude-plugins`, Claude can file it directly;
+otherwise use the one-click link, or paste the report to the maintainer. Either way the
+report is complete and the intake drives a fix + new version.

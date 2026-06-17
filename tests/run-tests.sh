@@ -312,6 +312,23 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "timestamp mode did not produce burst/strip"
     fi
+    # --text contact preset: still produces a sheet.
+    if bash "$SCRIPT" --video "$clip" --start 0 --end 3 --fps 4 --contact --text --out "$tmp/text" >/dev/null 2>&1 \
+       && [[ "$(find "$tmp/text" -name 'contact_*.png' | wc -l)" -gt 0 ]]; then
+      pass "--text contact preset produced a sheet"
+    else
+      fail "--text contact preset produced no sheet"
+    fi
+    # --strip: hstack two existing frames into strip.png (no --video).
+    _f1="$(find "$tmp/dense" -name '*.png' | sort | head -n1)"
+    _f2="$(find "$tmp/dense" -name '*.png' | sort | tail -n1)"
+    if [[ -n "$_f1" && -n "$_f2" ]] \
+       && bash "$SCRIPT" --strip "$_f1,$_f2" --out "$tmp/strip" >/dev/null 2>&1 \
+       && [[ -f "$tmp/strip/strip.png" ]]; then
+      pass "--strip stitched a before/after from existing frames"
+    else
+      fail "--strip did not produce strip.png"
+    fi
   else
     fail "could not generate test clip with ffmpeg"
   fi
@@ -410,6 +427,37 @@ elif grep -q 'additionalContext' "$HOOK" && grep -qi 'screenshot' "$HOOK"; then
   pass "hook surfaces SessionStart fallback (additionalContext + screenshot): $HOOK"
 else
   fail "hook missing additionalContext/screenshot fallback message: $HOOK"
+fi
+
+# --- 13. new flags documented + feedback assembler ------------------------------------
+section "flags + feedback assembler"
+HELP="$(bash "$EXTRACT" --help 2>/dev/null)"
+for flag in "--text" "--strip"; do
+  if grep -qF -- "$flag" <<<"$HELP"; then
+    pass "extract-frames --help documents $flag"
+  else
+    fail "extract-frames --help missing $flag"
+  fi
+done
+FEEDBACK="plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/report-feedback.sh"
+if [[ -x "$FEEDBACK" ]]; then
+  pass "report-feedback.sh present + executable"
+else
+  fail "report-feedback.sh missing or not executable: $FEEDBACK"
+fi
+if bash "$FEEDBACK" --help >/dev/null 2>&1; then
+  pass "report-feedback.sh --help exits 0"
+else
+  fail "report-feedback.sh --help did not exit 0"
+fi
+# With sample args it must emit the prefilled issue URL + the copy-paste report.
+fb_out="$(CLAUDE_PLUGIN_ROOT=plugins/video-bug-analyzer bash "$FEEDBACK" \
+  --env CLI --ran 'x' --outcome 'y' --notes 'z' 2>/dev/null)"
+if grep -q 'cportka/claude-plugins/issues/new' <<<"$fb_out" \
+   && grep -q 'copy below into the Plugin feedback issue' <<<"$fb_out"; then
+  pass "report-feedback.sh emits issue URL + copy-paste report"
+else
+  fail "report-feedback.sh did not emit URL + report"
 fi
 
 # --- Summary --------------------------------------------------------------------------

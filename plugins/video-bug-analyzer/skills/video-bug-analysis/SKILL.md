@@ -31,19 +31,21 @@ ${CLAUDE_PLUGIN_ROOT}/skills/video-bug-analysis/scripts/extract-frames.sh \
 Default workflow:
 
 1. **Overview:** `--fps 2 --contact` → one contact sheet of the whole span; read it to find
-   where the symptom is.
+   where the symptom is. For **text/code-heavy UIs add `--text`** (bigger tiles) or the sheet
+   will be illegible.
 2. **Zoom:** `--timestamps 0:12,0:34 --fps 8` → per moment, a dense burst (catches
    sub-second transients) plus a **before/after strip** (`tsNN_strip.png`) that's the best
    way to show the user a one-frame change.
 
 Other knobs: `--scene 0.1` to find transitions when the moment is unknown; `--start/--end`
-for a manual window; `--window`/`--frame-width` to tune bursts. Tighten the window rather
-than raising fps across the whole clip.
+for a manual window; `--window`/`--frame-width` to tune bursts; **`--strip a.png,b.png`** to
+stitch a before/after from two frames you already extracted. Tighten the window rather than
+raising fps across the whole clip.
 
-**ffmpeg note:** the plugin tries to install ffmpeg (apt → brew → a GitHub static build), but
-a sandbox often **blocks the download or makes you approve it** — it cannot silently
-self-install. If the extractor reports it can't get ffmpeg, **don't keep retrying — ask the
-user to approve the install OR (simpler) paste a still screenshot of the bad moment.**
+**ffmpeg note:** ffmpeg is already on PATH in many environments (incl. many web containers).
+If it's missing the plugin tries apt → brew → a GitHub static build; a locked-down sandbox
+may block that or require approval. If it truly can't be installed, **don't keep retrying —
+ask the user to approve the install OR (simpler) paste a still screenshot of the bad moment.**
 
 ## 3. Build a timeline
 
@@ -67,3 +69,12 @@ Label what you saw vs. inferred, and how sure you are. Call out the limits that 
 When unsure, ask for a denser extraction, a tighter timestamp, or a still — don't guess.
 
 See `reference.md` for the reliability matrix, fps-per-bug-class table, and checklist.
+
+## Reporting feedback
+
+If the user wants to report a problem or suggestion, run
+`${CLAUDE_PLUGIN_ROOT}/skills/video-bug-analysis/scripts/report-feedback.sh`
+(`--ran`/`--outcome`/`--notes` optional) — it prints a copy-paste report **and a prefilled
+one-click GitHub issue link**. If you have a GitHub MCP/`gh` with write access to
+`cportka/claude-plugins`, file it directly; otherwise hand the user the link (it needs no
+GitHub scope or session network — it just opens in a browser).

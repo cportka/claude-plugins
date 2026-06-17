@@ -31,21 +31,25 @@ Detail for the `video-bug-analysis` skill: checklist, reliability matrix, extrac
 
 | Situation | Suggested flags |
 | :-- | :-- |
-| Cheap timeline overview (do this first) | `--fps 2 --contact` |
+| Cheap timeline overview (do this first) | `--fps 2 --contact` (add `--text` for code/UI) |
 | Zoom on flagged moment(s) | `--timestamps 0:12,0:34 --fps 8` (burst + before/after strip) |
+| Before/after from two frames you have | `--strip before.png,after.png` |
 | Known timestamp, normal UI bug | `--start <t-1s> --end <t+1s> --fps 4` |
 | Known timestamp, fast/flicker bug | `--timestamps <t> --fps 15 --window 0.5` |
 | Unknown moment, long clip | `--scene 0.1` first pass, then dense around the hit |
 | Slow/steady-state bug | `--fps 1` over the relevant span is fine |
 
 Higher fps = more frames = more tokens; tighten the window rather than raising fps across
-the whole clip. Frames are width-scaled by mode: contact tiles to `--tile-width` (320),
-timestamp bursts to `--frame-width` (820, enough to read transcript/UI text), and dense /
-scene frames are capped at `--max-width` (1280) so native 4K recordings don't blow tokens
-(smaller clips are never upscaled).
+the whole clip. Frames are width-scaled by mode: contact tiles to `--tile-width` (default
+480; `--text` bumps to 640 for code/transcript legibility), timestamp bursts to
+`--frame-width` (820), and dense / scene frames are capped at `--max-width` (1280) so native
+4K recordings don't blow tokens (smaller clips are never upscaled).
 
 **Contact-sheet (`--contact`)** tiles frames into one image (`--cols`/`--rows`), ordered
-left-to-right, top-to-bottom in time. Scan it, then zoom.
+left-to-right, top-to-bottom in time. Scan it, then zoom. Use `--text` for text/code UIs.
+
+**Strip (`--strip a.png,b.png`, alias `--compare`)** hstacks two existing frames into
+`strip.png` — a before/after with no re-extraction; needs no `--video`.
 
 **Timestamps (`--timestamps "t1,t2"`)** — per moment, a dense `--fps` burst over a
 `±--window` (default 0.5s) plus a `tsNN_strip.png` **before/after strip** (first & last burst

@@ -5,6 +5,26 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.2] - 2026-06-05
+
+From the DedTxt dogfood (rc.1 found + fixed a real layout bug end-to-end on the web; ffmpeg
+was already on PATH). `video-bug-analyzer` → 1.0.0-rc.2.
+
+### Changed
+- Contact-sheet default `--tile-width` 320 → **480** (320 was illegible for text/code UIs).
+- Softened the ffmpeg note in SKILL/usage: ffmpeg is preinstalled in many environments;
+  install is only attempted if it's missing.
+
+### Added
+- **`--text`** contact preset (640px tiles for code/transcript UIs, unless `--tile-width` set).
+- **`--strip a.png,b.png`** (alias `--compare`): hstack two existing frames into `strip.png`
+  — a before/after with no re-extraction; needs no `--video`.
+- **`report-feedback.sh`**: auto-collects plugin/ffmpeg/OS diagnostics and emits a copy-paste
+  report **plus a prefilled one-click GitHub issue link** (no auth/scope/session-network
+  needed). Documents why silent auto-submit is impossible (network allowlist + MCP repo-scope
+  + permission classifier) and the file-directly-if-possible fallback.
+- Tests for `--strip`, `--text`, and the feedback assembler.
+
 ## [1.0.0-rc.1] - 2026-06-05
 
 First release candidate. Both plugins (`video-bug-analyzer`, `repo-bootstrap`) are at
@@ -155,6 +175,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.1
 [0.5.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.5.1
 [0.5.0]: https://github.com/cportka/claude-plugins/releases/tag/v0.5.0

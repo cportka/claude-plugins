@@ -1,6 +1,6 @@
 {
   "name": "video-bug-analyzer",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "description": "Diagnose UI and rendering bugs from a screen recording. Give Claude a video and roughly when the bug happens; the plugin extracts frames — an overview contact sheet, scene-cut detection, or per-timestamp zoom with before/after strips — then reasons over them to pinpoint the defect. Strong on persistent visual bugs, honest about flicker, timing, and off-screen state. Requires ffmpeg (auto-installs where the sandbox allows).",
   "author": {
     "name": "Chris Portka"

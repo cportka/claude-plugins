@@ -20,10 +20,11 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - Many PNGs (token cost) if the window/fps isn't tightened.
 
 **Ideas**
-- `ffprobe`-based auto-duration and suggested fps/window.
 - Auto-fallback to a contact sheet when frame count would blow a token budget.
 - Optional per-frame timestamp burn-in for clearer timeline references.
 - A crop/region flag to zoom on a UI area and cut tokens.
+- Auto-enable `--text` when a sampled frame looks text/UI-heavy (needs an OCR/edge-density
+  heuristic — deferred from the rc.3 dogfood; manual `--text` for now).
 
 **Hard constraint (not fixable in the plugin)**
 - Claude Code's auto-mode classifier will **not silently run a download-and-execute of an
@@ -38,11 +39,14 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - 0.3.0: GitHub (BtbN) static build as the primary download source (reachable where apt
   isn't); `--timestamps` dense-burst + before/after strip; `--window`/`--frame-width`;
   screenshot-fallback promoted to first-class.
+- 1.0.0-rc.2: `--tile-width` default 480 + `--text` preset; `--strip` (hstack two frames);
+  `report-feedback.sh` (one-click prefilled issue link).
+- 1.0.0-rc.3: per-video default output dir (no clobber); `--strip` normalizes heights for
+  mismatched resolutions; `ffprobe` sparse-capture warning.
 
 **Still open**
 - A slim, self-hosted ffmpeg release asset on this repo (allowlisted, lighter than BtbN's
   ~100MB) — needs a binary published as a release asset; wire the installer to prefer it.
-- `ffprobe`-based auto-duration / suggested fps and window.
 
 ## repo-bootstrap
 

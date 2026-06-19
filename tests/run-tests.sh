@@ -29,6 +29,7 @@ skip() { printf '  \033[33mSKIP\033[0m  %s\n' "$1"; SKIP=$((SKIP + 1)); }
 section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 SCRIPT="plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh"
+SCRIPT_ABS="$ROOT/$SCRIPT"   # absolute path for tests that run from a different cwd
 BOOTSTRAP="plugins/repo-bootstrap/skills/repo-bootstrap/scripts/bootstrap-repo.sh"
 
 # --- 1. JSON manifests parse ----------------------------------------------------------
@@ -328,6 +329,42 @@ if command -v ffmpeg >/dev/null 2>&1; then
       pass "--strip stitched a before/after from existing frames"
     else
       fail "--strip did not produce strip.png"
+    fi
+    # --strip across MISMATCHED resolutions: a 320x240 frame + a 200x120 frame.
+    ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=duration=1:size=200x120:rate=4" \
+      "$tmp/small.mp4" -y 2>/dev/null || true
+    bash "$SCRIPT" --video "$tmp/small.mp4" --start 0 --end 1 --fps 2 --out "$tmp/sm" >/dev/null 2>&1 || true
+    _fsmall="$(find "$tmp/sm" -name '*.png' | sort | head -n1)"
+    if [[ -n "$_f1" && -n "$_fsmall" ]] \
+       && bash "$SCRIPT" --strip "$_f1,$_fsmall" --out "$tmp/strip2" >/dev/null 2>&1 \
+       && [[ -f "$tmp/strip2/strip.png" ]]; then
+      pass "--strip handles mismatched resolutions"
+    else
+      fail "--strip failed on mismatched resolutions"
+    fi
+    # Per-video default output dir: two clips run WITHOUT --out land in separate .frames/<name>.
+    cp "$clip" "$tmp/clipA.mp4"; cp "$clip" "$tmp/clipB.mp4"
+    ( cd "$tmp" && bash "$SCRIPT_ABS" --video clipA.mp4 --start 0 --end 1 --fps 3 >/dev/null 2>&1 )
+    ( cd "$tmp" && bash "$SCRIPT_ABS" --video clipB.mp4 --start 0 --end 1 --fps 3 >/dev/null 2>&1 )
+    if [[ -d "$tmp/.frames/clipA" && -d "$tmp/.frames/clipB" ]] \
+       && [[ "$(find "$tmp/.frames/clipA" -name '*.png' | wc -l)" -gt 0 ]]; then
+      pass "per-video default out dir keeps clips separate"
+    else
+      fail "per-video default out dir did not separate clips"
+    fi
+    # Sparse-capture warning: real 5fps source + --fps 30 should warn (needs ffprobe).
+    if command -v ffprobe >/dev/null 2>&1; then
+      ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=duration=2:size=320x240:rate=5" \
+        "$tmp/slow.mp4" -y 2>/dev/null || true
+      bash "$SCRIPT" --video "$tmp/slow.mp4" --start 0 --end 1 --fps 30 --out "$tmp/sp" \
+        >/dev/null 2>"$tmp/sp.err" || true
+      if grep -qi "won't add detail" "$tmp/sp.err"; then
+        pass "sparse-capture warning fires when --fps exceeds real rate"
+      else
+        fail "sparse-capture warning did not fire"
+      fi
+    else
+      skip "ffprobe not installed (sparse-capture warning)"
     fi
   else
     fail "could not generate test clip with ffmpeg"

@@ -42,6 +42,10 @@ for a manual window; `--window`/`--frame-width` to tune bursts; **`--strip a.png
 stitch a before/after from two frames you already extracted. Tighten the window rather than
 raising fps across the whole clip.
 
+Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
+first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
+the script warns that extra fps just repeats frames.
+
 **ffmpeg note:** ffmpeg is already on PATH in many environments (incl. many web containers).
 If it's missing the plugin tries apt → brew → a GitHub static build; a locked-down sandbox
 may block that or require approval. If it truly can't be installed, **don't keep retrying —

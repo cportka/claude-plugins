@@ -47,6 +47,13 @@ the whole clip. Frames are width-scaled by mode: contact tiles to `--tile-width`
 
 **Contact-sheet (`--contact`)** tiles frames into one image (`--cols`/`--rows`), ordered
 left-to-right, top-to-bottom in time. Scan it, then zoom. Use `--text` for text/code UIs.
+Portrait phone captures auto-drop to `--cols 2` (or pass `--portrait`); the script warns when
+tiles downscale the source so far that small UI text will be illegible.
+
+**Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
+pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
+no `--contact`) and read them one at a time. This is the most reliable path for portrait phone
+captures.
 
 **Strip (`--strip a.png,b.png`, alias `--compare`)** hstacks two existing frames into
 `strip.png` — a before/after with no re-extraction; needs no `--video`.

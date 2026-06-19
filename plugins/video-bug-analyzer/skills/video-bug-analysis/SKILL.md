@@ -1,12 +1,19 @@
 ---
 name: video-bug-analysis
-description: Diagnose a UI or rendering bug from a screen recording by extracting frames and reasoning over them. Use when the user shares a video or screen recording (e.g. a .mov or .mp4) of a bug, glitch, flicker, crash, freeze, or incorrect rendering — especially with an approximate timestamp — and wants it investigated or fixed.
+description: Extract frames from a screen recording or video and reason over them — to diagnose a UI/rendering bug (glitch, flicker, crash, freeze, wrong render) OR to read and inventory on-screen text/UI (catalog a site's features, transcribe a demo, describe what's shown). Use whenever the user shares a video or screen recording (.mov/.mp4/.webm) and wants it analyzed or read, especially with an approximate timestamp.
 ---
 
 # Video Bug Analysis
 
-You can't watch video — only **still frames** `ffmpeg` extracts. Reconstruct the bug from
-those snapshots plus what the user tells you. Work this way:
+You can't watch video — only **still frames** `ffmpeg` extracts. Reconstruct what happened
+from those snapshots plus what the user tells you. Despite the name, this also handles
+**non-bug "read the screen" tasks** — inventorying a site's features, transcribing a demo,
+or describing on-screen UI from a recording. Work this way:
+
+> **Reading dense text/UI (not a bug)?** Skip the contact sheet — extract **full-resolution
+> individual frames** (`--fps 1` to `2`, no `--contact`) and read them one by one. Contact
+> tiles downscale too far for small text, especially on tall **portrait** phone captures
+> (where the script auto-drops to `--cols 2`, but individual frames still read best).
 
 ## 1. Get context first
 

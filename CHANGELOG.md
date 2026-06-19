@@ -5,6 +5,23 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.4] - 2026-06-19
+
+From the NFT Toolkit dogfood (#14) — used to *read on-screen text* from a portrait phone
+capture (not a bug). `video-bug-analyzer` → 1.0.0-rc.4.
+
+### Changed
+- **Broader skill trigger:** the `video-bug-analysis` description now covers non-bug "read the
+  screen" tasks (inventory a site's UI, transcribe a demo) in addition to bug diagnosis, so it
+  surfaces for those; SKILL body steers dense-text reads to full-res individual frames.
+- **Portrait contact sheets:** auto-drop to `--cols 2` for portrait sources (ffprobe-detected,
+  or `--portrait`), with a note that full-res individual frames read best for dense small text.
+
+### Added
+- **Legibility guard:** contact mode warns (via ffprobe) when tiles downscale the source >2.5×,
+  suggesting individual frames / fewer cols / larger `--tile-width`.
+- `--portrait` flag; tests for portrait auto-cols and the legibility warning.
+
 ## [1.0.0-rc.3] - 2026-06-19
 
 From the second DedTxt dogfood (#12; rc.2 succeeded and the feedback auto-submitted via the
@@ -193,6 +210,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.4]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.4
 [1.0.0-rc.3]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.3
 [1.0.0-rc.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.1

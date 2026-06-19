@@ -26,7 +26,9 @@
 #                       far fewer tokens. Combines with --fps or --scene for selection.
 #   --text              Contact preset for code/transcript UIs: bumps tile width to 640
 #                       (unless --tile-width is given) so on-screen text stays readable.
-#   --cols <n>          Columns per contact sheet. Default: 4. (Contact mode only.)
+#   --portrait          Contact preset for tall phone captures: 2 columns (bigger tiles).
+#                       Auto-enabled when ffprobe detects a portrait source. (Contact only.)
+#   --cols <n>          Columns per contact sheet. Default: 4 (2 for portrait). (Contact only.)
 #   --rows <n>          Rows per contact sheet. Default: 4. (Contact mode only.)
 #   --tile-width <px>   Width each frame is scaled to in a contact sheet. Default: 480.
 #   --strip <a,b>       (alias --compare) Stitch two EXISTING frames into a before/after
@@ -63,7 +65,9 @@ FPS="4"
 SCENE=""
 CONTACT=""
 COLS="4"
+COLS_SET=""        # ADDED: track whether --cols was passed explicitly
 ROWS="4"
+PORTRAIT=""        # ADDED: --portrait (or auto-detected) -> fewer cols for tall captures
 TILEW="480"        # CHANGED: was 320 — too small for text/code UIs (per DedTxt dogfood)
 TILEW_SET=""       # ADDED: track whether --tile-width was passed explicitly
 TEXT=""            # ADDED: --text preset (legible tiles for code/transcript UIs)
@@ -100,6 +104,31 @@ warn_if_sparse() {
   return 0
 }
 
+# ADDED: echo "<width> <height>" of the source via ffprobe, or nothing if unavailable.
+probe_wh() {
+  command -v ffprobe >/dev/null 2>&1 || return 0
+  ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
+    -of csv=s=x:p=0 "$VIDEO" 2>/dev/null | tr 'x' ' '
+}
+
+# ADDED: contact-sheet tuning for tall/dense captures (issue #14). Auto-drops --cols to 2 for
+# portrait sources (unless --cols was given), and warns when tiles downscale the source so far
+# that small UI text will be illegible — suggesting full-res individual frames instead.
+tune_contact_for_source() {
+  local wh w h
+  wh="$(probe_wh || true)"           # never let a probe failure abort the run (set -e)
+  read -r w h <<<"${wh:-}" || true   # empty here-string returns non-zero under set -e
+  # Portrait: explicit --portrait, or ffprobe says taller-than-wide.
+  if [[ -z "$COLS_SET" ]] && { [[ -n "$PORTRAIT" ]] || { [[ -n "${w:-}" && -n "${h:-}" ]] && (( h > w )); }; }; then
+    COLS=2
+    echo "Portrait capture: using --cols 2 (override with --cols). For dense small text, full-res individual frames (drop --contact) read better than any contact sheet." >&2
+  fi
+  # Legibility guard: if each tile downscales the source width a lot, small text blurs.
+  if [[ -n "${w:-}" ]] && awk -v sw="$w" -v tw="$TILEW" 'BEGIN{ exit !(tw>0 && sw/tw > 2.5) }'; then
+    echo "Heads-up: contact tiles downscale this ${w}px-wide source >2.5x; small UI text may be illegible — for dense text prefer full-res individual frames (drop --contact) or raise --tile-width / lower --cols." >&2
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --video) VIDEO="${2:-}"; shift 2 ;;
@@ -108,7 +137,8 @@ while [[ $# -gt 0 ]]; do
     --fps)   FPS="${2:-}";   shift 2 ;;
     --scene) SCENE="${2:-}"; shift 2 ;;
     --contact) CONTACT="1"; shift ;;
-    --cols)  COLS="${2:-}";  shift 2 ;;
+    --portrait) PORTRAIT="1"; shift ;;                 # ADDED: tall-capture contact preset
+    --cols)  COLS="${2:-}";  COLS_SET=1; shift 2 ;;    # CHANGED: mark explicit override
     --rows)  ROWS="${2:-}";  shift 2 ;;
     --tile-width) TILEW="${2:-}"; TILEW_SET=1; shift 2 ;;   # CHANGED: mark explicit override
     --text) TEXT="1"; shift ;;                              # ADDED: legible-tiles preset
@@ -319,6 +349,7 @@ if [[ -n "$TIMESTAMPS" ]]; then
 elif [[ -n "$CONTACT" ]]; then
   # Contact-sheet mode: scale each selected frame down and tile them into a grid, so the
   # whole timeline is one image (or a few). Spills into contact_0002.png, ... if needed.
+  tune_contact_for_source   # ADDED: portrait auto-cols + illegibility warning (issue #14)
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
   ffmpeg -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \

@@ -43,6 +43,13 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   `report-feedback.sh` (one-click prefilled issue link).
 - 1.0.0-rc.3: per-video default output dir (no clobber); `--strip` normalizes heights for
   mismatched resolutions; `ffprobe` sparse-capture warning.
+- 1.0.0-rc.4: broadened the skill trigger to non-bug "read the screen" tasks; portrait
+  auto-`--cols 2` + `--portrait`; contact legibility guard (warns on heavy downscale).
+
+**Ideas (cont.)**
+- A broader catalog/`plugin.json` description (or a sibling "read-a-screen-recording" skill)
+  so the plugin is discoverable for non-bug reads, not just bugs (issue #14). Deferred to keep
+  the locked submission copy stable through RCs.
 
 **Still open**
 - A slim, self-hosted ffmpeg release asset on this repo (allowlisted, lighter than BtbN's

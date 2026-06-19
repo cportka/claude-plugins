@@ -363,8 +363,28 @@ if command -v ffmpeg >/dev/null 2>&1; then
       else
         fail "sparse-capture warning did not fire"
       fi
+      # Portrait contact: a tall source auto-drops to --cols 2 (issue #14).
+      ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=duration=1:size=180x320:rate=4" \
+        "$tmp/tall.mp4" -y 2>/dev/null || true
+      bash "$SCRIPT" --video "$tmp/tall.mp4" --start 0 --end 1 --fps 2 --contact --out "$tmp/port" \
+        >/dev/null 2>"$tmp/port.err" || true
+      if grep -qi "Portrait capture: using --cols 2" "$tmp/port.err"; then
+        pass "portrait source auto-drops to --cols 2"
+      else
+        fail "portrait auto-cols did not fire"
+      fi
+      # Legibility guard: a wide hi-res source warns that contact tiles will be illegible.
+      ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=duration=1:size=1280x720:rate=4" \
+        "$tmp/hires.mp4" -y 2>/dev/null || true
+      bash "$SCRIPT" --video "$tmp/hires.mp4" --start 0 --end 1 --fps 2 --contact --out "$tmp/hi" \
+        >/dev/null 2>"$tmp/hi.err" || true
+      if grep -qi "illegible" "$tmp/hi.err"; then
+        pass "legibility guard warns on heavy downscale"
+      else
+        fail "legibility guard did not warn"
+      fi
     else
-      skip "ffprobe not installed (sparse-capture warning)"
+      skip "ffprobe not installed (sparse / portrait / legibility)"
     fi
   else
     fail "could not generate test clip with ffmpeg"

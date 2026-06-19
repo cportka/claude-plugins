@@ -5,6 +5,24 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.3] - 2026-06-19
+
+From the second DedTxt dogfood (#12; rc.2 succeeded and the feedback auto-submitted via the
+prefilled one-click link). `video-bug-analyzer` → 1.0.0-rc.3.
+
+### Changed
+- **Per-video default output dir:** frames now default to `.frames/<video-name>/` so a second
+  clip in the same session doesn't clobber the first. `--out` overrides; `--strip` stays
+  `.frames`.
+- **`--strip` handles mismatched resolutions:** both frames are scaled to a common height
+  before `hstack`, so a `.mov` frame and a `.webm` frame stitch cleanly.
+
+### Added
+- **Sparse-capture warning:** when `ffprobe` is available and the source's real frame rate is
+  well below the requested `--fps`, the script notes that extra fps just repeats frames.
+- Tests for no-clobber output, mismatched-resolution `--strip`, and the sparse warning.
+- IMPROVEMENTS: logged auto-`--text` (text-heavy detection) as a deferred idea.
+
 ## [1.0.0-rc.2] - 2026-06-05
 
 From the DedTxt dogfood (rc.1 found + fixed a real layout bug end-to-end on the web; ffmpeg
@@ -175,6 +193,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.3]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.3
 [1.0.0-rc.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.2
 [1.0.0-rc.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.1
 [0.5.1]: https://github.com/cportka/claude-plugins/releases/tag/v0.5.1

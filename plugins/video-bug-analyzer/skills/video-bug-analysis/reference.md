@@ -55,6 +55,12 @@ left-to-right, top-to-bottom in time. Scan it, then zoom. Use `--text` for text/
 `±--window` (default 0.5s) plus a `tsNN_strip.png` **before/after strip** (first & last burst
 frame side by side). The strip is the clearest way to show the user a one-frame transient.
 
+**Output & sparse clips** — frames default to `.frames/<video-name>/` so analyzing a second
+clip in the same session doesn't overwrite the first (`--out` overrides; `--strip` uses
+`.frames`). `--strip` scales both inputs to a common height, so mismatched resolutions
+(e.g. a `.mov` vs a `.webm` frame) still stitch. If a clip's real frame rate (via `ffprobe`)
+is well below `--fps`, the script warns that the extra fps just repeats frames.
+
 ## When frames aren't enough
 
 Ask the user for one of these instead of guessing:

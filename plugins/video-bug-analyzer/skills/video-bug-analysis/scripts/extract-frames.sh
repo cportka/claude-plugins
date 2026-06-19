@@ -39,7 +39,9 @@
 #   --frame-width <px>  Width burst frames are scaled to. Default: 820 (keeps text legible).
 #   --max-width <px>    Cap width for dense/scene frames so native (e.g. 4K) PNGs don't blow
 #                       tokens. Never upscales smaller clips. Default: 1280.
-#   --out <dir>         Output directory for PNG frames. Default: ./.frames
+#   --out <dir>         Output directory for PNG frames. Default: ./.frames/<video-name>
+#                       (per-video, so a second clip doesn't clobber the first); ./.frames
+#                       in --strip mode.
 #   -h, --help          Show this help.
 #
 # ffmpeg is required. It's already on PATH in many environments; if it's missing this tries
@@ -71,6 +73,7 @@ WINDOW="0.5"
 FRAMEW="820"
 MAXW="1280"   # ADDED: cap width for dense/scene frames so native 4K doesn't blow tokens
 OUT="./.frames"
+OUT_SET=""    # ADDED: track whether --out was passed (else default per-video, see below)
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -79,6 +82,22 @@ usage() {
 # Convert a timestamp (SS | MM:SS | HH:MM:SS[.frac]) to seconds, for window arithmetic.
 to_seconds() {
   awk -F: '{ s=$NF; if (NF>=2) s+=$(NF-1)*60; if (NF>=3) s+=$(NF-2)*3600; printf "%.3f", s }' <<<"$1"
+}
+
+# ADDED: warn (best-effort) when the source's real frame rate is well below the requested
+# --fps, so duplicate frames aren't a surprise. Needs ffprobe; silent no-op without it.
+warn_if_sparse() {
+  command -v ffprobe >/dev/null 2>&1 || return 0
+  local raf actual
+  raf="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate \
+    -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null)"
+  [[ "$raf" == */* ]] || return 0                       # expect a "num/den" rate
+  actual="$(awk -F/ '{ if (($2+0)>0) printf "%.1f", $1/$2 }' <<<"$raf")"
+  [[ -n "$actual" ]] || return 0
+  if awk -v req="$1" -v act="$actual" 'BEGIN{ exit !(act>0 && req > act*1.3) }'; then
+    echo "Note: source captures ~${actual} real fps; --fps $1 won't add detail (frames repeat). Lower --fps or accept duplicates." >&2
+  fi
+  return 0
 }
 
 while [[ $# -gt 0 ]]; do
@@ -98,7 +117,7 @@ while [[ $# -gt 0 ]]; do
     --window) WINDOW="${2:-}"; shift 2 ;;
     --frame-width) FRAMEW="${2:-}"; shift 2 ;;
     --max-width) MAXW="${2:-}"; shift 2 ;;   # ADDED: cap for dense/scene frame width
-    --out)   OUT="${2:-}";   shift 2 ;;
+    --out)   OUT="${2:-}";   OUT_SET=1; shift 2 ;;   # CHANGED: mark explicit override
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
@@ -120,6 +139,10 @@ if [[ -z "$STRIP" ]]; then
     exit 1
   fi
 fi
+
+# ADDED: default output to a per-video dir so a second clip in the same session doesn't
+# clobber the first's frames. --out overrides; --strip (no video) keeps the plain default.
+[[ -z "$OUT_SET" && -n "$VIDEO" ]] && OUT=".frames/$(basename "${VIDEO%.*}")"
 
 # --- Ensure ffmpeg is available -------------------------------------------------------
 # Cache dir for a downloaded static ffmpeg; shared with the SessionStart hook so either
@@ -239,11 +262,17 @@ if [[ -n "$STRIP" ]]; then
     [[ -f "$_img" ]] || { echo "Error: --strip frame not found: $_img" >&2; exit 1; }
   done
   echo "Strip mode: $_sa | $_sb -> $OUT/strip.png" >&2
+  # CHANGED: normalize both frames to a common height (even width via -2) before hstack, so
+  # mismatched resolutions (e.g. a .mov frame vs a .webm frame) still stitch cleanly.
   ffmpeg -hide_banner -loglevel error -i "$_sa" -i "$_sb" \
-    -filter_complex hstack -frames:v 1 "$OUT/strip.png"
+    -filter_complex "[0:v]scale=-2:720[a];[1:v]scale=-2:720[b];[a][b]hstack=inputs=2" \
+    -frames:v 1 "$OUT/strip.png"
   echo "Wrote $OUT/strip.png (before/after; left=$_sa right=$_sb)."
   exit 0
 fi
+
+# ADDED: heads-up if the clip is sparser than the requested fps (dense/contact/timestamps).
+[[ -z "$SCENE" ]] && warn_if_sparse "$FPS"
 
 # Build the leading seek/duration args (apply -ss/-to before -i for speed/accuracy).
 PRE_ARGS=()

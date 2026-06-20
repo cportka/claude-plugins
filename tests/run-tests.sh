@@ -450,6 +450,26 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "tesseract not installed (--ocr-roi e2e)"
     fi
+    # --measure: a known 80x80 black box on white (200x200) should measure diam ~80 px and a
+    # center near (100,100) (issue #29). The bounding-box logic doesn't need a real circle.
+    if ! command -v python3 >/dev/null 2>&1; then
+      skip "python3 not installed (--measure e2e)"
+    elif ffmpeg -hide_banner -loglevel error -f lavfi -i "color=white:size=200x200:rate=5:duration=1" \
+         -vf "drawbox=x=60:y=60:w=80:h=80:color=black:t=fill" "$tmp/box.mp4" -y 2>/dev/null; then
+      _m="$(bash "$SCRIPT" --video "$tmp/box.mp4" --measure 200:200:0:0 --fps 2 2>/dev/null || true)"
+      _mrow="$(grep -m1 '^[0-9]' <<<"$_m" || true)"
+      _mdiam="$(awk -F, 'NR==1{print $4+0}' <<<"$_mrow")"
+      _mcx="$(awk -F, 'NR==1{print $6+0}' <<<"$_mrow")"
+      if [[ "$(head -n1 <<<"$_m")" == "t,w_px,h_px,diam_px,diam_pct,cx,cy" ]] \
+         && [[ -n "$_mdiam" ]] && (( _mdiam >= 60 && _mdiam <= 110 )) \
+         && (( _mcx >= 75 && _mcx <= 125 )); then
+        pass "--measure reports a feature diameter + center (bounding box)"
+      else
+        fail "--measure did not measure the test box (diam=$_mdiam cx=$_mcx)"
+      fi
+    else
+      skip "could not build a box test clip (--measure)"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -616,7 +636,7 @@ rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--version"; do
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--version"; do
   if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
@@ -658,6 +678,15 @@ if grep -q 'crop=180:40:20:8' <<<"$_ocr_dry" && grep -qi 'tesseract' <<<"$_ocr_d
   pass "--ocr-roi --dry-run prints the sampling command + tesseract step"
 else
   fail "--ocr-roi --dry-run did not print the expected command"
+fi
+# --measure --dry-run prints the PGM-extraction command + a threshold note (dark vs bright).
+_meas_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --measure 400:400:760:340 --fps 5 --dry-run 2>/dev/null || true)"
+_measb_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --measure 200:200:0:0 --measure-bright --dry-run 2>/dev/null || true)"
+if grep -q 'crop=400:400:760:340' <<<"$_meas_dry" && grep -q 'f_%05d.pgm' <<<"$_meas_dry" \
+   && grep -q 'dark' <<<"$_meas_dry" && grep -q 'bright' <<<"$_measb_dry"; then
+  pass "--measure --dry-run prints the PGM command + threshold note (dark/bright)"
+else
+  fail "--measure --dry-run command was not as expected"
 fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.

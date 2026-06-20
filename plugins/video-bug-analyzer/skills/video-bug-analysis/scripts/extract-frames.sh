@@ -16,6 +16,7 @@
 #   extract-frames.sh --video <path> --list-scenes [--scene <thr>]   # print scene-cut times
 #   extract-frames.sh --video <path> --blackdetect [--crop <W:H:X:Y>] # find black-out spans
 #   extract-frames.sh --video <path> --ocr-roi <W:H:X:Y> [--fps <n>]  # OCR a region -> t,text CSV
+#   extract-frames.sh --video <path> --measure <W:H:X:Y> [--fps <n>]  # feature diameter/center CSV
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -76,6 +77,17 @@
 #                       (the one mode beyond ffmpeg); prints an install hint if it's missing.
 #   --ocr-digits        Restrict OCR to digits and a few separators (cleaner for numeric
 #                       readouts: counts, speeds, timers). Use with --ocr-roi.
+#   --measure <W:H:X:Y> Geometry/measurement: inside this ROI, measure the bounding box of a
+#                       dark feature (an event-horizon shadow, a dot, a blob) once per sampled
+#                       frame and print a CSV: t,w_px,h_px,diam_px,diam_pct,cx,cy. diam_px is the
+#                       major axis; diam_pct is % of viewport width; cx,cy are full-frame px.
+#                       For visual-tuning ("how big is this circle, over time"). Robust to a
+#                       photon ring / accretion disk that breaks a naive center-row scan. Sample
+#                       rate from --fps; honors --start/--end. Needs python3 (+ ffprobe for the
+#                       % column): ffmpeg extracts grayscale frames, python3 measures the box.
+#   --measure-bright    Measure a BRIGHT feature (a ring, a glow) instead of a dark one.
+#   --measure-limit <n> Luma threshold 0..255: dark mode counts pixels BELOW it, bright mode
+#                       ABOVE it. Default 80. Tune if too little / too much is bounded.
 #   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
@@ -92,6 +104,7 @@
 #   extract-frames.sh --video bug.mov --fps 8 --crop 320:120:40:900  # zoom an FPS/HUD region
 #   extract-frames.sh --video bug.mov --blackdetect --crop 600:564:0:0  # find a black-screen bug
 #   extract-frames.sh --video bug.mov --ocr-roi 180:40:20:8 --ocr-digits --fps 2  # count timeline
+#   extract-frames.sh --video bug.mov --measure 400:400:760:340 --fps 5  # shadow diameter over time
 #
 set -euo pipefail
 
@@ -130,6 +143,9 @@ BLACK_D="0.1"  # ADDED: --black-min, minimum black-span duration (seconds) to re
 BLACK_RATIO="0.98" # ADDED: --black-ratio, fraction of pixels that must be black (pic_th)
 OCR_ROI=""     # ADDED (issue #27): --ocr-roi W:H:X:Y -> OCR a region per frame -> t,text CSV
 OCR_DIGITS=""  # ADDED: --ocr-digits restricts OCR to a numeric whitelist (counts/readouts)
+MEASURE=""     # ADDED (issue #29): --measure W:H:X:Y -> bounding box / diameter of a feature
+MEASURE_LIMIT="80"  # ADDED: --measure-limit, luma threshold (dark<thr / bright>thr) 0..255
+MEASURE_BRIGHT=""   # ADDED: --measure-bright measures a bright feature (else dark, default)
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -286,6 +302,9 @@ while [[ $# -gt 0 ]]; do
     --black-ratio) BLACK_RATIO="${2:-}"; shift 2 ;;   # ADDED: black-pixel fraction (pic_th)
     --ocr-roi) OCR_ROI="${2:-}"; shift 2 ;;           # ADDED (issue #27): OCR a region -> CSV
     --ocr-digits) OCR_DIGITS=1; shift ;;              # ADDED: numeric-only OCR whitelist
+    --measure) MEASURE="${2:-}"; shift 2 ;;           # ADDED (issue #29): feature bbox/diameter
+    --measure-limit) MEASURE_LIMIT="${2:-}"; shift 2 ;;  # ADDED: cropdetect luma cutoff
+    --measure-bright) MEASURE_BRIGHT=1; shift ;;      # ADDED: measure a bright feature (not dark)
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -516,6 +535,87 @@ run_ocr_roi() {
   echo "pixel change, the cause is likely logic/state (off-screen) — check logs / a headless repro." >&2
 }
 
+# ADDED (issue #29): geometry/measurement — measure the bounding box (apparent diameter +
+# center) of a dark (or --measure-bright) feature inside an ROI, once per sampled frame, as a
+# t,...,diam_px,diam_pct,cx,cy CSV. For visual-tuning/alignment work the question is often "how
+# big is this circle, as a % of viewport, over time" — a naive center-row dark-run breaks on a
+# photon ring or accretion disk, but a 2-D bounding box is robust. ffmpeg extracts grayscale PGM
+# frames (the one bulletproof step); python3 thresholds each and computes the box (so the result
+# doesn't depend on a particular ffmpeg's cropdetect log format). Uses PRE_ARGS — run after them.
+run_measure() {
+  local roi="$1"
+  # ROI is W:H:X:Y — only the X,Y offset is needed (to map the bbox back to full-frame center).
+  local mx my; IFS=: read -r _ _ mx my <<<"$roi"
+  local kind="dark"; [[ -n "$MEASURE_BRIGHT" ]] && kind="bright"
+  local vf="crop=${roi},fps=${FPS},format=gray"
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.pgm"
+    printf '\n'
+    echo "# then threshold each PGM (limit ${MEASURE_LIMIT}, ${kind}) -> 2-D bounding box -> CSV"
+    echo "# t,w_px,h_px,diam_px,diam_pct,cx,cy"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --measure needs python3 to compute the bounding box. Install python3 and re-run." >&2
+    exit 2
+  fi
+  # Viewport width for %-of-viewport (the units the app is authored in); empty if no ffprobe.
+  local vw=""
+  if command -v ffprobe >/dev/null 2>&1; then
+    vw="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+  fi
+  local d; d="$(mktemp -d)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
+  local base; base="$(to_seconds "${START:-0}")"
+  # Threshold + bounding box per PGM frame (P5 is trivially parseable with the stdlib).
+  python3 - "$d" "$MEASURE_LIMIT" "$kind" "$mx" "$my" "$FPS" "$base" "${vw:-}" <<'PY'
+import sys, os, glob
+d, limit, kind, mx, my, fps, base, vw = sys.argv[1:9]
+limit=int(limit); mx=int(mx); my=int(my); fps=float(fps); base=float(base)
+vw=float(vw) if vw else None
+def read_pgm(p):
+    with open(p,'rb') as f: data=f.read()
+    if data[:2]!=b'P5': return 0,0,b''
+    i=2; vals=[]
+    while len(vals)<3:                       # parse width, height, maxval (skip ws/comments)
+        while i<len(data) and data[i:i+1].isspace(): i+=1
+        if data[i:i+1]==b'#':
+            while i<len(data) and data[i:i+1]!=b'\n': i+=1
+            continue
+        j=i
+        while j<len(data) and not data[j:j+1].isspace(): j+=1
+        vals.append(int(data[i:j])); i=j
+    w,h,_maxv=vals; i+=1                      # one whitespace byte follows maxval
+    return w,h,data[i:i+w*h]
+print("t,w_px,h_px,diam_px,diam_pct,cx,cy")
+for n,p in enumerate(sorted(glob.glob(os.path.join(d,"f_*.pgm")))):
+    w,h,px=read_pgm(p)
+    minx=miny=10**9; maxx=maxy=-1
+    for y in range(h):
+        row=px[y*w:(y+1)*w]
+        for x in range(w):
+            v=row[x]
+            if (v<limit) if kind=="dark" else (v>limit):
+                if x<minx: minx=x
+                if x>maxx: maxx=x
+                if y<miny: miny=y
+                if y>maxy: maxy=y
+    t=base+n/fps
+    if maxx<0:                               # nothing matched the threshold this frame
+        print("%.3f,0,0,0,%s,0,0" % (t, "")); continue
+    bw=maxx-minx+1; bh=maxy-miny+1; diam=bw if bw>bh else bh
+    pct = ("%.2f" % (diam/vw*100)) if vw else ""
+    print("%.3f,%d,%d,%d,%s,%d,%d" % (t, bw, bh, diam, pct, mx+minx+bw//2, my+miny+bh//2))
+PY
+  local n; n="$(find "$d" -maxdepth 1 -name 'f_*.pgm' | wc -l)"
+  rm -rf "$d"
+  echo "Measured $n frame(s) of the ${kind} feature in ROI ${roi}${vw:+ (viewport width ${vw}px)}." >&2
+  if [[ "$n" -eq 0 ]]; then
+    echo "No frames sampled — check the clip and --start/--end." >&2
+  fi
+  [[ -z "$vw" ]] && echo "Note: ffprobe not found — diam_pct left blank (px only)." >&2
+}
+
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
 
 # ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
@@ -589,6 +689,13 @@ fi
 # ADDED (issue #27): --ocr-roi is an analysis mode — emit a t,text value timeline and exit.
 if [[ -n "$OCR_ROI" ]]; then
   run_ocr_roi "$OCR_ROI"
+  feedback_hint
+  exit 0
+fi
+
+# ADDED (issue #29): --measure is an analysis mode — emit a geometry timeline and exit.
+if [[ -n "$MEASURE" ]]; then
+  run_measure "$MEASURE"
   feedback_hint
   exit 0
 fi

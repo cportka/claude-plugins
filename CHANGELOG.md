@@ -5,6 +5,32 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.12] - 2026-06-20
+
+From the v0.15.0 intro dogfood (#29): aligning a load-splash's forming event horizon with the
+real render's shadow — a *measurement* task ("how big is the splash core vs the real shadow, as
+a fraction of the viewport"). Timing and the obvious size jump were easy; the gap was geometry —
+a naive center-row dark-run gave garbage because the photon ring and accretion disk break the
+dark run. `video-bug-analyzer` → 1.0.0-rc.12.
+
+### Added
+- **`--measure W:H:X:Y`** — geometry/measurement: inside the ROI, bounds a feature once per
+  sampled frame (ffmpeg extracts grayscale frames, **python3** thresholds each and computes a
+  true 2-D bounding box — robust where a center-row scan fails) and prints
+  `t,w_px,h_px,diam_px,diam_pct,cx,cy`: bounding-box size, the major-axis **diameter** in px and
+  **% of viewport width**, and the **center** in full-frame px. **`--measure-bright`** measures a
+  bright feature (a ring/glow) instead of the default dark one; **`--measure-limit <n>`** is the
+  luma threshold (default 80). `--fps` sets the rate; honors `--start`/`--end`; `ffprobe`
+  supplies the % column. Reporting as % of viewport also answers
+  #29's dpr/units ask — the `diam_pct` column is dpr-independent (retina px don't mislead).
+  Documented in `--help`, SKILL.md, reference.md; covered by e2e + dry-run + help-doc tests.
+- SKILL guidance for "how big / where" (visual-tuning) vs "what's wrong" (bug-spotting), and to
+  report sizes as % of viewport.
+
+### Notes
+- Deferred to IMPROVEMENTS: a two-timestamp overlay/diff at matched scale (#29's request #2;
+  `--strip` is the current side-by-side), and a numeric-plot rendering over the measure/OCR CSVs.
+
 ## [1.0.0-rc.11] - 2026-06-20
 
 From the OneStillPoint v0.14.5 dogfood (#27): chasing "adding a body sometimes drops the
@@ -352,6 +378,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.12]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.12
 [1.0.0-rc.11]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.11
 [1.0.0-rc.10]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.10
 [1.0.0-rc.9]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.9

@@ -91,6 +91,21 @@ exits if tesseract isn't found. **Diagnostic steer:** if the value changes but n
 change, the cause is off-screen logic/state — stop extracting frames and move to console logs or
 a small headless repro (the v0.14.5 dogfood needed a headless sim harness, not more frames).
 
+**Geometry / measurement (`--measure W:H:X:Y`):** for visual-tuning and alignment work — *how
+big* a feature is and *where* it sits, over time — this bounds a feature inside the ROI once per
+sampled frame and prints `t,w_px,h_px,diam_px,diam_pct,cx,cy`: the bounding-box width/height,
+the major-axis **diameter** in px and as **% of viewport width**, and the **center** in
+full-frame px. It thresholds the ROI and computes a true 2-D bounding box (ffmpeg extracts
+grayscale frames; **python3** measures the box) — robust where a naive center-row dark-run fails
+(a photon ring or accretion disk breaks the dark run and yields garbage). `--measure-bright`
+measures a bright feature (a ring/glow) instead of the default dark one; `--measure-limit <n>` is
+the luma threshold (0–255; dark counts pixels below it, bright above; default 80). `--fps` sets
+the rate; honors `--start`/`--end`; needs `python3`, plus `ffprobe` for the % column (px-only
+without it). **Report % of viewport, not raw px:** retina captures (dpr 2) make device px
+misleading — the diam_pct column is dpr-independent. This is the tool for "splash core ≈ 12% vs
+real shadow ≈ 30%"-type measurements; for a two-feature comparison, measure each and compare the
+`diam_pct` (or stitch the frames with `--strip`).
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

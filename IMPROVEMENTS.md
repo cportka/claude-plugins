@@ -23,9 +23,12 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - Auto-fallback to a contact sheet when frame count would blow a token budget.
 - Auto-enable `--text` when a sampled frame looks text/UI-heavy (needs an OCR/edge-density
   heuristic — deferred from the rc.3 dogfood; manual `--text` for now).
-- **Numeric plot / FPS-over-time chart (extends `--ocr-roi`, issues #23/#27).** `--ocr-roi`
-  emits the `t,text` timeline; auto-parsing numbers and rendering a plot (or min/max/dips) on
-  top of it would beat reading the CSV by eye. Open (the timeline ships in rc.11).
+- **Numeric plot over a CSV (extends `--ocr-roi`/`--measure`, issues #23/#27/#29).** The OCR
+  and measure modes emit `t,value` timelines; auto-parsing the numbers and rendering a plot (or
+  min/max/dips, or diameter-over-time) would beat reading the CSV by eye. Open.
+- **Two-timestamp overlay / contour diff (issue #29).** Overlay frame A onto frame B at matched
+  scale + center (with opacity, or an edge/contour diff) to eyeball whether two circles align.
+  `--strip` does side-by-side hstack today; a true centered overlay is open.
 - **Stutter / cadence metric (issue #23).** A per-interval frame-difference or
   estimated-unique-frames measure to auto-flag choppy spans ("0:00–0:07 is choppy") even
   without a HUD. `--diff` shows per-frame motion today; aggregating it into a metric is open.
@@ -82,6 +85,11 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   readouts), so a state/logic bug whose only symptom is a changing number (a count 4→5→4) is
   localised in seconds. Plus a state-vs-render diagnostic steer (value changes with no nearby
   pixel change ⇒ off-screen logic, go to logs/headless repro). Needs `tesseract` (now in CI).
+- 1.0.0-rc.12 (issue #29 — "the biggest gap for alignment/tuning work"): `--measure W:H:X:Y`
+  bounds a feature in the ROI per frame (cropdetect on a thresholded ROI) → `t,...,diam_px,
+  diam_pct,cx,cy` CSV, giving a feature's diameter (px and % of viewport) and center over time.
+  `--measure-bright` for rings/glows, `--measure-limit` to tune. Robust where a center-row dark
+  run fails (photon ring / disk); reporting % of viewport also covers the dpr/units ask.
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right

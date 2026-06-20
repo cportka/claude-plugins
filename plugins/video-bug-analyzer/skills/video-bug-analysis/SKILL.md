@@ -75,6 +75,15 @@ almost certainly **logic/state** (the body left off-screen, a counter desynced) 
 analysis can't see it. Say so plainly and point the user at logs or a small headless repro
 rather than extracting more frames.
 
+**When the question is "how big / where", not "what's wrong"** (visual-tuning / alignment work
+— the diameter of a shadow or dot as a fraction of the viewport, whether two circles line up),
+measure it: **`--measure W:H:X:Y`** bounds a feature inside the ROI once per sampled frame and
+prints `t,w_px,h_px,diam_px,diam_pct,cx,cy` (diameter in px *and* % of viewport; center in
+full-frame px). Use `--measure-bright` for a ring/glow instead of a dark feature, and
+`--measure-limit` to tune sensitivity. Prefer this over eyeballing or a center-row luma scan —
+a photon ring or accretion disk breaks a single-row scan, but the 2D bounding box is robust.
+Report sizes as **% of viewport**, since recordings may be retina (dpr 2) and raw px mislead.
+
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
 the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact

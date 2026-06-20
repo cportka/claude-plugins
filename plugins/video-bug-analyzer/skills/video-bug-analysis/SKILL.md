@@ -49,6 +49,11 @@ for a manual window; `--window`/`--frame-width` to tune bursts; **`--strip a.png
 stitch a before/after from two frames you already extracted. Tighten the window rather than
 raising fps across the whole clip.
 
+For motion/timing work: **`--list-scenes`** prints the timestamps of detected scene cuts
+(feed them into `--timestamps`); **`--diff`** emits frame-difference images (bright = what
+moved, to confirm motion/direction); **`--label`** burns the source timestamp onto each
+frame (dense/`--diff`/`--timestamps`; best-effort — needs ffmpeg drawtext + a font).
+
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
 the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact

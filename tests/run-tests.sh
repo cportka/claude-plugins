@@ -386,6 +386,27 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "ffprobe not installed (sparse / portrait / legibility)"
     fi
+    # --diff: frame-difference frames (tblend) — should produce diff_*.png.
+    if bash "$SCRIPT" --video "$clip" --start 0 --end 2 --fps 4 --diff --out "$tmp/diff" >/dev/null 2>&1 \
+       && [[ "$(find "$tmp/diff" -name 'diff_*.png' | wc -l)" -gt 0 ]]; then
+      pass "--diff produced frame-difference images"
+    else
+      fail "--diff produced no diff frames"
+    fi
+    # --list-scenes: runs and exits 0 (a synthetic clip may have few/no cuts; just smoke it).
+    if bash "$SCRIPT" --video "$clip" --list-scenes >/dev/null 2>&1; then
+      pass "--list-scenes ran"
+    else
+      fail "--list-scenes errored"
+    fi
+    # --label: must not break extraction — frames are produced whether or not a font exists
+    # (the drawtext probe degrades gracefully).
+    if bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 3 --label --out "$tmp/lab" >/dev/null 2>&1 \
+       && [[ "$(find "$tmp/lab" -name 'frame_*.png' | wc -l)" -gt 0 ]]; then
+      pass "--label still produces frames (burn-in best-effort)"
+    else
+      fail "--label broke extraction"
+    fi
   else
     fail "could not generate test clip with ffmpeg"
   fi
@@ -537,6 +558,26 @@ if bash "$EXTRACT" --help 2>/dev/null | grep -qF -- "--dry-run"; then
 else
   fail "extract-frames --help missing --dry-run"
 fi
+# rc.6 options are documented and dry-run-printable (no ffmpeg needed).
+for f in "--diff" "--label" "--list-scenes"; do
+  if bash "$EXTRACT" --help 2>/dev/null | grep -qF -- "$f"; then
+    pass "extract-frames --help documents $f"
+  else
+    fail "extract-frames --help missing $f"
+  fi
+done
+nf_tmp="$(mktemp -d)"; : >"$nf_tmp/clip.mov"
+if bash "$EXTRACT" --video "$nf_tmp/clip.mov" --fps 4 --diff --dry-run 2>/dev/null | grep -q 'tblend=all_mode=difference'; then
+  pass "--diff --dry-run prints the tblend command"
+else
+  fail "--diff --dry-run did not print tblend"
+fi
+if bash "$EXTRACT" --video "$nf_tmp/clip.mov" --list-scenes --dry-run 2>/dev/null | grep -q 'showinfo'; then
+  pass "--list-scenes --dry-run prints the showinfo command"
+else
+  fail "--list-scenes --dry-run did not print showinfo"
+fi
+rm -rf "$nf_tmp"
 
 # --- Summary --------------------------------------------------------------------------
 printf '\n\033[1mSummary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"

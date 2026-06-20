@@ -10,8 +10,9 @@
 #   extract-frames.sh --video <path> [--start <ts>] [--end <ts>] [--fps <n>]
 #                     [--scene <thr>] [--contact] [--text] [--cols <n>] [--rows <n>]
 #                     [--tile-width <px>] [--timestamps <t1,t2,...>] [--window <sec>]
-#                     [--frame-width <px>] [--max-width <px>] [--out <dir>]
+#                     [--frame-width <px>] [--max-width <px>] [--diff] [--label] [--out <dir>]
 #   extract-frames.sh --strip <before.png,after.png> [--out <dir>]   # stitch existing frames
+#   extract-frames.sh --video <path> --list-scenes [--scene <thr>]   # print scene-cut times
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -47,6 +48,12 @@
 #   --dry-run           Print the exact ffmpeg command(s) this would run, without running
 #                       them (no ffmpeg needed). Lets a live agent that can't load the
 #                       plugin mid-session copy the commands and run them by hand.
+#   --diff              Frame-difference mode: emit diff_*.png where each frame is the change
+#                       from the previous one (bright = motion). Confirms what moved / where.
+#   --label             Burn the source timestamp onto each frame (dense/--diff/--timestamps).
+#                       Best-effort: needs ffmpeg drawtext + a font; silently skipped if not.
+#   --list-scenes       Print the timestamps (seconds) of detected scene cuts and exit; tune
+#                       with --scene <thr> (default 0.3). Feed the cuts into --timestamps.
 #   -h, --help          Show this help.
 #
 # ffmpeg is required. It's already on PATH in many environments; if it's missing this tries
@@ -83,6 +90,10 @@ MAXW="1280"   # ADDED: cap width for dense/scene frames so native 4K doesn't blo
 OUT="./.frames"
 OUT_SET=""    # ADDED: track whether --out was passed (else default per-video, see below)
 DRY_RUN=""    # ADDED: --dry-run prints the exact ffmpeg commands instead of running them
+DIFF=""       # ADDED: --diff emits frame-difference images (motion highlight)
+LABEL=""      # ADDED: --label burns the source timestamp onto each frame (best-effort)
+LIST_SCENES="" # ADDED: --list-scenes prints detected scene-cut timestamps, then exits
+LABEL_VF=""   # computed drawtext filter segment (empty unless --label works on this build)
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -134,6 +145,41 @@ tune_contact_for_source() {
   fi
 }
 
+# ADDED: find a usable TrueType font for --label (drawtext). Echoes a path or nothing.
+_find_font() {
+  local f
+  if command -v fc-match >/dev/null 2>&1; then
+    f="$(fc-match -f '%{file}' 2>/dev/null || true)"
+    [[ -n "$f" && -f "$f" ]] && { printf '%s' "$f"; return 0; }
+  fi
+  for f in /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+           /usr/share/fonts/dejavu/DejaVuSans.ttf \
+           /usr/share/fonts/TTF/DejaVuSans.ttf \
+           /System/Library/Fonts/Supplemental/Arial.ttf; do
+    [[ -f "$f" ]] && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
+
+# ADDED: build the --label drawtext segment, but only after PROBING that drawtext + the font
+# actually work on this ffmpeg build. If anything's off (no drawtext, no font, bad syntax),
+# LABEL_VF stays empty and extraction proceeds unlabeled — the label never breaks a run.
+build_label_vf() {
+  LABEL_VF=""
+  [[ -n "$LABEL" && -z "$DRY_RUN" ]] || return 0
+  command -v ffmpeg >/dev/null 2>&1 || return 0
+  local font filt
+  font="$(_find_font || true)"
+  [[ -n "$font" ]] || { echo "Note: --label found no usable font; skipping timestamp burn-in." >&2; return 0; }
+  filt="drawtext=fontfile=${font}:text='%{pts\\:hms}':x=10:y=10:fontsize=20:fontcolor=yellow:box=1:boxcolor=black@0.5"
+  if ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x64:d=0.1" \
+       -vf "$filt" -frames:v 1 -f null - >/dev/null 2>&1; then
+    LABEL_VF=",$filt"
+  else
+    echo "Note: --label isn't supported by this ffmpeg/font; skipping timestamp burn-in." >&2
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --video) VIDEO="${2:-}"; shift 2 ;;
@@ -154,6 +200,9 @@ while [[ $# -gt 0 ]]; do
     --max-width) MAXW="${2:-}"; shift 2 ;;   # ADDED: cap for dense/scene frame width
     --out)   OUT="${2:-}";   OUT_SET=1; shift 2 ;;   # CHANGED: mark explicit override
     --dry-run) DRY_RUN=1; shift ;;                   # ADDED: print ffmpeg commands, don't run
+    --diff)  DIFF=1; shift ;;                         # ADDED: frame-difference (motion) frames
+    --label) LABEL=1; shift ;;                        # ADDED: burn source timestamp on frames
+    --list-scenes) LIST_SCENES=1; shift ;;            # ADDED: print scene-cut timestamps, exit
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
@@ -322,6 +371,24 @@ if [[ -n "$STRIP" ]]; then
   exit 0
 fi
 
+# ADDED: --list-scenes — print the timestamps (seconds, one per line) of detected scene cuts,
+# then exit. Feed the interesting ones back into --timestamps. Threshold from --scene (def 0.3).
+if [[ -n "$LIST_SCENES" ]]; then
+  _thr="${SCENE:-0.3}"
+  if [[ -n "$DRY_RUN" ]]; then
+    run_ff -hide_banner -nostats -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" -f null -
+    echo "(dry run — the command above prints showinfo lines; their pts_time values are the cuts)"
+    exit 0
+  fi
+  echo "Scene cuts (threshold=$_thr) in $VIDEO — pts_time seconds:" >&2
+  ffmpeg -hide_banner -nostats -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" -f null - 2>&1 \
+    | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' || true
+  exit 0
+fi
+
+# ADDED: prepare the optional --label timestamp-burn-in segment (probed; empty if unsupported).
+build_label_vf
+
 # ADDED: heads-up if the clip is sparser than the requested fps (dense/contact/timestamps).
 [[ -z "$SCENE" && -z "$DRY_RUN" ]] && warn_if_sparse "$FPS"
 
@@ -356,7 +423,7 @@ if [[ -n "$TIMESTAMPS" ]]; then
     echo "Timestamp $t -> burst [$bstart,$bend] @${FPS}fps -> $OUT/ts${idx}_*" >&2
     run_ff -hide_banner -loglevel error \
       -ss "$bstart" -to "$bend" -i "$VIDEO" "${VFR[@]}" \
-      -vf "fps=${FPS},scale=${FRAMEW}:-1" \
+      -vf "fps=${FPS},scale=${FRAMEW}:-1${LABEL_VF}" \
       "$OUT/ts${idx}_%03d.png"
     # Before/after strip from the first and last frame of the burst. (Skipped in --dry-run,
     # since it depends on the frames the burst above would have written.)
@@ -373,24 +440,34 @@ elif [[ -n "$CONTACT" ]]; then
   # Contact-sheet mode: scale each selected frame down and tile them into a grid, so the
   # whole timeline is one image (or a few). Spills into contact_0002.png, ... if needed.
   [[ -n "$DRY_RUN" ]] || tune_contact_for_source   # portrait auto-cols + illegibility (issue #14)
+  [[ -n "$LABEL" ]] && echo "Note: --label isn't applied to contact tiles; use it with dense/--diff/--timestamps." >&2
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
     -vf "${SELECT},scale=${TILEW}:-1,tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
+elif [[ -n "$DIFF" ]]; then
+  # ADDED: frame-difference mode — each frame is |this − previous| (tblend), so motion lights
+  # up. Scan consecutive diffs to see what moved and infer direction (issue #16).
+  set_vfr_flag
+  echo "Frame-diff mode (fps=$FPS) -> $OUT (bright = changed pixels between frames)" >&2
+  run_ff -hide_banner -loglevel error \
+    "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
+    -vf "fps=${FPS},tblend=all_mode=difference,scale='min(${MAXW},iw)':-1${LABEL_VF}" \
+    "$OUT/diff_%04d.png"
 elif [[ -n "$SCENE" ]]; then
   echo "Scene-change mode (threshold=$SCENE) -> $OUT" >&2
   # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "${SELECT},scale='min(${MAXW},iw)':-1" \
+    -vf "${SELECT},scale='min(${MAXW},iw)':-1${LABEL_VF}" \
     "$OUT/scene_%04d.png"
 else
   echo "Dense mode (fps=$FPS) -> $OUT" >&2
   # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" \
-    -vf "${SELECT},scale='min(${MAXW},iw)':-1" \
+    -vf "${SELECT},scale='min(${MAXW},iw)':-1${LABEL_VF}" \
     "$OUT/frame_%04d.png"
 fi
 

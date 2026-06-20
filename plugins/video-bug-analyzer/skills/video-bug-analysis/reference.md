@@ -54,6 +54,13 @@ tiles downscale the source so far that small UI text will be illegible.
 nothing written. Use it to replicate the workflow by hand when the plugin isn't loaded in the
 current session, or to inspect/tweak a command before running it.
 
+**Motion/timing options:** `--list-scenes` prints detected scene-cut timestamps (seconds; tune
+with `--scene <thr>`, default 0.3) so you can feed the interesting ones into `--timestamps`.
+`--diff` emits frame-difference images (`tblend`) where bright pixels = change between
+consecutive frames — scan them to see what moved and infer direction. `--label` burns the
+source timestamp (`drawtext`) onto each frame in dense/`--diff`/`--timestamps` modes (not
+contact tiles); it's best-effort and silently skips if the ffmpeg build lacks drawtext/a font.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

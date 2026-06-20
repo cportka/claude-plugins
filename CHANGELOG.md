@@ -5,6 +5,21 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.6] - 2026-06-20
+
+Implements the three backlog ideas from the black-hole-visualizer feedback (#16) as new
+options. `video-bug-analyzer` → 1.0.0-rc.6.
+
+### Added
+- **`--list-scenes`**: prints the timestamps (seconds) of detected scene cuts and exits —
+  auto-pick interesting moments to feed into `--timestamps`. Threshold via `--scene` (def 0.3).
+- **`--diff`**: frame-difference mode (`tblend`) — each frame is the change from the previous
+  one (bright = motion), to confirm what moved and infer direction.
+- **`--label`**: burns the source timestamp (`drawtext`) onto each frame in
+  dense/`--diff`/`--timestamps` modes. Best-effort — a runtime drawtext+font *probe* means it
+  silently no-ops (never breaks a run) when the ffmpeg build lacks drawtext or a font.
+- Tests for all three (e2e + always-on dry-run/help checks).
+
 ## [1.0.0-rc.5] - 2026-06-20
 
 From the black-hole-visualizer dogfood (#16). `video-bug-analyzer` → 1.0.0-rc.5.
@@ -228,6 +243,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.6]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.6
 [1.0.0-rc.5]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.5
 [1.0.0-rc.4]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.4
 [1.0.0-rc.3]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.3

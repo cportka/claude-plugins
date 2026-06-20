@@ -436,6 +436,20 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a black test clip (--blackdetect)"
     fi
+    # --ocr-roi: OCR a region per frame into a t,text CSV (issue #27). Assert the pipeline
+    # (ffmpeg crop+fps sampling -> tesseract -> CSV) regardless of exact OCR text: header plus
+    # one data row per sampled frame. Needs tesseract; SKIP if it isn't installed.
+    if command -v tesseract >/dev/null 2>&1; then
+      _ocr="$(bash "$SCRIPT" --video "$clip" --start 0 --end 2 --fps 2 --ocr-roi 160:120:0:0 --ocr-digits 2>/dev/null || true)"
+      if [[ "$(head -n1 <<<"$_ocr")" == "t,text" ]] \
+         && [[ "$(grep -c '^[0-9]' <<<"$_ocr")" -ge 2 ]]; then
+        pass "--ocr-roi emits a t,text timeline (header + rows)"
+      else
+        fail "--ocr-roi did not emit a valid t,text CSV"
+      fi
+    else
+      skip "tesseract not installed (--ocr-roi e2e)"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -602,7 +616,7 @@ rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--version"; do
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--version"; do
   if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
@@ -636,6 +650,14 @@ if grep -q 'blackdetect=d=0.1:pic_th=0.9' <<<"$_bd_dry" && grep -q 'crop=600:564
   pass "--blackdetect --dry-run prints the (cropped) blackdetect command"
 else
   fail "--blackdetect --dry-run did not print the blackdetect command"
+fi
+# --ocr-roi --dry-run prints the crop+fps sampling command and a tesseract note (issue #27),
+# and needs no tesseract to do so.
+_ocr_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --ocr-roi 180:40:20:8 --fps 2 --dry-run 2>/dev/null || true)"
+if grep -q 'crop=180:40:20:8' <<<"$_ocr_dry" && grep -qi 'tesseract' <<<"$_ocr_dry"; then
+  pass "--ocr-roi --dry-run prints the sampling command + tesseract step"
+else
+  fail "--ocr-roi --dry-run did not print the expected command"
 fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.

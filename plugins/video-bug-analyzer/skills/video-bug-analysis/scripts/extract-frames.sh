@@ -15,6 +15,7 @@
 #   extract-frames.sh --strip <before.png,after.png> [--out <dir>]   # stitch existing frames
 #   extract-frames.sh --video <path> --list-scenes [--scene <thr>]   # print scene-cut times
 #   extract-frames.sh --video <path> --blackdetect [--crop <W:H:X:Y>] # find black-out spans
+#   extract-frames.sh --video <path> --ocr-roi <W:H:X:Y> [--fps <n>]  # OCR a region -> t,text CSV
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -67,6 +68,14 @@
 #   --black-min <sec>   Minimum black-span duration to report. Default: 0.1.
 #   --black-ratio <r>   Fraction of pixels that must be black for a frame to count (pic_th,
 #                       0..1). Default: 0.98. Lower (e.g. 0.90) if an overlay keeps pixels lit.
+#   --ocr-roi <W:H:X:Y> Value tracker: OCR a small region (a panel readout — body counts, a
+#                       Speed value) once per sampled frame and print a "t,text" CSV to stdout.
+#                       Use when the symptom is a NUMBER changing (e.g. a count 4->5->4), not a
+#                       render artifact — a value timeline localises a state/logic bug in
+#                       seconds. Sample rate from --fps; honors --start/--end. Needs tesseract
+#                       (the one mode beyond ffmpeg); prints an install hint if it's missing.
+#   --ocr-digits        Restrict OCR to digits and a few separators (cleaner for numeric
+#                       readouts: counts, speeds, timers). Use with --ocr-roi.
 #   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
@@ -82,6 +91,7 @@
 #   extract-frames.sh --video bug.mov --fps 8 --contact --dry-run    # print cmds, don't run
 #   extract-frames.sh --video bug.mov --fps 8 --crop 320:120:40:900  # zoom an FPS/HUD region
 #   extract-frames.sh --video bug.mov --blackdetect --crop 600:564:0:0  # find a black-screen bug
+#   extract-frames.sh --video bug.mov --ocr-roi 180:40:20:8 --ocr-digits --fps 2  # count timeline
 #
 set -euo pipefail
 
@@ -118,6 +128,8 @@ CROP_VF=""    # computed crop filter segment (empty unless --crop given)
 BLACKDETECT="" # ADDED (issue #25): --blackdetect finds blacked-out spans, then exits
 BLACK_D="0.1"  # ADDED: --black-min, minimum black-span duration (seconds) to report
 BLACK_RATIO="0.98" # ADDED: --black-ratio, fraction of pixels that must be black (pic_th)
+OCR_ROI=""     # ADDED (issue #27): --ocr-roi W:H:X:Y -> OCR a region per frame -> t,text CSV
+OCR_DIGITS=""  # ADDED: --ocr-digits restricts OCR to a numeric whitelist (counts/readouts)
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -272,6 +284,8 @@ while [[ $# -gt 0 ]]; do
     --blackdetect) BLACKDETECT=1; shift ;;            # ADDED (issue #25): find black spans, exit
     --black-min) BLACK_D="${2:-}"; shift 2 ;;         # ADDED: min black-span duration (seconds)
     --black-ratio) BLACK_RATIO="${2:-}"; shift 2 ;;   # ADDED: black-pixel fraction (pic_th)
+    --ocr-roi) OCR_ROI="${2:-}"; shift 2 ;;           # ADDED (issue #27): OCR a region -> CSV
+    --ocr-digits) OCR_DIGITS=1; shift ;;              # ADDED: numeric-only OCR whitelist
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -463,6 +477,45 @@ run_blackdetect() {
   [[ -z "$dur" ]] && echo "Note: ffprobe not found — can't classify permanent-vs-transient (showing spans only)." >&2
 }
 
+# ADDED (issue #27): ROI value tracker — sample a small region per frame and OCR it into a
+# "t,text" CSV (on stdout). For state/logic bugs the symptom is a panel readout changing
+# (a count going 4->5->4), not a render artifact — a value timeline localises it in seconds
+# where staring at frames can't. Needs tesseract (the one mode beyond ffmpeg); degrades with a
+# clear install hint if it's missing. Uses PRE_ARGS, so it must run after those are built.
+run_ocr_roi() {
+  local roi="$1"
+  local vf="crop=${roi},fps=${FPS}"
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.png"; printf '\n'
+    echo "# then OCR each f_*.png with tesseract --psm 7 -> rows of: t,\"text\"  (t = start + (frame-1)/${FPS})"
+    return 0
+  fi
+  if ! command -v tesseract >/dev/null 2>&1; then
+    echo "Error: --ocr-roi needs tesseract (OCR) — the one mode beyond ffmpeg." >&2
+    echo "Install: sudo apt-get install -y tesseract-ocr  |  brew install tesseract  — then re-run." >&2
+    exit 2
+  fi
+  local d; d="$(mktemp -d)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.png"
+  local cfg=()
+  # Numeric whitelist for count/speed readouts — cuts OCR noise when --ocr-digits is set.
+  [[ -n "$OCR_DIGITS" ]] && cfg=(-c "tessedit_char_whitelist=0123456789.,:/x %-")
+  local base; base="$(to_seconds "${START:-0}")"
+  echo "t,text"
+  local i=0 f t txt
+  for f in "$d"/f_*.png; do
+    [[ -e "$f" ]] || break
+    i=$((i + 1))
+    t="$(awk -v i="$i" -v fps="$FPS" -v b="$base" 'BEGIN{ printf "%.3f", b + (i-1)/fps }')"
+    # --psm 7: treat the ROI as a single text line. Collapse whitespace; trim.
+    txt="$(tesseract "$f" stdout --psm 7 "${cfg[@]}" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ *$//' || true)"
+    printf '%s,"%s"\n' "$t" "${txt//\"/\"\"}"   # CSV-quote (double any embedded quotes)
+  done
+  rm -rf "$d"
+  echo "OCR timeline: $i samples over ROI ${roi} at ${FPS} fps. If values change with no nearby" >&2
+  echo "pixel change, the cause is likely logic/state (off-screen) — check logs / a headless repro." >&2
+}
+
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
 
 # ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
@@ -529,6 +582,13 @@ PRE_ARGS=()
 # ADDED (issue #25): blackdetect is an analysis mode (no PNGs) — report spans and exit.
 if [[ -n "$BLACKDETECT" ]]; then
   run_blackdetect
+  feedback_hint
+  exit 0
+fi
+
+# ADDED (issue #27): --ocr-roi is an analysis mode — emit a t,text value timeline and exit.
+if [[ -n "$OCR_ROI" ]]; then
+  run_ocr_roi "$OCR_ROI"
   feedback_hint
   exit 0
 fi

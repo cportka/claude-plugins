@@ -23,18 +23,19 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - Auto-fallback to a contact sheet when frame count would blow a token budget.
 - Auto-enable `--text` when a sampled frame looks text/UI-heavy (needs an OCR/edge-density
   heuristic — deferred from the rc.3 dogfood; manual `--text` for now).
-- **OCR an on-screen HUD into a time series (issue #23).** Perf recordings often carry a
-  visible FPS/frame-time stamp; a mode that crops a chosen region, OCRs it per frame, and
-  emits a CSV/plot of FPS-over-time would beat eyeballing a zoomed crop. Needs an OCR
-  dependency (e.g. tesseract) — heavier than the current ffmpeg-only footprint; deferred.
+- **Numeric plot / FPS-over-time chart (extends `--ocr-roi`, issues #23/#27).** `--ocr-roi`
+  emits the `t,text` timeline; auto-parsing numbers and rendering a plot (or min/max/dips) on
+  top of it would beat reading the CSV by eye. Open (the timeline ships in rc.11).
 - **Stutter / cadence metric (issue #23).** A per-interval frame-difference or
   estimated-unique-frames measure to auto-flag choppy spans ("0:00–0:07 is choppy") even
   without a HUD. `--diff` shows per-frame motion today; aggregating it into a metric is open.
 - **Phase detection** to split "intro" vs "steady state" so a report can compare FPS across
   phases (builds on `--list-scenes`).
-- **Panel/HUD OCR at the failure frame (issue #25).** Auto-read on-screen control values at a
-  bug timestamp (e.g. "Stars 4 / Speed ×1, cursor on Black holes +") to reconstruct the
-  trigger. Same OCR dependency as the HUD-FPS idea; deferred.
+- **App-state / console-log hook at flagged timestamps (issue #27).** Optional bridge to
+  capture console logs or a state dump at a bug timestamp. Render bugs are perfect for pixels;
+  state-machine bugs (the v0.14.5 count-drop) need state. No ffmpeg-native source — needs the
+  app/recording side to emit logs; open. (`--ocr-roi` + the state-vs-render steer is the
+  in-tool half of this.)
 - **Cursor / click tracking (issue #25).** Surface pointer position + click events; the cursor
   on a button at the failure frame identifies the trigger action. No ffmpeg-native source for
   this (needs the recording tool to capture input events); open.
@@ -76,6 +77,11 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   (sustained to EOF) vs transient — the key signature for a stuck/crashed renderer. Honors
   `--crop` so a static UI overlay can be excluded before the black-ratio test (`--black-ratio`,
   `--black-min`); together with rc.9's `--crop` this automates the reporter's two manual steps.
+- 1.0.0-rc.11 (issue #27, also asked in #23/#25 — "the single biggest gap"): `--ocr-roi
+  W:H:X:Y` OCRs a panel readout per frame into a `t,text` CSV (`--ocr-digits` for numeric
+  readouts), so a state/logic bug whose only symptom is a changing number (a count 4→5→4) is
+  localised in seconds. Plus a state-vs-render diagnostic steer (value changes with no nearby
+  pixel change ⇒ off-screen logic, go to logs/headless repro). Needs `tesseract` (now in CI).
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right

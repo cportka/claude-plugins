@@ -80,6 +80,17 @@ and `--black-ratio <r>` (fraction of pixels that must be black, `pic_th`, defaul
 real blackout can fall under the ratio and be missed — crop to the app canvas first with
 `--crop W:H:X:Y` (and/or lower `--black-ratio`, e.g. 0.90). Honors `--start`/`--end`.
 
+**ROI value tracker (`--ocr-roi W:H:X:Y`):** OCRs a small region (a panel readout) once per
+sampled frame and prints a `t,text` CSV to stdout — a *value timeline*. This is the tool for a
+**state/logic bug whose symptom is a number, not a render artifact** (a body count flickering
+4→5→4, a Speed value, a timer): scanning frames can't reveal it, but the timeline shows exactly
+when the value jumped. `--ocr-digits` restricts recognition to digits + a few separators
+(cleaner for counts/speeds); `--fps` sets the sample rate; honors `--start`/`--end`. Requires
+`tesseract` — the only mode that needs more than ffmpeg; it prints an apt/brew install hint and
+exits if tesseract isn't found. **Diagnostic steer:** if the value changes but no pixels near it
+change, the cause is off-screen logic/state — stop extracting frames and move to console logs or
+a small headless repro (the v0.14.5 dogfood needed a headless sim harness, not more frames).
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

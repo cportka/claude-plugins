@@ -5,6 +5,31 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.11] - 2026-06-20
+
+From the OneStillPoint v0.14.5 dogfood (#27): chasing "adding a body sometimes drops the
+count" — a **state/logic bug whose only symptom was a panel number changing** (4→5→4), with
+the offending bodies leaving *off-screen*. Frame analysis alone couldn't root-cause it; the
+tester had to write a headless sim harness. The repeatedly-requested ROI value tracker (asked
+in #23, #25, and #27 — "the single biggest gap") closes most of that gap.
+`video-bug-analyzer` → 1.0.0-rc.11.
+
+### Added
+- **`--ocr-roi W:H:X:Y`** — value tracker: OCRs a small region (a panel readout — body counts,
+  a Speed value, a timer) once per sampled frame and prints a `t,text` CSV to stdout, so a
+  number changing over time is localised in seconds where staring at frames can't help.
+  **`--ocr-digits`** restricts recognition to digits + a few separators (cleaner for numeric
+  readouts); `--fps` sets the sample rate; honors `--start`/`--end`. Requires `tesseract` (the
+  one mode beyond ffmpeg) — prints an apt/brew install hint and exits if it's missing. CI now
+  installs `tesseract-ocr` so the e2e runs. Documented in `--help`, SKILL.md, reference.md.
+- **State-vs-render diagnostic steer** (SKILL.md + reference.md + an on-run note): if a tracked
+  value changes with no correlated pixel change, the cause is off-screen logic/state — say so
+  and point at logs / a small headless repro instead of extracting more frames.
+
+### Notes
+- Deferred to IMPROVEMENTS: an app-state/console-log hook at flagged timestamps (#27), cursor/
+  click tracking, and contact-sheet timestamp burn-in + a `frame,t` CSV index.
+
 ## [1.0.0-rc.10] - 2026-06-20
 
 From a black-screen RCA dogfood on OneStillPoint v0.14.4 (#25), where the analysis nailed the
@@ -327,6 +352,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.11]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.11
 [1.0.0-rc.10]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.10
 [1.0.0-rc.9]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.9
 [1.0.0-rc.8]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.8

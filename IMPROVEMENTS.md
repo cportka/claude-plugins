@@ -32,6 +32,15 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   without a HUD. `--diff` shows per-frame motion today; aggregating it into a metric is open.
 - **Phase detection** to split "intro" vs "steady state" so a report can compare FPS across
   phases (builds on `--list-scenes`).
+- **Panel/HUD OCR at the failure frame (issue #25).** Auto-read on-screen control values at a
+  bug timestamp (e.g. "Stars 4 / Speed ×1, cursor on Black holes +") to reconstruct the
+  trigger. Same OCR dependency as the HUD-FPS idea; deferred.
+- **Cursor / click tracking (issue #25).** Surface pointer position + click events; the cursor
+  on a button at the failure frame identifies the trigger action. No ffmpeg-native source for
+  this (needs the recording tool to capture input events); open.
+- **Contact-sheet timestamp index (issue #25).** Burn `t` onto overview-sheet tiles and emit a
+  `frame,t` CSV. `--label` burns `t` in dense/`--diff`/`--timestamps` today; per-tile drawtext
+  through the `tile` filter is harder — open.
 
 **Hard constraint (not fixable in the plugin)**
 - Claude Code's auto-mode classifier will **not silently run a download-and-execute of an
@@ -63,6 +72,10 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - 1.0.0-rc.9 (issue #23): `--crop W:H:X:Y` zooms a UI region (on-screen FPS/HUD, counter,
   small label) by cropping before scaling — legible at low token cost, in every mode. The
   tester's hand-cropped HUD strip was "the fastest path to the diagnosis"; this makes it a flag.
+- 1.0.0-rc.10 (issue #25): `--blackdetect` finds blacked-out spans and flags PERMANENT
+  (sustained to EOF) vs transient — the key signature for a stuck/crashed renderer. Honors
+  `--crop` so a static UI overlay can be excluded before the black-ratio test (`--black-ratio`,
+  `--black-min`); together with rc.9's `--crop` this automates the reporter's two manual steps.
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right

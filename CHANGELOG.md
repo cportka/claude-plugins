@@ -5,6 +5,28 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.10] - 2026-06-20
+
+From a black-screen RCA dogfood on OneStillPoint v0.14.4 (#25), where the analysis nailed the
+bug but the tester had to hand-crop the canvas and write a custom luminance trace because
+`blackdetect` was fooled by a persistent UI panel. `video-bug-analyzer` → 1.0.0-rc.10.
+
+### Added
+- **`--blackdetect`** finds blacked-out spans and classifies each as **PERMANENT** (sustained
+  to EOF — a stuck/crashed renderer) or **transient** (a flash), printing
+  `black START -> END (dur) — …`. Permanence uses `ffprobe` for the source duration; spans
+  still list without it. Honors `--crop` (so a static UI overlay — the dogfood's lil-gui panel
+  — can be excluded before the black-ratio test, the exact manual step the reporter did by
+  hand) and `--start`/`--end`. Tunables: **`--black-min <sec>`** (min span, default 0.1) and
+  **`--black-ratio <r>`** (`pic_th`, default 0.98; lower if an overlay keeps pixels lit).
+  Documented in `--help`, SKILL.md, reference.md; covered by e2e + dry-run + help-doc tests.
+
+### Notes
+- Pairs with rc.9's `--crop`: the reporter's two manual steps (crop the render canvas, then
+  test for black) are now `--blackdetect --crop …`.
+- Deferred to IMPROVEMENTS as future ideas: panel/HUD OCR at the failure frame, cursor/click
+  tracking, and timestamp burn-in on the contact sheet + a `frame,t` CSV index.
+
 ## [1.0.0-rc.9] - 2026-06-20
 
 From an FPS-stamped perf-recording dogfood on the Claude.ai web app (#23), where the tester
@@ -305,6 +327,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.10]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.10
 [1.0.0-rc.9]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.9
 [1.0.0-rc.8]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.8
 [1.0.0-rc.7]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.7

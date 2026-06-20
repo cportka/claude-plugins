@@ -415,6 +415,27 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "--crop broke extraction"
     fi
+    # --blackdetect: a clip that is bright for 2s then black to EOF should report a PERMANENT
+    # span (issue #25). Build it by concatenating testsrc + a black color source.
+    if ffmpeg -hide_banner -loglevel error \
+         -f lavfi -i "testsrc=duration=2:size=320x240:rate=10" \
+         -f lavfi -i "color=c=black:size=320x240:rate=10:duration=2" \
+         -filter_complex "[0:v][1:v]concat=n=2:v=1[v]" -map "[v]" "$tmp/black.mp4" -y 2>/dev/null; then
+      _bd="$(bash "$SCRIPT" --video "$tmp/black.mp4" --blackdetect 2>/dev/null || true)"
+      if grep -q 'black ' <<<"$_bd"; then
+        pass "--blackdetect found the blacked-out span"
+      else
+        fail "--blackdetect found no black span"
+      fi
+      # ffprobe is present in CI, so the span to EOF should classify PERMANENT.
+      if grep -q 'PERMANENT' <<<"$_bd"; then
+        pass "--blackdetect classified the sustained span PERMANENT"
+      else
+        fail "--blackdetect did not classify the sustained span PERMANENT"
+      fi
+    else
+      skip "could not build a black test clip (--blackdetect)"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -581,7 +602,7 @@ rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--version"; do
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--version"; do
   if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
@@ -607,6 +628,14 @@ if grep -q 'crop=320:120:40:900' <<<"$_crop_dry"; then
   pass "--crop --dry-run inserts the crop filter"
 else
   fail "--crop --dry-run did not print crop="
+fi
+# --blackdetect --dry-run prints the blackdetect command, with --crop prepended (issue #25).
+_bd_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --blackdetect --crop 600:564:0:0 --black-ratio 0.9 --dry-run 2>/dev/null || true)"
+# %q escapes the inter-filter comma (\,), so match each filter segment separately.
+if grep -q 'blackdetect=d=0.1:pic_th=0.9' <<<"$_bd_dry" && grep -q 'crop=600:564:0:0' <<<"$_bd_dry"; then
+  pass "--blackdetect --dry-run prints the (cropped) blackdetect command"
+else
+  fail "--blackdetect --dry-run did not print the blackdetect command"
 fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.

@@ -59,6 +59,12 @@ To zoom a small UI region (an on-screen FPS counter, a HUD, a tiny label), pass
 out and scaled up to fill the frame, so a few pixels become legible and tokens stay low.
 Works in every mode (dense/scene/contact/diff/timestamps); `iw`/`ih` expressions allowed.
 
+For a **black/blank-screen bug**, run **`--blackdetect`**: it reports each blacked-out span
+as `black START -> END (dur) — PERMANENT/transient`, where *permanent* means it never
+recovers before EOF — the key diagnostic for a stuck/crashed renderer. If a static UI overlay
+(a settings panel, a HUD) keeps a few pixels lit, blackdetect can miss the blackout; crop to
+the app canvas first with `--crop` (and/or lower `--black-ratio`, default 0.98).
+
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
 the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact

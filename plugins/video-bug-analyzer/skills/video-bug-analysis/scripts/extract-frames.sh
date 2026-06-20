@@ -54,6 +54,7 @@
 #                       Best-effort: needs ffmpeg drawtext + a font; silently skipped if not.
 #   --list-scenes       Print the timestamps (seconds) of detected scene cuts and exit; tune
 #                       with --scene <thr> (default 0.3). Feed the cuts into --timestamps.
+#   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
 # ffmpeg is required. It's already on PATH in many environments; if it's missing this tries
@@ -427,8 +428,14 @@ if [[ -n "$LIST_SCENES" ]]; then
     exit 0
   fi
   echo "Scene cuts (threshold=$_thr) in $VIDEO — pts_time seconds:" >&2
-  ffmpeg -hide_banner -nostats -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" -f null - 2>&1 \
-    | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' || true
+  # CHANGED (issue #21): capture, then guide the user if no cuts were found at this threshold.
+  _cuts="$(ffmpeg -hide_banner -nostats -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" \
+    -f null - 2>&1 | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' || true)"
+  if [[ -n "$_cuts" ]]; then
+    printf '%s\n' "$_cuts"
+  else
+    echo "No scene cuts at threshold ${_thr}. Try a lower --scene (e.g. 0.1), or sample steadily with --fps." >&2
+  fi
   feedback_hint
   exit 0
 fi

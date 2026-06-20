@@ -5,6 +5,27 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.9] - 2026-06-20
+
+From an FPS-stamped perf-recording dogfood on the Claude.ai web app (#23), where the tester
+hand-cropped the on-screen HUD and zoomed it to read FPS/res per second — "the fastest path
+to the diagnosis." `video-bug-analyzer` → 1.0.0-rc.9.
+
+### Added
+- **`--crop W:H:X:Y`** crops a region (ffmpeg geometry) *before* scaling, so a small UI area —
+  an on-screen FPS/HUD readout, a counter, a tiny status label — is zoomed to fill the frame
+  and becomes legible while tokens stay low. Works in every mode (dense/scene/contact/diff/
+  timestamps); `iw`/`ih` expressions are allowed (e.g. `--crop iw/4:ih/4:0:0`). Documented in
+  `--help`, SKILL.md, and reference.md, with crop e2e + dry-run + help-doc tests.
+
+### Notes
+- Already shipped in earlier RCs (the tester was on rc.7): the end-of-run pre-filled feedback
+  link (rc.7), the `repo-bootstrap` `/plugin …` one-paste CLI fallback (rc.7), and scene-cut
+  detection via `--list-scenes`/`--scene` (rc.6).
+- Deferred to IMPROVEMENTS as future ideas: OCR of an on-screen HUD into an FPS-over-time CSV,
+  and an automatic stutter/cadence metric. The session-start hot-load gap is a Claude Code
+  architecture limit (mitigated by `--dry-run` + "enable one session ahead").
+
 ## [1.0.0-rc.8] - 2026-06-20
 
 From a `git clone` dogfood on the Claude.ai web app (#21). `video-bug-analyzer` → 1.0.0-rc.8.
@@ -284,6 +305,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.9]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.9
 [1.0.0-rc.8]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.8
 [1.0.0-rc.7]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.7
 [1.0.0-rc.6]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.6

@@ -21,10 +21,17 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 
 **Ideas**
 - Auto-fallback to a contact sheet when frame count would blow a token budget.
-- Optional per-frame timestamp burn-in for clearer timeline references.
-- A crop/region flag to zoom on a UI area and cut tokens.
 - Auto-enable `--text` when a sampled frame looks text/UI-heavy (needs an OCR/edge-density
   heuristic — deferred from the rc.3 dogfood; manual `--text` for now).
+- **OCR an on-screen HUD into a time series (issue #23).** Perf recordings often carry a
+  visible FPS/frame-time stamp; a mode that crops a chosen region, OCRs it per frame, and
+  emits a CSV/plot of FPS-over-time would beat eyeballing a zoomed crop. Needs an OCR
+  dependency (e.g. tesseract) — heavier than the current ffmpeg-only footprint; deferred.
+- **Stutter / cadence metric (issue #23).** A per-interval frame-difference or
+  estimated-unique-frames measure to auto-flag choppy spans ("0:00–0:07 is choppy") even
+  without a HUD. `--diff` shows per-frame motion today; aggregating it into a metric is open.
+- **Phase detection** to split "intro" vs "steady state" so a report can compare FPS across
+  phases (builds on `--list-scenes`).
 
 **Hard constraint (not fixable in the plugin)**
 - Claude Code's auto-mode classifier will **not silently run a download-and-execute of an
@@ -53,6 +60,9 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - 1.0.0-rc.7 (issue #19): end-of-run one-click pre-filled feedback link (auto, on stderr;
   `VBA_NO_FEEDBACK_HINT=1` to hide); `--version`; `repo-bootstrap` now prints a `/plugin …`
   one-paste CLI fallback + documents the auto-permission gate; "enable one session ahead" docs.
+- 1.0.0-rc.9 (issue #23): `--crop W:H:X:Y` zooms a UI region (on-screen FPS/HUD, counter,
+  small label) by cropping before scaling — legible at low token cost, in every mode. The
+  tester's hand-cropped HUD strip was "the fastest path to the diagnosis"; this makes it a flag.
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right

@@ -54,6 +54,11 @@ For motion/timing work: **`--list-scenes`** prints the timestamps of detected sc
 moved, to confirm motion/direction); **`--label`** burns the source timestamp onto each
 frame (dense/`--diff`/`--timestamps`; best-effort — needs ffmpeg drawtext + a font).
 
+To zoom a small UI region (an on-screen FPS counter, a HUD, a tiny label), pass
+**`--crop W:H:X:Y`** (ffmpeg geometry, e.g. `--crop 320:120:40:900`): the region is cropped
+out and scaled up to fill the frame, so a few pixels become legible and tokens stay low.
+Works in every mode (dense/scene/contact/diff/timestamps); `iw`/`ih` expressions allowed.
+
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
 the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact

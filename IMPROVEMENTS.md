@@ -45,11 +45,21 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   mismatched resolutions; `ffprobe` sparse-capture warning.
 - 1.0.0-rc.4: broadened the skill trigger to non-bug "read the screen" tasks; portrait
   auto-`--cols 2` + `--portrait`; contact legibility guard (warns on heavy downscale).
+- 1.0.0-rc.5: `--dry-run` prints the exact ffmpeg commands without running them, so a live
+  agent that can't load the plugin mid-session can replicate the workflow by hand (issue #16).
 
 **Ideas (cont.)**
 - A broader catalog/`plugin.json` description (or a sibling "read-a-screen-recording" skill)
   so the plugin is discoverable for non-bug reads, not just bugs (issue #14). Deferred to keep
   the locked submission copy stable through RCs.
+- Scene-cut/keyframe detector that *prints the timestamps* of detected cuts to auto-pick
+  interesting moments (issue #16). (`--scene` already extracts at cuts; this would surface
+  their times.)
+- Frame-diff / optical-flow overlay to confirm motion direction instead of eyeballing strips
+  (issue #16) — heavier ffmpeg filtergraph; needs care + a font/filter availability check.
+- Optional per-frame timestamp burn-in (`drawtext`) — the #16 dogfooder did this by hand and
+  found it valuable; gated on `drawtext`/freetype being compiled into the ffmpeg build.
+  (A high-fps burst around a flagged moment is already `--timestamps <t> --fps 12 --window`.)
 
 **Still open**
 - A slim, self-hosted ffmpeg release asset on this repo (allowlisted, lighter than BtbN's

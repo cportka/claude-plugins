@@ -517,6 +517,27 @@ else
   fail "report-feedback.sh did not emit URL + report"
 fi
 
+# --dry-run prints the ffmpeg command without running it (no ffmpeg required, no files).
+section "--dry-run command printing"
+dr_tmp="$(mktemp -d)"; : >"$dr_tmp/clip.mov"
+dr_out="$(bash "$EXTRACT" --video "$dr_tmp/clip.mov" --fps 8 --contact --out "$dr_tmp/o" --dry-run 2>/dev/null)"
+if grep -q '^ffmpeg ' <<<"$dr_out" && grep -q 'tile=' <<<"$dr_out"; then
+  pass "--dry-run prints a copy-pasteable ffmpeg command"
+else
+  fail "--dry-run did not print an ffmpeg command"
+fi
+if [[ ! -d "$dr_out/o" && ! -e "$dr_tmp/o" ]]; then
+  pass "--dry-run wrote no output dir"
+else
+  fail "--dry-run created output unexpectedly"
+fi
+rm -rf "$dr_tmp"
+if bash "$EXTRACT" --help 2>/dev/null | grep -qF -- "--dry-run"; then
+  pass "extract-frames --help documents --dry-run"
+else
+  fail "extract-frames --help missing --dry-run"
+fi
+
 # --- Summary --------------------------------------------------------------------------
 printf '\n\033[1mSummary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 if [[ $FAIL -gt 0 ]]; then

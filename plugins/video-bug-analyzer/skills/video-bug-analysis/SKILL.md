@@ -51,7 +51,9 @@ raising fps across the whole clip.
 
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
-the script warns that extra fps just repeats frames.
+the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact
+ffmpeg commands without running them — handy for replicating the workflow by hand (e.g. in a
+session where the plugin isn't loaded).
 
 **ffmpeg note:** ffmpeg is already on PATH in many environments (incl. many web containers).
 If it's missing the plugin tries apt → brew → a GitHub static build; a locked-down sandbox

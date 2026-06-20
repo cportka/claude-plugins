@@ -5,6 +5,24 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.5] - 2026-06-20
+
+From the black-hole-visualizer dogfood (#16). `video-bug-analyzer` → 1.0.0-rc.5.
+
+### Added
+- **`--dry-run`**: prints the exact ffmpeg command(s) the script would run, without running
+  them (no ffmpeg required, nothing written). Lets a live agent that can't load the plugin
+  mid-session replicate the workflow by hand — the standout ask from #16.
+
+### Fixed
+- `set_vfr_flag` no longer shells out to a missing ffmpeg (it assumes the modern `-fps_mode`
+  when ffmpeg is absent), so `--dry-run` works on a host without ffmpeg.
+
+### Notes
+- A high-fps burst around a flagged moment is already `--timestamps <t> --fps 12 --window`.
+  Scene-cut timestamp auto-pick, frame-diff/optical-flow overlays, and timestamp burn-in are
+  logged in IMPROVEMENTS.
+
 ## [1.0.0-rc.4] - 2026-06-19
 
 From the NFT Toolkit dogfood (#14) — used to *read on-screen text* from a portrait phone
@@ -210,6 +228,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.5]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.5
 [1.0.0-rc.4]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.4
 [1.0.0-rc.3]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.3
 [1.0.0-rc.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.2

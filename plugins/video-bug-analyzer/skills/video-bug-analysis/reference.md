@@ -50,6 +50,10 @@ left-to-right, top-to-bottom in time. Scan it, then zoom. Use `--text` for text/
 Portrait phone captures auto-drop to `--cols 2` (or pass `--portrait`); the script warns when
 tiles downscale the source so far that small UI text will be illegible.
 
+**Dry run (`--dry-run`)** prints the exact ffmpeg command(s) it would run — no ffmpeg needed,
+nothing written. Use it to replicate the workflow by hand when the plugin isn't loaded in the
+current session, or to inspect/tweak a command before running it.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

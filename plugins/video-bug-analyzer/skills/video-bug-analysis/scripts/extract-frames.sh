@@ -44,6 +44,9 @@
 #   --out <dir>         Output directory for PNG frames. Default: ./.frames/<video-name>
 #                       (per-video, so a second clip doesn't clobber the first); ./.frames
 #                       in --strip mode.
+#   --dry-run           Print the exact ffmpeg command(s) this would run, without running
+#                       them (no ffmpeg needed). Lets a live agent that can't load the
+#                       plugin mid-session copy the commands and run them by hand.
 #   -h, --help          Show this help.
 #
 # ffmpeg is required. It's already on PATH in many environments; if it's missing this tries
@@ -55,6 +58,7 @@
 #   extract-frames.sh --video bug.mov --timestamps 0:12,0:34 --fps 8 # zoom + strips
 #   extract-frames.sh --video bug.mov --start 0:11 --end 0:14 --fps 8
 #   extract-frames.sh --strip .frames/frame_0003.png,.frames/frame_0009.png  # before/after
+#   extract-frames.sh --video bug.mov --fps 8 --contact --dry-run    # print cmds, don't run
 #
 set -euo pipefail
 
@@ -78,6 +82,7 @@ FRAMEW="820"
 MAXW="1280"   # ADDED: cap width for dense/scene frames so native 4K doesn't blow tokens
 OUT="./.frames"
 OUT_SET=""    # ADDED: track whether --out was passed (else default per-video, see below)
+DRY_RUN=""    # ADDED: --dry-run prints the exact ffmpeg commands instead of running them
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -148,6 +153,7 @@ while [[ $# -gt 0 ]]; do
     --frame-width) FRAMEW="${2:-}"; shift 2 ;;
     --max-width) MAXW="${2:-}"; shift 2 ;;   # ADDED: cap for dense/scene frame width
     --out)   OUT="${2:-}";   OUT_SET=1; shift 2 ;;   # CHANGED: mark explicit override
+    --dry-run) DRY_RUN=1; shift ;;                   # ADDED: print ffmpeg commands, don't run
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
@@ -256,16 +262,29 @@ EOF
 # Reuse a previously cached static build (e.g. installed by the SessionStart hook).
 [[ -x "$FFMPEG_CACHE/ffmpeg" ]] && export PATH="$FFMPEG_CACHE:$PATH"
 
-ensure_ffmpeg
+# CHANGED: skip install/diagnostic in --dry-run (no ffmpeg needed just to print commands).
+[[ -n "$DRY_RUN" ]] || ensure_ffmpeg
 
 # Diagnostic: which ffmpeg is in use (cite this when reporting extraction problems).
-echo "ffmpeg: $(ffmpeg -version 2>/dev/null | head -n1)" >&2
+[[ -n "$DRY_RUN" ]] || echo "ffmpeg: $(ffmpeg -version 2>/dev/null | head -n1)" >&2
+
+# ADDED: run an ffmpeg command, or — under --dry-run — print it (copy-pasteable) instead.
+# Lets a live agent that can't load the plugin mid-session replicate the workflow by hand.
+run_ff() {
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' "$@"; printf '\n'
+  else
+    ffmpeg "$@"
+  fi
+}
 
 # Newer ffmpeg (>=5.1) replaced "-vsync vfr" with "-fps_mode vfr". Pick what this build
 # supports so variable-rate frame selection works without deprecation warnings; fall back
 # to -vsync on older builds (or if the version string can't be parsed).
 VFR=()
 set_vfr_flag() {
+  # CHANGED: no ffmpeg (e.g. --dry-run on a host without it)? assume modern, don't crash.
+  command -v ffmpeg >/dev/null 2>&1 || { VFR=(-fps_mode vfr); return 0; }
   local ver major minor
   ver="$(ffmpeg -version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+' | head -n1)"
   major="${ver%%.*}"
@@ -278,7 +297,7 @@ set_vfr_flag() {
   fi
 }
 
-mkdir -p "$OUT"
+[[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
 
 # ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
 # The single most useful artifact for a UI-state-transition bug (per DedTxt dogfood).
@@ -288,21 +307,23 @@ if [[ -n "$STRIP" ]]; then
     echo "Error: --strip needs two frames: --strip before.png,after.png" >&2
     exit 2
   fi
-  for _img in "$_sa" "$_sb"; do
-    [[ -f "$_img" ]] || { echo "Error: --strip frame not found: $_img" >&2; exit 1; }
-  done
+  if [[ -z "$DRY_RUN" ]]; then   # CHANGED: skip existence check when only printing commands
+    for _img in "$_sa" "$_sb"; do
+      [[ -f "$_img" ]] || { echo "Error: --strip frame not found: $_img" >&2; exit 1; }
+    done
+  fi
   echo "Strip mode: $_sa | $_sb -> $OUT/strip.png" >&2
   # CHANGED: normalize both frames to a common height (even width via -2) before hstack, so
   # mismatched resolutions (e.g. a .mov frame vs a .webm frame) still stitch cleanly.
-  ffmpeg -hide_banner -loglevel error -i "$_sa" -i "$_sb" \
+  run_ff -hide_banner -loglevel error -i "$_sa" -i "$_sb" \
     -filter_complex "[0:v]scale=-2:720[a];[1:v]scale=-2:720[b];[a][b]hstack=inputs=2" \
     -frames:v 1 "$OUT/strip.png"
-  echo "Wrote $OUT/strip.png (before/after; left=$_sa right=$_sb)."
+  [[ -n "$DRY_RUN" ]] || echo "Wrote $OUT/strip.png (before/after; left=$_sa right=$_sb)."
   exit 0
 fi
 
 # ADDED: heads-up if the clip is sparser than the requested fps (dense/contact/timestamps).
-[[ -z "$SCENE" ]] && warn_if_sparse "$FPS"
+[[ -z "$SCENE" && -z "$DRY_RUN" ]] && warn_if_sparse "$FPS"
 
 # Build the leading seek/duration args (apply -ss/-to before -i for speed/accuracy).
 PRE_ARGS=()
@@ -333,14 +354,16 @@ if [[ -n "$TIMESTAMPS" ]]; then
     bstart="$(awk -v x="$tsec" -v w="$WINDOW" 'BEGIN{ s=x-w; if (s<0) s=0; printf "%.3f", s }')"
     bend="$(awk -v x="$tsec" -v w="$WINDOW" 'BEGIN{ printf "%.3f", x+w }')"
     echo "Timestamp $t -> burst [$bstart,$bend] @${FPS}fps -> $OUT/ts${idx}_*" >&2
-    ffmpeg -hide_banner -loglevel error \
+    run_ff -hide_banner -loglevel error \
       -ss "$bstart" -to "$bend" -i "$VIDEO" "${VFR[@]}" \
       -vf "fps=${FPS},scale=${FRAMEW}:-1" \
       "$OUT/ts${idx}_%03d.png"
-    # Before/after strip from the first and last frame of the burst.
+    # Before/after strip from the first and last frame of the burst. (Skipped in --dry-run,
+    # since it depends on the frames the burst above would have written.)
+    [[ -n "$DRY_RUN" ]] && continue
     mapfile -t _f < <(find "$OUT" -maxdepth 1 -type f -name "ts${idx}_[0-9]*.png" | sort)
     if (( ${#_f[@]} >= 2 )); then
-      ffmpeg -hide_banner -loglevel error \
+      run_ff -hide_banner -loglevel error \
         -i "${_f[0]}" -i "${_f[$(( ${#_f[@]} - 1 ))]}" \
         -filter_complex hstack -frames:v 1 \
         "$OUT/ts${idx}_strip.png"
@@ -349,32 +372,36 @@ if [[ -n "$TIMESTAMPS" ]]; then
 elif [[ -n "$CONTACT" ]]; then
   # Contact-sheet mode: scale each selected frame down and tile them into a grid, so the
   # whole timeline is one image (or a few). Spills into contact_0002.png, ... if needed.
-  tune_contact_for_source   # ADDED: portrait auto-cols + illegibility warning (issue #14)
+  [[ -n "$DRY_RUN" ]] || tune_contact_for_source   # portrait auto-cols + illegibility (issue #14)
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
-  ffmpeg -hide_banner -loglevel error \
+  run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
     -vf "${SELECT},scale=${TILEW}:-1,tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
 elif [[ -n "$SCENE" ]]; then
   echo "Scene-change mode (threshold=$SCENE) -> $OUT" >&2
   # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
-  ffmpeg -hide_banner -loglevel error \
+  run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
     -vf "${SELECT},scale='min(${MAXW},iw)':-1" \
     "$OUT/scene_%04d.png"
 else
   echo "Dense mode (fps=$FPS) -> $OUT" >&2
   # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
-  ffmpeg -hide_banner -loglevel error \
+  run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" \
     -vf "${SELECT},scale='min(${MAXW},iw)':-1" \
     "$OUT/frame_%04d.png"
 fi
 
-COUNT=$(find "$OUT" -maxdepth 1 -type f -name '*.png' | wc -l | tr -d ' ')
-echo "Extracted ${COUNT} image(s) to: ${OUT}"
-if [[ -n "$CONTACT" ]]; then
-  echo "Each contact sheet tiles frames left-to-right, top-to-bottom in time order."
+if [[ -n "$DRY_RUN" ]]; then
+  echo "(dry run — the ffmpeg command(s) above were printed, not executed; no files written)"
 else
-  echo "Read them in filename order to reconstruct the timeline."
+  COUNT=$(find "$OUT" -maxdepth 1 -type f -name '*.png' | wc -l | tr -d ' ')
+  echo "Extracted ${COUNT} image(s) to: ${OUT}"
+  if [[ -n "$CONTACT" ]]; then
+    echo "Each contact sheet tiles frames left-to-right, top-to-bottom in time order."
+  else
+    echo "Read them in filename order to reconstruct the timeline."
+  fi
 fi

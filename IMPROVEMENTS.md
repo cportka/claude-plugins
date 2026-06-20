@@ -97,10 +97,22 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   CLI, bootstrap scaffolding, and ffmpeg extraction.
 
 **Weaknesses / cons**
-- Version-sync check is a substring match, not a structured table parse.
 - No markdown link-checking or spell/style linting.
 - Single CI job (ubuntu); no macOS leg for the `brew` install path.
 
 **Ideas**
-- Structured README-table ↔ `plugin.json` version check.
 - Markdown link lint; optional macOS CI leg.
+
+**Shipped**
+- 1.0.0-rc.3: structured README-table ↔ `plugin.json` version-sync check (was a substring grep).
+- 1.0.0-rc.8 (issue #21): fixed flaky `--help | grep -q` tests (SIGPIPE under `pipefail`) by
+  capturing output and matching a here-string; `--list-scenes` now guides you when a clip has
+  no cuts at the threshold; feedback form gained a "Claude.ai web app (not Claude Code)" option.
+
+## Discoverability (issue #21, open)
+The plugin isn't findable autonomously — no MCP connector-registry entry, no web hit for
+"Portka Tools," and the GitHub repo lacks a description/topics. The real fixes are outside the
+code: (a) submit `video-bug-analyzer` to the Anthropic community marketplace (planned at final
+1.0.0), and (b) set the GitHub repo **description** + **topics** (`claude-code`,
+`claude-plugin`, `video`, `debugging`, `ffmpeg`) — both manual, no MCP tool exposed here.
+Enriched `plugin.json` keywords as a small step.

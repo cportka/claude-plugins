@@ -5,6 +5,29 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.8] - 2026-06-20
+
+From a `git clone` dogfood on the Claude.ai web app (#21). `video-bug-analyzer` → 1.0.0-rc.8.
+
+### Fixed
+- **Flaky help-doc tests:** `tests/run-tests.sh` piped `--help` into `grep -q` under
+  `set -o pipefail`; `grep -q` closes the pipe on first match, the producer dies with SIGPIPE
+  (PIPESTATUS 141), and pipefail then fails the pipeline — so documented flags intermittently
+  reported as missing. All `… | grep -q` checks now capture output and match a here-string.
+
+### Added / Changed
+- `--list-scenes` now prints a clear hint ("no scene cuts at threshold N; try a lower
+  `--scene`") when a clip has no cuts, instead of silent output.
+- `--version` is now documented in `--help`; enriched `plugin.json` keywords.
+- Feedback issue form gained a **"Claude.ai web app (not Claude Code)"** environment option
+  (and "Claude API / SDK") — the #21 session wasn't Claude Code.
+
+### Notes
+- The README plugin table is already at the current version (the structured version-sync test
+  enforces it); the reporter's `0.3.0` sighting was a stale clone. Discoverability (no registry
+  entry / repo topics) is logged in IMPROVEMENTS — it's resolved by the community submission +
+  GitHub repo description/topics (manual).
+
 ## [1.0.0-rc.7] - 2026-06-20
 
 From the 2nd black-hole-visualizer dogfood (#19). `video-bug-analyzer` → 1.0.0-rc.7.
@@ -261,6 +284,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.8]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.8
 [1.0.0-rc.7]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.7
 [1.0.0-rc.6]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.6
 [1.0.0-rc.5]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.5

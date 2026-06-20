@@ -485,15 +485,16 @@ PY
   else
     fail "bootstrap did not warn on an unknown plugin name"
   fi
-  # ADDED: --list prints known plugin names.
-  if bash "$BOOTSTRAP" --list 2>/dev/null | grep -q 'video-bug-analyzer'; then
+  # ADDED: --list prints known plugin names. (Capture then match — piping into `grep -q`
+  # under `set -o pipefail` can SIGPIPE the producer and flake; issue #21.)
+  if grep -q 'video-bug-analyzer' <<<"$(bash "$BOOTSTRAP" --list 2>/dev/null || true)"; then
     pass "bootstrap --list shows known plugins"
   else
     fail "bootstrap --list did not list known plugins"
   fi
   # ADDED (issue #19): prints the /plugin CLI one-paste fallback.
-  if bash "$BOOTSTRAP" --plugin video-bug-analyzer --dir "$bt" 2>&1 >/dev/null \
-     | grep -q '/plugin install video-bug-analyzer@portka-tools'; then
+  _bs_fallback="$(bash "$BOOTSTRAP" --plugin video-bug-analyzer --dir "$bt" 2>&1 >/dev/null || true)"
+  if grep -q '/plugin install video-bug-analyzer@portka-tools' <<<"$_bs_fallback"; then
     pass "bootstrap prints the /plugin CLI fallback"
   else
     fail "bootstrap did not print the CLI fallback"
@@ -570,26 +571,25 @@ else
   fail "--dry-run created output unexpectedly"
 fi
 rm -rf "$dr_tmp"
-if bash "$EXTRACT" --help 2>/dev/null | grep -qF -- "--dry-run"; then
-  pass "extract-frames --help documents --dry-run"
-else
-  fail "extract-frames --help missing --dry-run"
-fi
-# rc.6 options are documented and dry-run-printable (no ffmpeg needed).
-for f in "--diff" "--label" "--list-scenes"; do
-  if bash "$EXTRACT" --help 2>/dev/null | grep -qF -- "$f"; then
+# CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
+# under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
+_help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--version"; do
+  if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
     fail "extract-frames --help missing $f"
   fi
 done
 nf_tmp="$(mktemp -d)"; : >"$nf_tmp/clip.mov"
-if bash "$EXTRACT" --video "$nf_tmp/clip.mov" --fps 4 --diff --dry-run 2>/dev/null | grep -q 'tblend=all_mode=difference'; then
+_diff_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --fps 4 --diff --dry-run 2>/dev/null || true)"
+if grep -q 'tblend=all_mode=difference' <<<"$_diff_dry"; then
   pass "--diff --dry-run prints the tblend command"
 else
   fail "--diff --dry-run did not print tblend"
 fi
-if bash "$EXTRACT" --video "$nf_tmp/clip.mov" --list-scenes --dry-run 2>/dev/null | grep -q 'showinfo'; then
+_ls_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --list-scenes --dry-run 2>/dev/null || true)"
+if grep -q 'showinfo' <<<"$_ls_dry"; then
   pass "--list-scenes --dry-run prints the showinfo command"
 else
   fail "--list-scenes --dry-run did not print showinfo"

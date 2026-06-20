@@ -33,6 +33,8 @@ body:
       options:
         - Claude Code CLI (local)
         - Claude Code on the web
+        - Claude.ai web app (not Claude Code)
+        - Claude API / SDK
         - Other
     validations:
       required: true

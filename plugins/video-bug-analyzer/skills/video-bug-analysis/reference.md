@@ -69,6 +69,17 @@ timestamps); `iw`/`ih` expressions are allowed (e.g. `--crop iw/4:ih/4:0:0` for 
 quadrant). Combine with `--fps 8`+ to catch a fast-changing counter, or `--diff` to see only
 what changes inside the cropped region.
 
+**Black-screen detection (`--blackdetect`):** for a blank/black-screen bug, this runs ffmpeg's
+`blackdetect` filter and prints each black span as `black START -> END (dur) — PERMANENT/
+transient`. **Permanent** = the span runs to (within 0.5s of) the end of the file — i.e. the
+renderer went black and never recovered (a stuck NaN uniform, a crashed canvas), versus a
+one-frame flash. Permanence classification needs `ffprobe` (for the source duration); without
+it, spans are still listed. Tunables: `--black-min <sec>` (minimum span length, default 0.1)
+and `--black-ratio <r>` (fraction of pixels that must be black, `pic_th`, default 0.98).
+**Gotcha:** a persistent DOM/UI overlay (a settings panel, a HUD) keeps some pixels lit, so a
+real blackout can fall under the ratio and be missed — crop to the app canvas first with
+`--crop W:H:X:Y` (and/or lower `--black-ratio`, e.g. 0.90). Honors `--start`/`--end`.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

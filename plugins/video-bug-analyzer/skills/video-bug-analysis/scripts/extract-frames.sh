@@ -14,6 +14,7 @@
 #                     [--label] [--out <dir>]
 #   extract-frames.sh --strip <before.png,after.png> [--out <dir>]   # stitch existing frames
 #   extract-frames.sh --video <path> --list-scenes [--scene <thr>]   # print scene-cut times
+#   extract-frames.sh --video <path> --blackdetect [--crop <W:H:X:Y>] # find black-out spans
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -59,6 +60,13 @@
 #                       Best-effort: needs ffmpeg drawtext + a font; silently skipped if not.
 #   --list-scenes       Print the timestamps (seconds) of detected scene cuts and exit; tune
 #                       with --scene <thr> (default 0.3). Feed the cuts into --timestamps.
+#   --blackdetect       Find blacked-out spans (black/blank screen bug) and exit, printing
+#                       each as "black START -> END (dur) — PERMANENT/transient". Permanent =
+#                       sustained to EOF (needs ffprobe). Combine with --crop to ignore a
+#                       static UI overlay that keeps a few pixels lit (the common false-miss).
+#   --black-min <sec>   Minimum black-span duration to report. Default: 0.1.
+#   --black-ratio <r>   Fraction of pixels that must be black for a frame to count (pic_th,
+#                       0..1). Default: 0.98. Lower (e.g. 0.90) if an overlay keeps pixels lit.
 #   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
@@ -73,6 +81,7 @@
 #   extract-frames.sh --strip .frames/frame_0003.png,.frames/frame_0009.png  # before/after
 #   extract-frames.sh --video bug.mov --fps 8 --contact --dry-run    # print cmds, don't run
 #   extract-frames.sh --video bug.mov --fps 8 --crop 320:120:40:900  # zoom an FPS/HUD region
+#   extract-frames.sh --video bug.mov --blackdetect --crop 600:564:0:0  # find a black-screen bug
 #
 set -euo pipefail
 
@@ -106,6 +115,9 @@ LIST_SCENES="" # ADDED: --list-scenes prints detected scene-cut timestamps, then
 LABEL_VF=""   # computed drawtext filter segment (empty unless --label works on this build)
 CROP=""       # ADDED: --crop W:H:X:Y (ffmpeg geometry) -> crop a region, then scale = zoom
 CROP_VF=""    # computed crop filter segment (empty unless --crop given)
+BLACKDETECT="" # ADDED (issue #25): --blackdetect finds blacked-out spans, then exits
+BLACK_D="0.1"  # ADDED: --black-min, minimum black-span duration (seconds) to report
+BLACK_RATIO="0.98" # ADDED: --black-ratio, fraction of pixels that must be black (pic_th)
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -257,6 +269,9 @@ while [[ $# -gt 0 ]]; do
     --label) LABEL=1; shift ;;                        # ADDED: burn source timestamp on frames
     --list-scenes) LIST_SCENES=1; shift ;;            # ADDED: print scene-cut timestamps, exit
     --crop) CROP="${2:-}"; shift 2 ;;                  # ADDED: crop region W:H:X:Y, then zoom
+    --blackdetect) BLACKDETECT=1; shift ;;            # ADDED (issue #25): find black spans, exit
+    --black-min) BLACK_D="${2:-}"; shift 2 ;;         # ADDED: min black-span duration (seconds)
+    --black-ratio) BLACK_RATIO="${2:-}"; shift 2 ;;   # ADDED: black-pixel fraction (pic_th)
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -401,6 +416,53 @@ set_vfr_flag() {
   fi
 }
 
+# ADDED (issue #25): blackdetect mode — find blacked-out spans and classify each as transient
+# (a flash) or permanent (sustained to end of file). Honors --crop, so a static UI overlay
+# (a lil-gui panel, a HUD) can be excluded from the black-ratio test before detection — the
+# manual canvas-crop step the dogfood reporter had to do by hand. Uses CROP_VF / PRE_ARGS,
+# so it must run after those are built.
+run_blackdetect() {
+  local vf="${CROP_VF}blackdetect=d=${BLACK_D}:pic_th=${BLACK_RATIO}"
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -f null -
+    printf '\n'
+    echo "(dry run — the command above prints 'black_start:.. black_end:..' lines on stderr)"
+    return 0
+  fi
+  echo "Black-frame detection (min ${BLACK_D}s, pic_th ${BLACK_RATIO}${CROP:+, crop ${CROP}}) in $VIDEO:" >&2
+  # blackdetect logs "black_start:.. black_end:.. black_duration:.." to stderr at info level.
+  local log
+  log="$(ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -f null - 2>&1 || true)"
+  # Source duration (for the permanent-vs-transient test); empty if ffprobe is unavailable.
+  local dur=""
+  if command -v ffprobe >/dev/null 2>&1; then
+    dur="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null || true)"
+  fi
+  local _spans found=""
+  _spans="$(grep -oE 'black_start:[0-9.]+ black_end:[0-9.]+ black_duration:[0-9.]+' <<<"$log" || true)"
+  if [[ -n "$_spans" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      found=1
+      local _s _e _d kind
+      _s="${line#black_start:}"; _s="${_s%% *}"
+      _e="${line#*black_end:}";  _e="${_e%% *}"
+      _d="${line##*black_duration:}"
+      kind="transient (recovers)"
+      if [[ -n "$dur" ]]; then
+        # Permanent if the span runs to (within 0.5s of) the end of the file.
+        kind="$(awk -v e="$_e" -v d="$dur" 'BEGIN{ print (e >= d - 0.5) ? "PERMANENT (sustained to EOF)" : "transient (recovers)" }')"
+      fi
+      printf 'black %ss -> %ss (%.3fs) — %s\n' "$_s" "$_e" "$_d" "$kind"
+    done <<<"$_spans"
+  fi
+  if [[ -z "$found" ]]; then
+    echo "No black spans >= ${BLACK_D}s at pic_th ${BLACK_RATIO}." >&2
+    echo "If a UI overlay keeps some pixels lit, crop to the app canvas (--crop W:H:X:Y) and/or lower --black-ratio (e.g. 0.90)." >&2
+  fi
+  [[ -z "$dur" ]] && echo "Note: ffprobe not found — can't classify permanent-vs-transient (showing spans only)." >&2
+}
+
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
 
 # ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
@@ -463,6 +525,13 @@ build_label_vf
 PRE_ARGS=()
 [[ -n "$START" ]] && PRE_ARGS+=(-ss "$START")
 [[ -n "$END"   ]] && PRE_ARGS+=(-to "$END")
+
+# ADDED (issue #25): blackdetect is an analysis mode (no PNGs) — report spans and exit.
+if [[ -n "$BLACKDETECT" ]]; then
+  run_blackdetect
+  feedback_hint
+  exit 0
+fi
 
 # Choose how frames are selected: scene-change boundaries or a fixed sample rate.
 if [[ -n "$SCENE" ]]; then

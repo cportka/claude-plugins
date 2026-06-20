@@ -5,6 +5,24 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.7] - 2026-06-20
+
+From the 2nd black-hole-visualizer dogfood (#19). `video-bug-analyzer` → 1.0.0-rc.7.
+
+### Added
+- **End-of-run feedback nudge:** `extract-frames.sh` now prints a one-click, pre-filled
+  GitHub issue link (plugin + ffmpeg version + the exact command, URL-encoded) on stderr after
+  a real run, with a one-line reminder to click it. Suppress with `VBA_NO_FEEDBACK_HINT=1`.
+- **`--version`** prints the plugin version (easy to cite in feedback).
+- `repo-bootstrap` now also prints a **`/plugin marketplace add` + `/plugin install` one-paste
+  CLI fallback** and documents that the committed-settings path may be blocked by Claude
+  Code's auto-permission classifier until approved (#19).
+
+### Docs
+- "Plugins load at session start — enable one session ahead; use `--dry-run` to get the
+  commands if a request arrives early" (SKILL + INTEGRATE). Hot-load is a Claude Code limit,
+  noted in IMPROVEMENTS. `plugin.json` remains the single source of truth for version.
+
 ## [1.0.0-rc.6] - 2026-06-20
 
 Implements the three backlog ideas from the black-hole-visualizer feedback (#16) as new
@@ -243,6 +261,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.7]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.7
 [1.0.0-rc.6]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.6
 [1.0.0-rc.5]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.5
 [1.0.0-rc.4]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.4

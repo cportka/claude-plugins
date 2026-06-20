@@ -12,6 +12,10 @@ You never copy plugin code in; you add a marketplace **reference** and enable th
 plugins/repo-bootstrap/skills/repo-bootstrap/scripts/bootstrap-repo.sh --plugin video-bug-analyzer --ci
 ```
 
+It also prints a **one-paste CLI fallback** (`/plugin marketplace add …` + `/plugin install …`)
+in case Claude Code's permission classifier blocks the committed-settings path (it can flag
+enabling a third-party plugin until you approve it).
+
 **Option B — by hand.** Create `.claude/settings.json` in the repo root:
 
 ```json

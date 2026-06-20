@@ -65,6 +65,16 @@ recovers before EOF — the key diagnostic for a stuck/crashed renderer. If a st
 (a settings panel, a HUD) keeps a few pixels lit, blackdetect can miss the blackout; crop to
 the app canvas first with `--crop` (and/or lower `--black-ratio`, default 0.98).
 
+**When the symptom is a number, not a picture** (a panel readout changing — a body count going
+4→5→4, a Speed value, a timer), staring at frames won't show the cause; track the *value*
+instead. **`--ocr-roi W:H:X:Y`** OCRs a small region once per sampled frame and prints a
+`t,text` CSV (add **`--ocr-digits`** for numeric readouts; `--fps` sets the rate). This needs
+`tesseract` (the one mode beyond ffmpeg; it prints an install hint if missing). **Important
+steer:** if a tracked value changes but nothing near it changes in the frame, the bug is
+almost certainly **logic/state** (the body left off-screen, a counter desynced) — frame
+analysis can't see it. Say so plainly and point the user at logs or a small headless repro
+rather than extracting more frames.
+
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
 the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact

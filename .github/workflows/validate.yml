@@ -10,8 +10,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ffmpeg and shellcheck
-        run: sudo apt-get update -y && sudo apt-get install -y ffmpeg shellcheck
+      - name: Install ffmpeg, shellcheck, and tesseract
+        run: sudo apt-get update -y && sudo apt-get install -y ffmpeg shellcheck tesseract-ocr
 
       - name: Run test suite
         run: bash tests/run-tests.sh

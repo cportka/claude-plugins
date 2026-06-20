@@ -50,6 +50,14 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - 1.0.0-rc.6 (issue #16): `--list-scenes` prints detected scene-cut timestamps; `--diff`
   emits frame-difference (motion) images; `--label` burns the source timestamp onto frames
   (best-effort, drawtext-probed so it never breaks a run).
+- 1.0.0-rc.7 (issue #19): end-of-run one-click pre-filled feedback link (auto, on stderr;
+  `VBA_NO_FEEDBACK_HINT=1` to hide); `--version`; `repo-bootstrap` now prints a `/plugin …`
+  one-paste CLI fallback + documents the auto-permission gate; "enable one session ahead" docs.
+
+**Hard constraint (Claude Code, not the plugin)**
+- Plugins load at session *start* — there's no supported hot-load, so a video dropped right
+  after enabling the plugin can't use it until the next session. Mitigations shipped:
+  `--dry-run` (print commands to run by hand) and "enable one session ahead" guidance.
 
 **Ideas (cont.)**
 - A broader catalog/`plugin.json` description (or a sibling "read-a-screen-recording" skill)

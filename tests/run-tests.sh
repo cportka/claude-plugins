@@ -31,6 +31,7 @@ section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 SCRIPT="plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh"
 SCRIPT_ABS="$ROOT/$SCRIPT"   # absolute path for tests that run from a different cwd
 BOOTSTRAP="plugins/repo-bootstrap/skills/repo-bootstrap/scripts/bootstrap-repo.sh"
+export VBA_NO_FEEDBACK_HINT=1   # keep the end-of-run feedback nudge out of test output
 
 # --- 1. JSON manifests parse ----------------------------------------------------------
 section "JSON manifests parse"
@@ -407,6 +408,15 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "--label broke extraction"
     fi
+    # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
+    env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
+      --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
+    bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 --out "$tmp/fb2" >/dev/null 2>"$tmp/fb2.err" || true
+    if grep -qi 'One-click feedback' "$tmp/fb.err" && ! grep -qi 'One-click feedback' "$tmp/fb2.err"; then
+      pass "end-of-run feedback hint prints (and VBA_NO_FEEDBACK_HINT suppresses it)"
+    else
+      fail "feedback hint did not behave (present default / suppressed via env)"
+    fi
   else
     fail "could not generate test clip with ffmpeg"
   fi
@@ -480,6 +490,13 @@ PY
     pass "bootstrap --list shows known plugins"
   else
     fail "bootstrap --list did not list known plugins"
+  fi
+  # ADDED (issue #19): prints the /plugin CLI one-paste fallback.
+  if bash "$BOOTSTRAP" --plugin video-bug-analyzer --dir "$bt" 2>&1 >/dev/null \
+     | grep -q '/plugin install video-bug-analyzer@portka-tools'; then
+    pass "bootstrap prints the /plugin CLI fallback"
+  else
+    fail "bootstrap did not print the CLI fallback"
   fi
   rm -rf "$bt"
 else
@@ -578,6 +595,13 @@ else
   fail "--list-scenes --dry-run did not print showinfo"
 fi
 rm -rf "$nf_tmp"
+# --version reports the plugin version from plugin.json.
+_ver_json="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"
+if [[ "$(CLAUDE_PLUGIN_ROOT=plugins/video-bug-analyzer bash "$EXTRACT" --version 2>/dev/null)" == "video-bug-analyzer $_ver_json" ]]; then
+  pass "--version reports $_ver_json"
+else
+  fail "--version did not report the plugin.json version"
+fi
 
 # --- Summary --------------------------------------------------------------------------
 printf '\n\033[1mSummary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"

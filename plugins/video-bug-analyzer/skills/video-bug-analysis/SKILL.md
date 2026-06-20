@@ -90,9 +90,16 @@ See `reference.md` for the reliability matrix, fps-per-bug-class table, and chec
 
 ## Reporting feedback
 
-If the user wants to report a problem or suggestion, run
+`extract-frames.sh` already prints a **one-click, pre-filled feedback link** (plugin + ffmpeg
+version + the exact command, encoded) on stderr at the end of each run — surface that line to
+the user and encourage a click; it's how the tool improves. (Suppress with
+`VBA_NO_FEEDBACK_HINT=1`.) For a fuller report, run
 `${CLAUDE_PLUGIN_ROOT}/skills/video-bug-analysis/scripts/report-feedback.sh`
-(`--ran`/`--outcome`/`--notes` optional) — it prints a copy-paste report **and a prefilled
-one-click GitHub issue link**. If you have a GitHub MCP/`gh` with write access to
+(`--ran`/`--outcome`/`--notes` optional). If you have a GitHub MCP/`gh` with write access to
 `cportka/claude-plugins`, file it directly; otherwise hand the user the link (it needs no
 GitHub scope or session network — it just opens in a browser).
+
+**Session timing:** plugins load at session *start*, so a video dropped right after the
+plugin was enabled won't have the skill/commands available until the next session. Enable one
+session ahead; if a request arrives early, `extract-frames.sh --dry-run …` prints the exact
+ffmpeg commands to run by hand.

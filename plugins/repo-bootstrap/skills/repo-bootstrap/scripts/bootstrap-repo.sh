@@ -191,4 +191,21 @@ YAML
   fi
 fi
 
+# ADDED (issue #19): Claude Code's auto-permission classifier may DENY the committed-settings
+# path (it flags enabling a third-party plugin as self-modification / untrusted integration)
+# until the user approves. Emit the one-paste CLI fallback that needs no settings write.
+{
+  echo ""
+  echo "Note: committing .claude/settings.json may be blocked by Claude Code's permission"
+  echo "classifier (enabling a third-party plugin) until you approve it. One-paste CLI fallback:"
+  echo "  /plugin marketplace add ${MARKET_REPO}"
+  if [[ ${#PLUGINS[@]} -gt 0 ]]; then
+    for _p in "${PLUGINS[@]}"; do
+      [[ -n "$_p" ]] && echo "  /plugin install ${_p}@${MARKET_NAME}"
+    done
+  else
+    echo "  /plugin install <name>@${MARKET_NAME}"
+  fi
+} >&2
+
 echo "Done. Commit .claude/settings.json (and any workflow) so it applies in web sessions."

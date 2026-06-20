@@ -69,6 +69,9 @@
 #
 set -euo pipefail
 
+ORIG_ARGS=("$@")   # ADDED: remember the invocation for the end-of-run feedback link
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # ADDED: locate plugin.json
+
 VIDEO=""
 START=""
 END=""
@@ -102,6 +105,47 @@ usage() {
 # Convert a timestamp (SS | MM:SS | HH:MM:SS[.frac]) to seconds, for window arithmetic.
 to_seconds() {
   awk -F: '{ s=$NF; if (NF>=2) s+=$(NF-1)*60; if (NF>=3) s+=$(NF-2)*3600; printf "%.3f", s }' <<<"$1"
+}
+
+# ADDED: read this plugin's version from plugin.json (for --version and the feedback link).
+_plugin_version() {
+  local pj="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/.claude-plugin/plugin.json"
+  [[ -f "$pj" ]] || { echo "unknown"; return 0; }
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version","unknown"))' "$pj" 2>/dev/null || echo unknown
+  else
+    grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$pj" | head -n1 | sed 's/.*"\([^"]*\)"$/\1/' || echo unknown
+  fi
+}
+
+# ADDED (issue #19): at the end of a real run, print a one-click, pre-filled feedback link
+# (plugin + ffmpeg version + the exact command already encoded) and a one-line nudge. Goes to
+# stderr so it never pollutes output; suppress with VBA_NO_FEEDBACK_HINT=1.
+feedback_hint() {
+  [[ -z "$DRY_RUN" && -z "${VBA_NO_FEEDBACK_HINT:-}" ]] || return 0
+  local ver ffv cmd url
+  ver="$(_plugin_version || true)"
+  ffv="$(ffmpeg -version 2>/dev/null | head -n1 || true)"
+  cmd="extract-frames.sh ${ORIG_ARGS[*]:-}"
+  if command -v python3 >/dev/null 2>&1; then
+    url="$(FB_V="$ver" FB_F="$ffv" FB_C="$cmd" python3 - <<'PY' 2>/dev/null || true
+import os, urllib.parse
+base = "https://github.com/cportka/claude-plugins/issues/new"
+p = {"template": "plugin-feedback.yml"}
+for env, field in [("FB_V", "version"), ("FB_F", "ffmpeg"), ("FB_C", "command")]:
+    v = os.environ.get(env, "").strip()
+    if v:
+        p[field] = v
+print(base + "?" + urllib.parse.urlencode(p))
+PY
+)"
+  fi
+  [[ -n "${url:-}" ]] || url="https://github.com/cportka/claude-plugins/issues/new?template=plugin-feedback.yml"
+  {
+    echo ""
+    echo "Helpful or buggy? One-click feedback (pre-filled): $url"
+    echo "(Say if it helped or broke; you can attach a contact sheet from ${OUT}. Hide with VBA_NO_FEEDBACK_HINT=1.)"
+  } >&2
 }
 
 # ADDED: warn (best-effort) when the source's real frame rate is well below the requested
@@ -203,6 +247,7 @@ while [[ $# -gt 0 ]]; do
     --diff)  DIFF=1; shift ;;                         # ADDED: frame-difference (motion) frames
     --label) LABEL=1; shift ;;                        # ADDED: burn source timestamp on frames
     --list-scenes) LIST_SCENES=1; shift ;;            # ADDED: print scene-cut timestamps, exit
+    --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
@@ -368,6 +413,7 @@ if [[ -n "$STRIP" ]]; then
     -filter_complex "[0:v]scale=-2:720[a];[1:v]scale=-2:720[b];[a][b]hstack=inputs=2" \
     -frames:v 1 "$OUT/strip.png"
   [[ -n "$DRY_RUN" ]] || echo "Wrote $OUT/strip.png (before/after; left=$_sa right=$_sb)."
+  feedback_hint
   exit 0
 fi
 
@@ -383,6 +429,7 @@ if [[ -n "$LIST_SCENES" ]]; then
   echo "Scene cuts (threshold=$_thr) in $VIDEO — pts_time seconds:" >&2
   ffmpeg -hide_banner -nostats -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" -f null - 2>&1 \
     | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' || true
+  feedback_hint
   exit 0
 fi
 
@@ -482,3 +529,5 @@ else
     echo "Read them in filename order to reconstruct the timeline."
   fi
 fi
+
+feedback_hint   # ADDED (issue #19): one-click pre-filled feedback nudge at end of run

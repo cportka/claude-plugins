@@ -408,6 +408,13 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "--label broke extraction"
     fi
+    # --crop: crop a region before scaling — frames are produced and zoomed (issue #23).
+    if bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 3 --crop 120:80:10:10 --out "$tmp/crop" >/dev/null 2>&1 \
+       && [[ "$(find "$tmp/crop" -name 'frame_*.png' | wc -l)" -gt 0 ]]; then
+      pass "--crop produced frames from a cropped region"
+    else
+      fail "--crop broke extraction"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -574,7 +581,7 @@ rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--version"; do
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--version"; do
   if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
@@ -593,6 +600,13 @@ if grep -q 'showinfo' <<<"$_ls_dry"; then
   pass "--list-scenes --dry-run prints the showinfo command"
 else
   fail "--list-scenes --dry-run did not print showinfo"
+fi
+# --crop --dry-run: the crop filter is inserted before scale in the vf chain (issue #23).
+_crop_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --fps 4 --crop 320:120:40:900 --dry-run 2>/dev/null || true)"
+if grep -q 'crop=320:120:40:900' <<<"$_crop_dry"; then
+  pass "--crop --dry-run inserts the crop filter"
+else
+  fail "--crop --dry-run did not print crop="
 fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.

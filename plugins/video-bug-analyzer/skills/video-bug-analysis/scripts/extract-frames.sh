@@ -10,7 +10,8 @@
 #   extract-frames.sh --video <path> [--start <ts>] [--end <ts>] [--fps <n>]
 #                     [--scene <thr>] [--contact] [--text] [--cols <n>] [--rows <n>]
 #                     [--tile-width <px>] [--timestamps <t1,t2,...>] [--window <sec>]
-#                     [--frame-width <px>] [--max-width <px>] [--diff] [--label] [--out <dir>]
+#                     [--frame-width <px>] [--max-width <px>] [--crop <W:H:X:Y>] [--diff]
+#                     [--label] [--out <dir>]
 #   extract-frames.sh --strip <before.png,after.png> [--out <dir>]   # stitch existing frames
 #   extract-frames.sh --video <path> --list-scenes [--scene <thr>]   # print scene-cut times
 #
@@ -48,6 +49,10 @@
 #   --dry-run           Print the exact ffmpeg command(s) this would run, without running
 #                       them (no ffmpeg needed). Lets a live agent that can't load the
 #                       plugin mid-session copy the commands and run them by hand.
+#   --crop <W:H:X:Y>    Crop a region (ffmpeg geometry, e.g. 320:120:40:900) before scaling,
+#                       so that region fills the frame — a zoom on an on-screen FPS/HUD, a
+#                       counter, or any small UI area. Applies to dense/scene/contact/diff/
+#                       timestamp modes. iw/ih expressions allowed (e.g. iw/4:ih/4:0:0).
 #   --diff              Frame-difference mode: emit diff_*.png where each frame is the change
 #                       from the previous one (bright = motion). Confirms what moved / where.
 #   --label             Burn the source timestamp onto each frame (dense/--diff/--timestamps).
@@ -67,6 +72,7 @@
 #   extract-frames.sh --video bug.mov --start 0:11 --end 0:14 --fps 8
 #   extract-frames.sh --strip .frames/frame_0003.png,.frames/frame_0009.png  # before/after
 #   extract-frames.sh --video bug.mov --fps 8 --contact --dry-run    # print cmds, don't run
+#   extract-frames.sh --video bug.mov --fps 8 --crop 320:120:40:900  # zoom an FPS/HUD region
 #
 set -euo pipefail
 
@@ -98,6 +104,8 @@ DIFF=""       # ADDED: --diff emits frame-difference images (motion highlight)
 LABEL=""      # ADDED: --label burns the source timestamp onto each frame (best-effort)
 LIST_SCENES="" # ADDED: --list-scenes prints detected scene-cut timestamps, then exits
 LABEL_VF=""   # computed drawtext filter segment (empty unless --label works on this build)
+CROP=""       # ADDED: --crop W:H:X:Y (ffmpeg geometry) -> crop a region, then scale = zoom
+CROP_VF=""    # computed crop filter segment (empty unless --crop given)
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -248,6 +256,7 @@ while [[ $# -gt 0 ]]; do
     --diff)  DIFF=1; shift ;;                         # ADDED: frame-difference (motion) frames
     --label) LABEL=1; shift ;;                        # ADDED: burn source timestamp on frames
     --list-scenes) LIST_SCENES=1; shift ;;            # ADDED: print scene-cut timestamps, exit
+    --crop) CROP="${2:-}"; shift 2 ;;                  # ADDED: crop region W:H:X:Y, then zoom
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -443,6 +452,10 @@ fi
 # ADDED: prepare the optional --label timestamp-burn-in segment (probed; empty if unsupported).
 build_label_vf
 
+# ADDED (issue #23): crop a region (e.g. an on-screen FPS/HUD), applied before scale so the
+# region is zoomed. Geometry is ffmpeg crop syntax W:H:X:Y (expressions like iw/ih allowed).
+[[ -n "$CROP" ]] && CROP_VF="crop=${CROP},"
+
 # ADDED: heads-up if the clip is sparser than the requested fps (dense/contact/timestamps).
 [[ -z "$SCENE" && -z "$DRY_RUN" ]] && warn_if_sparse "$FPS"
 
@@ -477,7 +490,7 @@ if [[ -n "$TIMESTAMPS" ]]; then
     echo "Timestamp $t -> burst [$bstart,$bend] @${FPS}fps -> $OUT/ts${idx}_*" >&2
     run_ff -hide_banner -loglevel error \
       -ss "$bstart" -to "$bend" -i "$VIDEO" "${VFR[@]}" \
-      -vf "fps=${FPS},scale=${FRAMEW}:-1${LABEL_VF}" \
+      -vf "fps=${FPS},${CROP_VF}scale=${FRAMEW}:-1${LABEL_VF}" \
       "$OUT/ts${idx}_%03d.png"
     # Before/after strip from the first and last frame of the burst. (Skipped in --dry-run,
     # since it depends on the frames the burst above would have written.)
@@ -498,7 +511,7 @@ elif [[ -n "$CONTACT" ]]; then
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "${SELECT},scale=${TILEW}:-1,tile=${COLS}x${ROWS}" \
+    -vf "${SELECT},${CROP_VF}scale=${TILEW}:-1,tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
 elif [[ -n "$DIFF" ]]; then
   # ADDED: frame-difference mode — each frame is |this − previous| (tblend), so motion lights
@@ -507,21 +520,21 @@ elif [[ -n "$DIFF" ]]; then
   echo "Frame-diff mode (fps=$FPS) -> $OUT (bright = changed pixels between frames)" >&2
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "fps=${FPS},tblend=all_mode=difference,scale='min(${MAXW},iw)':-1${LABEL_VF}" \
+    -vf "fps=${FPS},${CROP_VF}tblend=all_mode=difference,scale='min(${MAXW},iw)':-1${LABEL_VF}" \
     "$OUT/diff_%04d.png"
 elif [[ -n "$SCENE" ]]; then
   echo "Scene-change mode (threshold=$SCENE) -> $OUT" >&2
   # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "${SELECT},scale='min(${MAXW},iw)':-1${LABEL_VF}" \
+    -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1${LABEL_VF}" \
     "$OUT/scene_%04d.png"
 else
   echo "Dense mode (fps=$FPS) -> $OUT" >&2
   # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" \
-    -vf "${SELECT},scale='min(${MAXW},iw)':-1${LABEL_VF}" \
+    -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1${LABEL_VF}" \
     "$OUT/frame_%04d.png"
 fi
 

@@ -61,6 +61,14 @@ consecutive frames — scan them to see what moved and infer direction. `--label
 source timestamp (`drawtext`) onto each frame in dense/`--diff`/`--timestamps` modes (not
 contact tiles); it's best-effort and silently skips if the ffmpeg build lacks drawtext/a font.
 
+**Zoom a region (`--crop W:H:X:Y`):** crop a rectangle (ffmpeg geometry — width, height, and
+top-left x, y, e.g. `--crop 320:120:40:900`) *before* scaling, so the region fills the frame.
+Ideal for a tiny on-screen FPS/HUD readout, a counter, or a small status label that's too few
+pixels to read at full-frame scale. Applies in every mode (dense/scene/contact/diff/
+timestamps); `iw`/`ih` expressions are allowed (e.g. `--crop iw/4:ih/4:0:0` for the top-left
+quadrant). Combine with `--fps 8`+ to catch a fast-changing counter, or `--diff` to see only
+what changes inside the cropped region.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

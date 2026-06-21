@@ -17,6 +17,7 @@
 #   extract-frames.sh --video <path> --blackdetect [--crop <W:H:X:Y>] # find black-out spans
 #   extract-frames.sh --video <path> --ocr-roi <W:H:X:Y> [--fps <n>]  # OCR a region -> t,text CSV
 #   extract-frames.sh --video <path> --measure <W:H:X:Y> [--fps <n>]  # feature diameter/center CSV
+#   extract-frames.sh --video <path> --probe                         # capture geometry/orientation
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -79,8 +80,9 @@
 #                       readouts: counts, speeds, timers). Use with --ocr-roi.
 #   --measure <W:H:X:Y> Geometry/measurement: inside this ROI, measure the bounding box of a
 #                       dark feature (an event-horizon shadow, a dot, a blob) once per sampled
-#                       frame and print a CSV: t,w_px,h_px,diam_px,diam_pct,cx,cy. diam_px is the
-#                       major axis; diam_pct is % of viewport width; cx,cy are full-frame px.
+#                       frame and print a CSV: t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy.
+#                       diam_px is the major axis; diam_pct_w/h are % of viewport width/height
+#                       (vmin flips by orientation — see --probe); cx,cy are full-frame px.
 #                       For visual-tuning ("how big is this circle, over time"). Robust to a
 #                       photon ring / accretion disk that breaks a naive center-row scan. Sample
 #                       rate from --fps; honors --start/--end. Needs python3 (+ ffprobe for the
@@ -88,6 +90,9 @@
 #   --measure-bright    Measure a BRIGHT feature (a ring, a glow) instead of a dark one.
 #   --measure-limit <n> Luma threshold 0..255: dark mode counts pixels BELOW it, bright mode
 #                       ABOVE it. Default 80. Tune if too little / too much is bounded.
+#   --probe             Print the capture's geometry — dimensions, aspect ratio, orientation
+#                       (portrait/landscape), fps, duration — and which axis CSS vmin maps to.
+#                       Use it before measuring so % figures are read on the right axis. (ffprobe.)
 #   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
@@ -105,6 +110,7 @@
 #   extract-frames.sh --video bug.mov --blackdetect --crop 600:564:0:0  # find a black-screen bug
 #   extract-frames.sh --video bug.mov --ocr-roi 180:40:20:8 --ocr-digits --fps 2  # count timeline
 #   extract-frames.sh --video bug.mov --measure 400:400:760:340 --fps 5  # shadow diameter over time
+#   extract-frames.sh --video bug.mov --probe                            # aspect/orientation/dpr note
 #
 set -euo pipefail
 
@@ -146,6 +152,7 @@ OCR_DIGITS=""  # ADDED: --ocr-digits restricts OCR to a numeric whitelist (count
 MEASURE=""     # ADDED (issue #29): --measure W:H:X:Y -> bounding box / diameter of a feature
 MEASURE_LIMIT="80"  # ADDED: --measure-limit, luma threshold (dark<thr / bright>thr) 0..255
 MEASURE_BRIGHT=""   # ADDED: --measure-bright measures a bright feature (else dark, default)
+PROBE=""       # ADDED (issue #31): --probe prints capture geometry (aspect/orientation), exits
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -305,6 +312,7 @@ while [[ $# -gt 0 ]]; do
     --measure) MEASURE="${2:-}"; shift 2 ;;           # ADDED (issue #29): feature bbox/diameter
     --measure-limit) MEASURE_LIMIT="${2:-}"; shift 2 ;;  # ADDED: cropdetect luma cutoff
     --measure-bright) MEASURE_BRIGHT=1; shift ;;      # ADDED: measure a bright feature (not dark)
+    --probe) PROBE=1; shift ;;                        # ADDED (issue #31): print capture geometry
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -552,27 +560,30 @@ run_measure() {
     printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.pgm"
     printf '\n'
     echo "# then threshold each PGM (limit ${MEASURE_LIMIT}, ${kind}) -> 2-D bounding box -> CSV"
-    echo "# t,w_px,h_px,diam_px,diam_pct,cx,cy"
+    echo "# t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy"
     return 0
   fi
   if ! command -v python3 >/dev/null 2>&1; then
     echo "Error: --measure needs python3 to compute the bounding box. Install python3 and re-run." >&2
     exit 2
   fi
-  # Viewport width for %-of-viewport (the units the app is authored in); empty if no ffprobe.
-  local vw=""
+  # Viewport width AND height for %-of-viewport on both axes (vmin flips by orientation, #31);
+  # empty if no ffprobe. diam_pct_w / diam_pct_h let the caller pick the right axis.
+  local vw="" vh=""
   if command -v ffprobe >/dev/null 2>&1; then
-    vw="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    vw="$(ffprobe -v error -select_streams v:0 -show_entries stream=width  -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    vh="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
   fi
   local d; d="$(mktemp -d)"
   ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
   local base; base="$(to_seconds "${START:-0}")"
   # Threshold + bounding box per PGM frame (P5 is trivially parseable with the stdlib).
-  python3 - "$d" "$MEASURE_LIMIT" "$kind" "$mx" "$my" "$FPS" "$base" "${vw:-}" <<'PY'
+  python3 - "$d" "$MEASURE_LIMIT" "$kind" "$mx" "$my" "$FPS" "$base" "${vw:-}" "${vh:-}" <<'PY'
 import sys, os, glob
-d, limit, kind, mx, my, fps, base, vw = sys.argv[1:9]
+d, limit, kind, mx, my, fps, base, vw, vh = sys.argv[1:10]
 limit=int(limit); mx=int(mx); my=int(my); fps=float(fps); base=float(base)
 vw=float(vw) if vw else None
+vh=float(vh) if vh else None
 def read_pgm(p):
     with open(p,'rb') as f: data=f.read()
     if data[:2]!=b'P5': return 0,0,b''
@@ -587,7 +598,8 @@ def read_pgm(p):
         vals.append(int(data[i:j])); i=j
     w,h,_maxv=vals; i+=1                      # one whitespace byte follows maxval
     return w,h,data[i:i+w*h]
-print("t,w_px,h_px,diam_px,diam_pct,cx,cy")
+def pct(diam, dim): return ("%.2f" % (diam/dim*100)) if dim else ""
+print("t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy")
 for n,p in enumerate(sorted(glob.glob(os.path.join(d,"f_*.pgm")))):
     w,h,px=read_pgm(p)
     minx=miny=10**9; maxx=maxy=-1
@@ -602,18 +614,63 @@ for n,p in enumerate(sorted(glob.glob(os.path.join(d,"f_*.pgm")))):
                 if y>maxy: maxy=y
     t=base+n/fps
     if maxx<0:                               # nothing matched the threshold this frame
-        print("%.3f,0,0,0,%s,0,0" % (t, "")); continue
+        print("%.3f,0,0,0,,,0,0" % t); continue
     bw=maxx-minx+1; bh=maxy-miny+1; diam=bw if bw>bh else bh
-    pct = ("%.2f" % (diam/vw*100)) if vw else ""
-    print("%.3f,%d,%d,%d,%s,%d,%d" % (t, bw, bh, diam, pct, mx+minx+bw//2, my+miny+bh//2))
+    print("%.3f,%d,%d,%d,%s,%s,%d,%d" % (t, bw, bh, diam, pct(diam,vw), pct(diam,vh),
+                                         mx+minx+bw//2, my+miny+bh//2))
 PY
   local n; n="$(find "$d" -maxdepth 1 -name 'f_*.pgm' | wc -l)"
   rm -rf "$d"
-  echo "Measured $n frame(s) of the ${kind} feature in ROI ${roi}${vw:+ (viewport width ${vw}px)}." >&2
+  local orient="" axis=""
+  if [[ -n "$vw" && -n "$vh" ]]; then
+    if (( vw < vh )); then orient="portrait";  axis="diam_pct_w (= % of width)"
+    elif (( vw > vh )); then orient="landscape"; axis="diam_pct_h (= % of height)"
+    else orient="square"; axis="either axis"; fi
+  fi
+  echo "Measured $n frame(s) of the ${kind} feature in ROI ${roi}${vw:+ (${vw}x${vh}${orient:+, $orient})}." >&2
+  [[ -n "$orient" ]] && echo "For vmin-authored UI on a ${orient} capture, read ${axis}." >&2
   if [[ "$n" -eq 0 ]]; then
     echo "No frames sampled — check the clip and --start/--end." >&2
   fi
-  [[ -z "$vw" ]] && echo "Note: ffprobe not found — diam_pct left blank (px only)." >&2
+  [[ -z "$vw" ]] && echo "Note: ffprobe not found — diam_pct_* left blank (px only)." >&2
+}
+
+# ADDED (issue #31): --probe — print the capture's geometry (dimensions, aspect, orientation,
+# fps, duration) so measurements aren't reasoned about on the wrong axis. dpr can't be known
+# from pixels alone, so we report orientation + which axis vmin maps to instead.
+run_probe() {
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffprobe'; printf ' %q' -v error -select_streams v:0 \
+      -show_entries stream=width,height,avg_frame_rate -of default=nw=1 "$VIDEO"
+    printf '\n'
+    echo "# + format=duration; then derive aspect (gcd), orientation, and the vmin axis"
+    return 0
+  fi
+  command -v ffprobe >/dev/null 2>&1 || { echo "Error: --probe needs ffprobe." >&2; exit 2; }
+  local w h fr dur
+  w="$(ffprobe -v error -select_streams v:0 -show_entries stream=width  -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1)"
+  h="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1)"
+  fr="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1)"
+  dur="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1)"
+  [[ -n "$w" && -n "$h" ]] || { echo "Error: could not read dimensions from $VIDEO." >&2; exit 2; }
+  # NOTE: gcd() is a top-level awk function (awk forbids defining it inside BEGIN); params use
+  # distinct names from the split() array to avoid a name collision on stricter awks (mawk).
+  awk -v w="$w" -v h="$h" -v fr="${fr:-0/0}" -v dur="${dur:-}" '
+  function gcd(m,n,   t){ while(n){ t=m%n; m=n; n=t } return m }
+  BEGIN{
+    g=gcd(w,h); if(g<1)g=1;
+    orient = (w<h)?"portrait":((w>h)?"landscape":"square");
+    vmin   = (w<h)?"width":((w>h)?"height":"either");
+    num=fr; den=1; if (index(fr,"/")){ split(fr,parts,"/"); num=parts[1]; den=(parts[2]==0?1:parts[2]) }
+    fps=(den!=0)?num/den:0;
+    printf "video: %dx%d\n", w, h;
+    printf "aspect: %d:%d (%.3f W/H)\n", w/g, h/g, w/h;
+    printf "orientation: %s\n", orient;
+    if (fps>0) printf "fps: %.2f\n", fps;
+    if (dur!="") printf "duration: %.2fs\n", dur;
+    printf "note: on a %s capture, CSS vmin maps to viewport %s; report measurements as %% of that axis.\n", orient, vmin;
+    printf "      (devicePixelRatio is not knowable from pixels alone — divide by dpr for CSS px if the capture is retina.)\n";
+  }'
 }
 
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
@@ -696,6 +753,13 @@ fi
 # ADDED (issue #29): --measure is an analysis mode — emit a geometry timeline and exit.
 if [[ -n "$MEASURE" ]]; then
   run_measure "$MEASURE"
+  feedback_hint
+  exit 0
+fi
+
+# ADDED (issue #31): --probe is an analysis mode — print capture geometry and exit.
+if [[ -n "$PROBE" ]]; then
+  run_probe
   feedback_hint
   exit 0
 fi

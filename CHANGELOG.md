@@ -5,6 +5,30 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.13] - 2026-06-21
+
+From the v0.15.x **mobile (portrait) intro** dogfood (#31): tuning a load splash on a 1170×2532
+capture, where the splash is authored in `vmin` — which is viewport *width* in portrait but
+*height* in landscape — so a feature's "fraction of the viewport" depends on orientation. The
+ask was capture-context + orientation-aware measurements. `video-bug-analyzer` → 1.0.0-rc.13.
+
+### Added
+- **`--probe`** prints the capture's geometry — dimensions, aspect ratio (reduced + decimal),
+  **orientation** (portrait/landscape/square), fps, duration — and which axis CSS `vmin` maps to,
+  with a note that devicePixelRatio can't be read from pixels alone. Run it before measuring so
+  percentages are read on the right axis. Uses `ffprobe`.
+
+### Changed
+- **`--measure`** now reports **both** axes: the CSV is
+  `t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy` (was a single `diam_pct` = % of width). The
+  run summary names the capture's orientation and which column is the `vmin` axis, so
+  responsive-UI tuning doesn't reason about the wrong dimension.
+
+### Notes
+- #31's circle-diameter-over-time ask was already shipped as `--measure` in rc.12 (the reporter's
+  recordings predate it); this round makes it orientation-aware. Still deferred to IMPROVEMENTS:
+  a two-timestamp centered overlay/diff, and a numeric-plot rendering over the CSVs.
+
 ## [1.0.0-rc.12] - 2026-06-20
 
 From the v0.15.0 intro dogfood (#29): aligning a load-splash's forming event horizon with the
@@ -378,6 +402,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.13]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.13
 [1.0.0-rc.12]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.12
 [1.0.0-rc.11]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.11
 [1.0.0-rc.10]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.10

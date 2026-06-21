@@ -115,6 +115,15 @@ columns are dpr-independent. This is the tool for "splash core ≈ 12% vs real s
 measurements; for a two-feature comparison, measure each and compare the percentages (or stitch
 the frames with `--strip`).
 
+**Palette / dominant colours (`--palette`):** print the clip's dominant colours as a hex swatch
+list (`#rrggbb  rgb(r,g,b)`), `--colors <n>` for how many (default 8). When a clip is an
+*art-direction reference*, the palette is part of the deliverable — read the exact ring/flash
+colours instead of eyeballing them. Narrow with `--start`/`--end` to get one phase's palette
+(pair with `--list-scenes` to find the phase boundaries); `--fps` sets the sample rate. Built on
+ffmpeg `palettegen`; needs `python3` to read the swatch image. For *reference* reads generally,
+a timestamped contact tile gives the phase timeline and `--palette` gives the colours — together
+they turn "here's a clip I like" into a structured spec.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

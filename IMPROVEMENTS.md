@@ -45,6 +45,13 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - **Contact-sheet timestamp index (issue #25).** Burn `t` onto overview-sheet tiles and emit a
   `frame,t` CSV. `--label` burns `t` in dense/`--diff`/`--timestamps` today; per-tile drawtext
   through the `tile` filter is harder — open.
+- **Automatic phase labeling (issue #33).** Auto-split a reference clip into motion phases and
+  describe each ("two blobs orbiting", "radial burst", "expanding rings"). `--list-scenes` gives
+  the boundaries and `--palette` the colours, but a one-line semantic label per segment needs
+  vision/heuristics beyond ffmpeg — open.
+- **Motion / trajectory readout (issue #33).** "Two objects spiralling inward, ~2.5 turns,
+  accelerating" → keyframes. Needs optical-flow tracking; `--diff` shows motion magnitude only.
+  Open.
 
 **Hard constraint (not fixable in the plugin)**
 - Claude Code's auto-mode classifier will **not silently run a download-and-execute of an
@@ -95,6 +102,10 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   `diam_pct_h` (% of width and height) and names the orientation/vmin axis, so responsive-UI
   (vmin) tuning reads the right axis. devicePixelRatio isn't knowable from pixels — noted, not
   invented.
+- 1.0.0-rc.14 (issue #33): `--palette [--colors n]` extracts a clip's dominant colours as a hex
+  swatch list (ffmpeg `palettegen` → python3 reads the PPM); narrow with `--start`/`--end` for
+  one phase. For an art-direction *reference* the palette is the deliverable. Plus a GitHub Pages
+  landing page (`index.html` + `.nojekyll`, served from `main`) — see Discoverability below.
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right
@@ -152,9 +163,11 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   no cuts at the threshold; feedback form gained a "Claude.ai web app (not Claude Code)" option.
 
 ## Discoverability (issue #21, open)
-The plugin isn't findable autonomously — no MCP connector-registry entry, no web hit for
-"Portka Tools," and the GitHub repo lacks a description/topics. The real fixes are outside the
-code: (a) submit `video-bug-analyzer` to the Anthropic community marketplace (planned at final
-1.0.0), and (b) set the GitHub repo **description** + **topics** (`claude-code`,
-`claude-plugin`, `video`, `debugging`, `ffmpeg`) — both manual, no MCP tool exposed here.
-Enriched `plugin.json` keywords as a small step.
+The plugin isn't findable autonomously — no MCP connector-registry entry, and the GitHub repo
+lacks a description/topics. Progress: a **GitHub Pages site** now exists (rc.14,
+`index.html` served from `main` at `cportka.github.io/claude-plugins`), giving "Portka Tools" a
+real web page. Remaining real fixes are outside the code: (a) submit `video-bug-analyzer` to the
+Anthropic community marketplace (planned at final 1.0.0), and (b) set the GitHub repo
+**description** + **topics** (`claude-code`, `claude-plugin`, `video`, `debugging`, `ffmpeg`) —
+both manual, no MCP tool exposed here. Also enable Pages (Settings → Pages → deploy from `main`)
+if not already on. Enriched `plugin.json` keywords as a small step.

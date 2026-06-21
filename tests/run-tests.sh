@@ -220,6 +220,21 @@ for tmpl in .github/ISSUE_TEMPLATE/*.yml; do
 done
 [[ $it_found -eq 1 ]] || skip "no issue form templates"
 
+# --- 4d. GitHub Pages landing page ----------------------------------------------------
+section "GitHub Pages site"
+if [[ -s index.html ]] \
+   && grep -q 'Portka Tools' index.html \
+   && grep -q 'plugin marketplace add cportka/claude-plugins' index.html; then
+  pass "index.html exists with title + add command"
+else
+  fail "index.html missing, empty, or lacking key content"
+fi
+if [[ -f .nojekyll ]]; then
+  pass ".nojekyll present (served as-is, no Jekyll build)"
+else
+  fail ".nojekyll missing (GitHub Pages may try to Jekyll-build the repo)"
+fi
+
 # --- 5. extraction script present + executable ----------------------------------------
 section "extraction script present + executable"
 if [[ -f "$SCRIPT" ]]; then
@@ -486,6 +501,23 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build probe test clips (--probe)"
     fi
+    # --palette: a solid-red clip should yield a reddish dominant swatch (issue #33). Needs
+    # python3 (present in CI); assert a hex line whose red channel dominates.
+    if ! command -v python3 >/dev/null 2>&1; then
+      skip "python3 not installed (--palette e2e)"
+    elif ffmpeg -hide_banner -loglevel error -f lavfi -i "color=red:size=64x64:rate=5:duration=1" \
+         "$tmp/red.mp4" -y 2>/dev/null; then
+      _pal="$(bash "$SCRIPT" --video "$tmp/red.mp4" --palette --colors 4 2>/dev/null || true)"
+      _hex="$(grep -m1 -oE '#[0-9a-f]{6}' <<<"$_pal" | head -n1)"
+      if [[ -n "$_hex" ]] \
+         && (( 16#${_hex:1:2} > 16#${_hex:3:2} )) && (( 16#${_hex:1:2} > 16#${_hex:5:2} )); then
+        pass "--palette extracts a dominant colour (red clip -> reddish swatch)"
+      else
+        fail "--palette did not extract a reddish swatch (got '$_hex')"
+      fi
+    else
+      skip "could not build a red test clip (--palette)"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -652,7 +684,7 @@ rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--probe" "--version"; do
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--probe" "--palette" "--version"; do
   if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
@@ -710,6 +742,13 @@ if grep -q 'ffprobe' <<<"$_probe_dry" && grep -q 'width' <<<"$_probe_dry"; then
   pass "--probe --dry-run prints the ffprobe command"
 else
   fail "--probe --dry-run did not print the ffprobe command"
+fi
+# --palette --dry-run prints the palettegen command (issue #33).
+_pal_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --palette --colors 6 --dry-run 2>/dev/null || true)"
+if grep -q 'palettegen=max_colors=6' <<<"$_pal_dry"; then
+  pass "--palette --dry-run prints the palettegen command"
+else
+  fail "--palette --dry-run did not print palettegen"
 fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.

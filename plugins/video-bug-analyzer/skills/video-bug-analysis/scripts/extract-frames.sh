@@ -18,6 +18,7 @@
 #   extract-frames.sh --video <path> --ocr-roi <W:H:X:Y> [--fps <n>]  # OCR a region -> t,text CSV
 #   extract-frames.sh --video <path> --measure <W:H:X:Y> [--fps <n>]  # feature diameter/center CSV
 #   extract-frames.sh --video <path> --probe                         # capture geometry/orientation
+#   extract-frames.sh --video <path> --palette [--colors <n>]        # dominant colours (hex)
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -93,6 +94,10 @@
 #   --probe             Print the capture's geometry — dimensions, aspect ratio, orientation
 #                       (portrait/landscape), fps, duration — and which axis CSS vmin maps to.
 #                       Use it before measuring so % figures are read on the right axis. (ffprobe.)
+#   --palette           Print the clip's dominant colours as a hex swatch list (an art-direction
+#                       reference's palette is part of the deliverable). Narrow with --start/--end
+#                       to read one phase. Sample rate from --fps. Needs python3.
+#   --colors <n>        How many dominant colours --palette extracts. Default: 8.
 #   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
@@ -111,6 +116,7 @@
 #   extract-frames.sh --video bug.mov --ocr-roi 180:40:20:8 --ocr-digits --fps 2  # count timeline
 #   extract-frames.sh --video bug.mov --measure 400:400:760:340 --fps 5  # shadow diameter over time
 #   extract-frames.sh --video bug.mov --probe                            # aspect/orientation/dpr note
+#   extract-frames.sh --video ref.mov --start 4 --end 5.7 --palette      # one phase's colours
 #
 set -euo pipefail
 
@@ -153,6 +159,8 @@ MEASURE=""     # ADDED (issue #29): --measure W:H:X:Y -> bounding box / diameter
 MEASURE_LIMIT="80"  # ADDED: --measure-limit, luma threshold (dark<thr / bright>thr) 0..255
 MEASURE_BRIGHT=""   # ADDED: --measure-bright measures a bright feature (else dark, default)
 PROBE=""       # ADDED (issue #31): --probe prints capture geometry (aspect/orientation), exits
+PALETTE=""     # ADDED (issue #33): --palette prints dominant colours (hex swatches), then exits
+COLORS="8"     # ADDED: --colors, how many dominant colours --palette extracts
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -313,6 +321,8 @@ while [[ $# -gt 0 ]]; do
     --measure-limit) MEASURE_LIMIT="${2:-}"; shift 2 ;;  # ADDED: cropdetect luma cutoff
     --measure-bright) MEASURE_BRIGHT=1; shift ;;      # ADDED: measure a bright feature (not dark)
     --probe) PROBE=1; shift ;;                        # ADDED (issue #31): print capture geometry
+    --palette) PALETTE=1; shift ;;                    # ADDED (issue #33): dominant colours, exit
+    --colors) COLORS="${2:-}"; shift 2 ;;             # ADDED: number of palette colours
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -673,6 +683,56 @@ run_probe() {
   }'
 }
 
+# ADDED (issue #33): --palette — extract the dominant colours of a clip (or a --start/--end
+# window, e.g. one phase of a reference) as a hex swatch list. For art-direction reference work
+# the palette IS part of the deliverable. ffmpeg's palettegen computes a representative palette
+# to a PPM; python3 reads the swatches (so no PNG decoder is needed). Uses PRE_ARGS — run after.
+run_palette() {
+  local vf="fps=${FPS},palettegen=max_colors=${COLORS}:reserve_transparent=0:stats_mode=full"
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v 1 "<tmp>/palette.ppm"
+    printf '\n'
+    echo "# then read the PPM swatches -> hex colour list (#rrggbb)"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --palette needs python3 to read the swatches. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local d; d="$(mktemp -d)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v 1 "$d/palette.ppm" >/dev/null 2>&1 || true
+  python3 - "$d/palette.ppm" "$COLORS" <<'PY'
+import sys
+p, k = sys.argv[1], int(sys.argv[2])
+try:
+    data = open(p, 'rb').read()
+except OSError:
+    sys.exit(0)
+if data[:2] != b'P6':
+    sys.exit(0)
+i=2; vals=[]
+while len(vals) < 3:                          # parse width, height, maxval (skip ws/comments)
+    while i < len(data) and data[i:i+1].isspace(): i+=1
+    if data[i:i+1] == b'#':
+        while i < len(data) and data[i:i+1] != b'\n': i+=1
+        continue
+    j=i
+    while j < len(data) and not data[j:j+1].isspace(): j+=1
+    vals.append(int(data[i:j])); i=j
+w,h,_mx = vals; i+=1
+px = data[i:i+w*h*3]
+seen=[]; s=set()
+for o in range(0, len(px), 3):                 # unique colours, first-seen order
+    c=(px[o], px[o+1], px[o+2])
+    if c not in s:
+        s.add(c); seen.append(c)
+for (r,g,b) in seen[:k]:
+    print("#%02x%02x%02x  rgb(%d,%d,%d)" % (r,g,b,r,g,b))
+PY
+  rm -rf "$d"
+  echo "Palette: up to ${COLORS} dominant colours${START:+ from ${START}}${END:+ to ${END}} (sampled at ${FPS} fps)." >&2
+}
+
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
 
 # ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
@@ -760,6 +820,13 @@ fi
 # ADDED (issue #31): --probe is an analysis mode — print capture geometry and exit.
 if [[ -n "$PROBE" ]]; then
   run_probe
+  feedback_hint
+  exit 0
+fi
+
+# ADDED (issue #33): --palette is an analysis mode — print dominant colours and exit.
+if [[ -n "$PALETTE" ]]; then
+  run_palette
   feedback_hint
   exit 0
 fi

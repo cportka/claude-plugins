@@ -90,6 +90,12 @@ in portrait but *height* in landscape — so read `diam_pct_w` on a portrait cap
 `diam_pct_h` on a landscape one (the `--measure` summary says which). Recordings may also be
 retina (dpr 2); device px aren't CSS px, so report fractions of the viewport, not raw px.
 
+**Reading a clip as a reference, not a bug** (art direction — "recreate this choreography"):
+a timestamped contact tile reads the **phases** at a glance, and **`--list-scenes`** gives the
+phase boundaries to feed `--timestamps`. For the **palette**, run **`--palette`** (narrow with
+`--start/--end` to one phase) to get an exact hex swatch list instead of eyeballing colours —
+the colours are part of the spec you hand back.
+
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
 the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact

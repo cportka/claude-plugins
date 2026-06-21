@@ -5,6 +5,29 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.14] - 2026-06-21
+
+A GitHub Pages landing page for the marketplace, plus a colour-palette mode from the
+art-direction dogfood (#33, where the workflow was used to reverse-engineer a reference clip's
+choreography and palette). `video-bug-analyzer` → 1.0.0-rc.14.
+
+### Added
+- **GitHub Pages site** — a self-contained `index.html` (with `.nojekyll`) at the repo root,
+  served from `main`: what Portka Tools is, the two plugins, how to add and use them, and a
+  feedback link. Linked from the README header. This also chips at the discoverability gap
+  (issue #21) by giving the project a real web page.
+- **`--palette`** (issue #33) prints a clip's dominant colours as a hex swatch list
+  (`#rrggbb  rgb(...)`), `--colors <n>` for how many (default 8). Narrow with `--start`/`--end`
+  to read one phase's palette — for an art-direction *reference*, the colours are the
+  deliverable. Built on ffmpeg `palettegen`; `python3` reads the swatch PPM. Documented in
+  `--help`, SKILL.md, reference.md; covered by e2e + dry-run + help-doc tests.
+
+### Notes
+- #33's phase *boundaries* are already served by `--list-scenes` (+ a timestamped contact tile
+  for the phase timeline); SKILL.md now frames the reference-reading workflow. Deferred to
+  IMPROVEMENTS: automatic phase *labeling* (semantic) and a motion/trajectory readout.
+- No plugin behaviour changed beyond the new `--palette` mode.
+
 ## [1.0.0-rc.13] - 2026-06-21
 
 From the v0.15.x **mobile (portrait) intro** dogfood (#31): tuning a load splash on a 1170×2532
@@ -402,6 +425,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.14]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.14
 [1.0.0-rc.13]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.13
 [1.0.0-rc.12]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.12
 [1.0.0-rc.11]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.11

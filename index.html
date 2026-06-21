@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Portka Tools — Claude Code plugins</title>
+  <meta name="description" content="Portka Tools: a Claude Code plugin marketplace by Chris Portka. video-bug-analyzer reads screen recordings; repo-bootstrap onboards a repo. Add it once, use it everywhere." />
+  <meta property="og:title" content="Portka Tools — Claude Code plugins" />
+  <meta property="og:description" content="A Claude Code plugin marketplace: read screen recordings, onboard repos. Add it once; use it in the CLI and in web sessions." />
+  <meta property="og:type" content="website" />
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --border: #30363d;
+      --fg: #e6edf3; --muted: #9da7b3; --accent: #6ea8fe; --code: #1f2630;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 820px; margin: 0 auto; padding: 0 20px 64px; }
+    header { padding: 56px 0 8px; }
+    h1 { font-size: 2.1rem; margin: 0 0 6px; letter-spacing: -0.02em; }
+    .tag { color: var(--muted); font-style: italic; margin: 0 0 18px; }
+    .meta { color: var(--muted); font-size: 0.92rem; }
+    .meta a { color: var(--muted); text-decoration: underline; }
+    h2 { font-size: 1.25rem; margin: 40px 0 12px; }
+    .lead { font-size: 1.08rem; color: var(--fg); }
+    .cards { display: grid; gap: 16px; grid-template-columns: 1fr; margin-top: 8px; }
+    @media (min-width: 640px) { .cards { grid-template-columns: 1fr 1fr; } }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 18px 18px 16px;
+    }
+    .card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+    .card h3 code { background: none; padding: 0; color: var(--fg); }
+    .card p { margin: 0 0 10px; color: var(--muted); font-size: 0.95rem; }
+    .card .links { font-size: 0.88rem; }
+    pre {
+      background: var(--code); border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px; overflow-x: auto; font-size: 0.88rem; line-height: 1.55;
+    }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre code { color: #c9d6e6; }
+    .cmt { color: #6b7684; }
+    ul.plain { padding-left: 1.1em; }
+    ul.plain li { margin: 4px 0; }
+    footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Portka Tools</h1>
+      <p class="tag">My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.</p>
+      <p class="meta">
+        A <a href="https://code.claude.com">Claude Code</a> plugin marketplace ·
+        <a href="https://github.com/cportka/claude-plugins">GitHub</a> ·
+        <a href="https://github.com/cportka/claude-plugins/blob/main/CHANGELOG.md">Changelog</a> ·
+        <a href="https://github.com/cportka/claude-plugins/blob/main/LICENSE">MIT</a>
+      </p>
+    </header>
+
+    <p class="lead">
+      A small marketplace of Claude Code plugins. Add it once &mdash; the plugins then work in
+      your local CLI and in ephemeral web sessions. No plugin code is copied into your repo,
+      only a marketplace reference.
+    </p>
+
+    <h2>Plugins</h2>
+    <div class="cards">
+      <div class="card">
+        <h3><code>video-bug-analyzer</code></h3>
+        <p>
+          Give Claude a screen recording and roughly when something happens; it extracts frames
+          (contact sheet, scene cuts, per-timestamp zoom, before/after strips) and reasons over
+          them. Plus analysis modes: black-screen detection, ROI&nbsp;OCR value tracking, feature
+          measurement, capture probing, and dominant-colour palettes. Needs <code>ffmpeg</code>.
+        </p>
+        <p class="links"><a href="https://github.com/cportka/claude-plugins/tree/main/plugins/video-bug-analyzer">Details &rarr;</a></p>
+      </div>
+      <div class="card">
+        <h3><code>repo-bootstrap</code></h3>
+        <p>
+          Onboard a repo to this marketplace: writes or merges <code>.claude/settings.json</code>
+          (and optional CI) so a web session loads the plugins on start. Idempotent and
+          non-clobbering.
+        </p>
+        <p class="links"><a href="https://github.com/cportka/claude-plugins/tree/main/plugins/repo-bootstrap">Details &rarr;</a></p>
+      </div>
+    </div>
+
+    <h2>Add it</h2>
+    <p>In Claude Code, add the marketplace once, then install a plugin:</p>
+    <pre><code><span class="cmt"># add this marketplace (persists in ~/.claude)</span>
+/plugin marketplace add cportka/claude-plugins
+
+<span class="cmt"># install a plugin</span>
+/plugin install video-bug-analyzer@portka-tools
+/plugin install repo-bootstrap@portka-tools</code></pre>
+    <p>
+      For a specific repo or a fresh web session, commit a <code>.claude/settings.json</code>
+      that references the marketplace (or let <code>repo-bootstrap</code> write it). See the
+      <a href="https://github.com/cportka/claude-plugins#readme">README</a> and
+      <a href="https://github.com/cportka/claude-plugins/blob/main/docs/INTEGRATE.md">INTEGRATE.md</a>.
+    </p>
+
+    <h2>Use it</h2>
+    <p>Hand Claude a recording, or run the extractor directly:</p>
+    <pre><code>S=plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh
+"$S" --video bug.mov --fps 2 --contact            <span class="cmt"># overview contact sheet</span>
+"$S" --video bug.mov --timestamps 0:12,0:34 --fps 8 <span class="cmt"># zoom + before/after</span>
+"$S" --video clip.mov --palette --colors 8        <span class="cmt"># dominant colours</span></code></pre>
+
+    <h2>Feedback</h2>
+    <p>
+      Hit a problem or have an idea? Open a
+      <a href="https://github.com/cportka/claude-plugins/issues/new?template=plugin-feedback.yml">Plugin feedback</a>
+      issue &mdash; each one is triaged into a fix and a new release.
+    </p>
+
+    <footer>
+      &copy; Chris Portka &middot; <a href="https://github.com/cportka/claude-plugins/blob/main/LICENSE">MIT</a>,
+      free to use with attribution preserved.
+    </footer>
+  </div>
+</body>
+</html>

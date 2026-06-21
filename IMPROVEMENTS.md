@@ -29,9 +29,17 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - **Two-timestamp overlay / contour diff (issue #29).** Overlay frame A onto frame B at matched
   scale + center (with opacity, or an edge/contour diff) to eyeball whether two circles align.
   `--strip` does side-by-side hstack today; a true centered overlay is open.
-- **Stutter / cadence metric (issue #23).** A per-interval frame-difference or
-  estimated-unique-frames measure to auto-flag choppy spans ("0:00–0:07 is choppy") even
-  without a HUD. `--diff` shows per-frame motion today; aggregating it into a metric is open.
+- **Cadence / stutter timeline (issues #23, #35 — next up).** Report dropped/duplicated frames
+  and frame-time variance over a window ("stutter at 0.7–1.0 s: 3 long frames"), to localize a
+  splash→render handoff hitch. The reporter hand-ran `mpdecimate`; a built-in `--cadence`
+  (mpdecimate to find content-duplicate runs on CFR captures, + PTS-delta variance) is the
+  planned follow-up to `--ab`. `--diff` shows per-frame motion magnitude today.
+- **Per-blob motion / trajectory readout (issue #35).** Track a feature's path over time ("two
+  objects spiralling inward, ~2.5 turns, accelerating") → keyframes. Needs optical-flow/tracking
+  beyond `--diff`/`--measure`; open.
+- **Letterboxed A/B compare (issue #35).** `--ab` stretches differing aspect ratios to a common
+  size; a letterbox-preserving compare would avoid distortion when the two captures differ in
+  shape. Open.
 - **Phase detection** to split "intro" vs "steady state" so a report can compare FPS across
   phases (builds on `--list-scenes`).
 - **App-state / console-log hook at flagged timestamps (issue #27).** Optional bridge to
@@ -106,6 +114,9 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   swatch list (ffmpeg `palettegen` → python3 reads the PPM); narrow with `--start`/`--end` for
   one phase. For an art-direction *reference* the palette is the deliverable. Plus a GitHub Pages
   landing page (`index.html` + `.nojekyll`, served from `main`) — see Discoverability below.
+- 1.0.0-rc.15 (issue #35 — "the big one for cross-browser bugs"): `--ab <other>` compares two
+  captures of the same sequence and prints a `t,ssim` divergence timeline (ffmpeg `ssim`),
+  headlining the most divergent moments — "these intros differ most at 0.20–0.28 s" in one step.
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right

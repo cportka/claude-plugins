@@ -5,6 +5,26 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.15] - 2026-06-21
+
+From the cross-browser dogfood (#35): two captures of the same intro (Safari iOS vs Firefox/
+macOS) used to find a splash bug that only appears on one browser. Side-by-side tiles made the
+divergence visible; the ask was to flag *where* in time two clips differ.
+`video-bug-analyzer` → 1.0.0-rc.15.
+
+### Added
+- **`--ab <other>`** (issue #35) — A/B divergence: compares `--video` against another capture of
+  the same sequence and prints a `t,ssim` CSV (1.0 = identical, lower = more different),
+  headlining the most divergent moments — i.e. "these intros differ most at 0.20–0.28 s" in one
+  step. Both clips are sampled at `--fps` and scaled to the primary's size; `--start`/`--end`
+  align the window on both. Built on ffmpeg's `ssim` filter. The headline cross-browser-bug tool.
+
+### Notes
+- #35's other asks are logged in IMPROVEMENTS as the next priorities: a cadence/stutter timeline
+  (dropped/duplicated frames + frame-time variance — the reporter hand-ran `mpdecimate`), and a
+  per-blob motion/trajectory readout. Different aspect ratios are stretched to compare; a
+  letterboxed compare is a possible follow-up.
+
 ## [1.0.0-rc.14] - 2026-06-21
 
 A GitHub Pages landing page for the marketplace, plus a colour-palette mode from the
@@ -425,6 +445,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.15]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.15
 [1.0.0-rc.14]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.14
 [1.0.0-rc.13]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.13
 [1.0.0-rc.12]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.12

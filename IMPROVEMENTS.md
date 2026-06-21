@@ -86,10 +86,15 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   localised in seconds. Plus a state-vs-render diagnostic steer (value changes with no nearby
   pixel change ⇒ off-screen logic, go to logs/headless repro). Needs `tesseract` (now in CI).
 - 1.0.0-rc.12 (issue #29 — "the biggest gap for alignment/tuning work"): `--measure W:H:X:Y`
-  bounds a feature in the ROI per frame (cropdetect on a thresholded ROI) → `t,...,diam_px,
-  diam_pct,cx,cy` CSV, giving a feature's diameter (px and % of viewport) and center over time.
-  `--measure-bright` for rings/glows, `--measure-limit` to tune. Robust where a center-row dark
-  run fails (photon ring / disk); reporting % of viewport also covers the dpr/units ask.
+  bounds a feature in the ROI per frame (ffmpeg extracts grayscale frames; python3 thresholds +
+  computes a 2-D bounding box) → `t,...,diam_px,...,cx,cy` CSV, giving a feature's diameter (px
+  and % of viewport) and center over time. `--measure-bright` for rings/glows, `--measure-limit`
+  to tune. Robust where a center-row dark run fails (photon ring / disk).
+- 1.0.0-rc.13 (issue #31): `--probe` reports capture geometry — dimensions, aspect, orientation,
+  fps, duration — and which axis CSS `vmin` maps to; `--measure` now emits `diam_pct_w` AND
+  `diam_pct_h` (% of width and height) and names the orientation/vmin axis, so responsive-UI
+  (vmin) tuning reads the right axis. devicePixelRatio isn't knowable from pixels — noted, not
+  invented.
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right

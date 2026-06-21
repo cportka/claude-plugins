@@ -458,9 +458,9 @@ if command -v ffmpeg >/dev/null 2>&1; then
          -vf "drawbox=x=60:y=60:w=80:h=80:color=black:t=fill" "$tmp/box.mp4" -y 2>/dev/null; then
       _m="$(bash "$SCRIPT" --video "$tmp/box.mp4" --measure 200:200:0:0 --fps 2 2>/dev/null || true)"
       _mrow="$(grep -m1 '^[0-9]' <<<"$_m" || true)"
-      _mdiam="$(awk -F, 'NR==1{print $4+0}' <<<"$_mrow")"
-      _mcx="$(awk -F, 'NR==1{print $6+0}' <<<"$_mrow")"
-      if [[ "$(head -n1 <<<"$_m")" == "t,w_px,h_px,diam_px,diam_pct,cx,cy" ]] \
+      _mdiam="$(awk -F, 'NR==1{print $4+0}' <<<"$_mrow")"   # diam_px (col 4)
+      _mcx="$(awk -F, 'NR==1{print $7+0}' <<<"$_mrow")"     # cx (col 7 since dual pct cols)
+      if [[ "$(head -n1 <<<"$_m")" == "t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy" ]] \
          && [[ -n "$_mdiam" ]] && (( _mdiam >= 60 && _mdiam <= 110 )) \
          && (( _mcx >= 75 && _mcx <= 125 )); then
         pass "--measure reports a feature diameter + center (bounding box)"
@@ -469,6 +469,22 @@ if command -v ffmpeg >/dev/null 2>&1; then
       fi
     else
       skip "could not build a box test clip (--measure)"
+    fi
+    # --probe: portrait vs landscape clips report the right orientation + dimensions (issue #31).
+    if ffmpeg -hide_banner -loglevel error -f lavfi -i "color=blue:size=80x120:rate=5:duration=1" \
+         "$tmp/portrait.mp4" -y 2>/dev/null \
+       && ffmpeg -hide_banner -loglevel error -f lavfi -i "color=blue:size=120x80:rate=5:duration=1" \
+         "$tmp/land.mp4" -y 2>/dev/null; then
+      _pp="$(bash "$SCRIPT" --video "$tmp/portrait.mp4" --probe 2>/dev/null || true)"
+      _pl="$(bash "$SCRIPT" --video "$tmp/land.mp4" --probe 2>/dev/null || true)"
+      if grep -q 'orientation: portrait' <<<"$_pp" && grep -q '80x120' <<<"$_pp" \
+         && grep -q 'orientation: landscape' <<<"$_pl"; then
+        pass "--probe reports dimensions + orientation"
+      else
+        fail "--probe did not report orientation correctly"
+      fi
+    else
+      skip "could not build probe test clips (--probe)"
     fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
@@ -636,7 +652,7 @@ rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--version"; do
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--probe" "--version"; do
   if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
@@ -687,6 +703,13 @@ if grep -q 'crop=400:400:760:340' <<<"$_meas_dry" && grep -q 'f_%05d.pgm' <<<"$_
   pass "--measure --dry-run prints the PGM command + threshold note (dark/bright)"
 else
   fail "--measure --dry-run command was not as expected"
+fi
+# --probe --dry-run prints the ffprobe command (no ffprobe needed to show it) (issue #31).
+_probe_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --probe --dry-run 2>/dev/null || true)"
+if grep -q 'ffprobe' <<<"$_probe_dry" && grep -q 'width' <<<"$_probe_dry"; then
+  pass "--probe --dry-run prints the ffprobe command"
+else
+  fail "--probe --dry-run did not print the ffprobe command"
 fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.

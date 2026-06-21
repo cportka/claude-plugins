@@ -78,11 +78,17 @@ rather than extracting more frames.
 **When the question is "how big / where", not "what's wrong"** (visual-tuning / alignment work
 — the diameter of a shadow or dot as a fraction of the viewport, whether two circles line up),
 measure it: **`--measure W:H:X:Y`** bounds a feature inside the ROI once per sampled frame and
-prints `t,w_px,h_px,diam_px,diam_pct,cx,cy` (diameter in px *and* % of viewport; center in
-full-frame px). Use `--measure-bright` for a ring/glow instead of a dark feature, and
-`--measure-limit` to tune sensitivity. Prefer this over eyeballing or a center-row luma scan —
-a photon ring or accretion disk breaks a single-row scan, but the 2D bounding box is robust.
-Report sizes as **% of viewport**, since recordings may be retina (dpr 2) and raw px mislead.
+prints `t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy` (diameter in px *and* as % of viewport
+width **and** height; center in full-frame px). Use `--measure-bright` for a ring/glow instead of
+a dark feature, and `--measure-limit` to tune sensitivity. Prefer this over eyeballing or a
+center-row luma scan — a photon ring or accretion disk breaks a single-row scan, but the 2D
+bounding box is robust.
+
+**First, know the canvas.** Run **`--probe`** to report dimensions, aspect ratio, **orientation**
+(portrait/landscape), fps, and duration. It matters because CSS `vmin` maps to viewport *width*
+in portrait but *height* in landscape — so read `diam_pct_w` on a portrait capture and
+`diam_pct_h` on a landscape one (the `--measure` summary says which). Recordings may also be
+retina (dpr 2); device px aren't CSS px, so report fractions of the viewport, not raw px.
 
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,

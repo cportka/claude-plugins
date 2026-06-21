@@ -19,6 +19,7 @@
 #   extract-frames.sh --video <path> --measure <W:H:X:Y> [--fps <n>]  # feature diameter/center CSV
 #   extract-frames.sh --video <path> --probe                         # capture geometry/orientation
 #   extract-frames.sh --video <path> --palette [--colors <n>]        # dominant colours (hex)
+#   extract-frames.sh --video <a> --ab <b> [--fps <n>]               # A/B divergence over time
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -98,6 +99,12 @@
 #                       reference's palette is part of the deliverable). Narrow with --start/--end
 #                       to read one phase. Sample rate from --fps. Needs python3.
 #   --colors <n>        How many dominant colours --palette extracts. Default: 8.
+#   --ab <other>        A/B divergence: compare --video against <other> (two captures of the
+#                       SAME sequence — e.g. a different browser/device) and print a t,ssim CSV
+#                       (1.0 = identical, lower = more different), headlining the most divergent
+#                       moments. Both are sampled at --fps and scaled to the primary's size, so
+#                       it answers "these intros differ most at 0.20-0.28s". --start/--end align
+#                       the window on both. The cross-browser-bug tool. (Uses ffmpeg ssim.)
 #   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
@@ -117,6 +124,7 @@
 #   extract-frames.sh --video bug.mov --measure 400:400:760:340 --fps 5  # shadow diameter over time
 #   extract-frames.sh --video bug.mov --probe                            # aspect/orientation/dpr note
 #   extract-frames.sh --video ref.mov --start 4 --end 5.7 --palette      # one phase's colours
+#   extract-frames.sh --video safari.mov --ab firefox.mov --fps 10       # where do they diverge?
 #
 set -euo pipefail
 
@@ -161,6 +169,7 @@ MEASURE_BRIGHT=""   # ADDED: --measure-bright measures a bright feature (else da
 PROBE=""       # ADDED (issue #31): --probe prints capture geometry (aspect/orientation), exits
 PALETTE=""     # ADDED (issue #33): --palette prints dominant colours (hex swatches), then exits
 COLORS="8"     # ADDED: --colors, how many dominant colours --palette extracts
+AB=""          # ADDED (issue #35): --ab <other> SSIM-diffs two clips over time, then exits
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -323,6 +332,7 @@ while [[ $# -gt 0 ]]; do
     --probe) PROBE=1; shift ;;                        # ADDED (issue #31): print capture geometry
     --palette) PALETTE=1; shift ;;                    # ADDED (issue #33): dominant colours, exit
     --colors) COLORS="${2:-}"; shift 2 ;;             # ADDED: number of palette colours
+    --ab) AB="${2:-}"; shift 2 ;;                      # ADDED (issue #35): A/B divergence vs <other>
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -733,6 +743,52 @@ PY
   echo "Palette: up to ${COLORS} dominant colours${START:+ from ${START}}${END:+ to ${END}} (sampled at ${FPS} fps)." >&2
 }
 
+# ADDED (issue #35): A/B divergence — compare two captures of the SAME sequence (e.g. the same
+# intro on two browsers) and flag WHERE in time they diverge. Both are sampled at --fps and
+# scaled to the primary's dimensions, then ffmpeg's ssim filter scores per-frame similarity to a
+# stats file; we emit a t,ssim CSV (lower = more different) and headline the most divergent
+# moments. The headline cross-browser-bug tool. Uses PRE_ARGS (applied to both) — run after them.
+run_ab() {
+  local other="$1"
+  [[ -f "$other" ]] || { echo "Error: --ab comparison file not found: $other" >&2; exit 2; }
+  local W="" H=""
+  if command -v ffprobe >/dev/null 2>&1; then
+    W="$(ffprobe -v error -select_streams v:0 -show_entries stream=width  -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    H="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+  fi
+  [[ -n "$W" && -n "$H" ]] || { W=640; H=360; }   # fallback if ffprobe is unavailable
+  local fc_pre="[0:v]fps=${FPS},scale=${W}:${H},setsar=1[a];[1:v]fps=${FPS},scale=${W}:${H},setsar=1[b];[a][b]ssim=stats_file="
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" \
+      "${PRE_ARGS[@]}" -i "$other" -filter_complex "${fc_pre}<tmp>/ssim.log" -f null -
+    printf '\n'
+    echo "# parse the ssim stats (n: / All:) -> CSV t,ssim; lowest SSIM = most divergent moment"
+    return 0
+  fi
+  local sf; sf="$(mktemp)"
+  # PRE_ARGS (-ss/-to) go before BOTH inputs so the two clips are aligned to the same window.
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" "${PRE_ARGS[@]}" -i "$other" \
+    -filter_complex "${fc_pre}${sf}" -f null - >/dev/null 2>&1 || true
+  local base; base="$(to_seconds "${START:-0}")"
+  local csv
+  csv="$(awk -v fps="$FPS" -v base="$base" '
+    { n=""; s="";
+      for(i=1;i<=NF;i++){ if($i ~ /^n:/) n=substr($i,3); if($i ~ /^All:/) s=substr($i,5) }
+      if(n!="" && s!=""){ printf "%.3f,%s\n", base+(n-1)/fps, s } }' "$sf")"
+  rm -f "$sf"
+  echo "t,ssim"
+  printf '%s\n' "$csv"
+  if [[ -n "$csv" ]]; then
+    echo "A/B divergence (1.0 = identical; lower = more different) — most divergent moments:" >&2
+    printf '%s\n' "$csv" | sort -t, -k2 -g | head -n 3 | while IFS=, read -r _t _s; do
+      printf '  t=%ss  ssim=%s\n' "$_t" "$_s" >&2
+    done
+  else
+    echo "No SSIM samples — check both clips decode and overlap in time." >&2
+  fi
+  echo "(Both scaled to ${W}x${H} @ ${FPS} fps to compare; differing aspect ratios are stretched.)" >&2
+}
+
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
 
 # ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
@@ -827,6 +883,13 @@ fi
 # ADDED (issue #33): --palette is an analysis mode — print dominant colours and exit.
 if [[ -n "$PALETTE" ]]; then
   run_palette
+  feedback_hint
+  exit 0
+fi
+
+# ADDED (issue #35): --ab is an analysis mode — print an A/B divergence timeline and exit.
+if [[ -n "$AB" ]]; then
+  run_ab "$AB"
   feedback_hint
   exit 0
 fi

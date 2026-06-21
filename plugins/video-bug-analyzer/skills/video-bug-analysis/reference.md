@@ -124,6 +124,15 @@ ffmpeg `palettegen`; needs `python3` to read the swatch image. For *reference* r
 a timestamped contact tile gives the phase timeline and `--palette` gives the colours — together
 they turn "here's a clip I like" into a structured spec.
 
+**A/B divergence (`--ab other.mov`):** for two captures of the *same* sequence (the same intro on
+two browsers/devices, or a before/after), this aligns them by time and prints a `t,ssim` CSV —
+1.0 means identical, lower means more different — then headlines the most divergent moments, so
+"these intros differ most at 0.20–0.28 s" falls out in one step. Both clips are sampled at
+`--fps` and scaled to the primary's dimensions (differing aspect ratios are stretched), and
+`--start`/`--end` align the window on both. Built on ffmpeg's `ssim` filter; no extra deps. It's
+the cross-browser-bug tool: find *when* they diverge here, then pull side-by-side timestamped
+tiles at that moment to *see* how.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

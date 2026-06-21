@@ -518,6 +518,27 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a red test clip (--palette)"
     fi
+    # --ab: two clips identical for 1s then divergent (red vs blue) for 1s should score high SSIM
+    # early and low SSIM late (issue #35). Build A=red(2s); B=red(1s)+blue(1s).
+    if ffmpeg -hide_banner -loglevel error -f lavfi -i "color=red:size=160x120:rate=5:duration=2" \
+         "$tmp/abA.mp4" -y 2>/dev/null \
+       && ffmpeg -hide_banner -loglevel error \
+         -f lavfi -i "color=red:size=160x120:rate=5:duration=1" \
+         -f lavfi -i "color=blue:size=160x120:rate=5:duration=1" \
+         -filter_complex "[0:v][1:v]concat=n=2:v=1[v]" -map "[v]" "$tmp/abB.mp4" -y 2>/dev/null; then
+      _ab="$(bash "$SCRIPT" --video "$tmp/abA.mp4" --ab "$tmp/abB.mp4" --fps 4 2>/dev/null || true)"
+      # an early row (t<1) near-identical, and a late row (t>=1) clearly divergent. (Flat-colour
+      # SSIM stays ~0.77 even for red-vs-blue, so the "divergent" cutoff is generous.)
+      _hi="$(awk -F, '$1<1 && $2>0.95{print;exit}' <<<"$_ab")"
+      _lo="$(awk -F, '$1>=1 && $2<0.85{print;exit}' <<<"$_ab")"
+      if [[ "$(head -n1 <<<"$_ab")" == "t,ssim" ]] && [[ -n "$_hi" ]] && [[ -n "$_lo" ]]; then
+        pass "--ab flags where two clips diverge (high SSIM early, low late)"
+      else
+        fail "--ab divergence timeline not as expected (hi='$_hi' lo='$_lo')"
+      fi
+    else
+      skip "could not build A/B test clips (--ab)"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -684,7 +705,7 @@ rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--probe" "--palette" "--version"; do
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--probe" "--palette" "--ab" "--version"; do
   if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
@@ -750,6 +771,15 @@ if grep -q 'palettegen=max_colors=6' <<<"$_pal_dry"; then
 else
   fail "--palette --dry-run did not print palettegen"
 fi
+# --ab --dry-run prints the two-input ssim command (issue #35).
+nf_tmp2="$(mktemp -d)"; : >"$nf_tmp2/b.mov"
+_ab_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --ab "$nf_tmp2/b.mov" --fps 10 --dry-run 2>/dev/null || true)"
+if grep -q 'ssim=stats_file=' <<<"$_ab_dry" && grep -q 'fps=10' <<<"$_ab_dry"; then
+  pass "--ab --dry-run prints the ssim command"
+else
+  fail "--ab --dry-run did not print the ssim command"
+fi
+rm -rf "$nf_tmp2"
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.
 _ver_json="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"

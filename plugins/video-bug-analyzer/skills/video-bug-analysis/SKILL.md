@@ -96,6 +96,12 @@ phase boundaries to feed `--timestamps`. For the **palette**, run **`--palette`*
 `--start/--end` to one phase) to get an exact hex swatch list instead of eyeballing colours —
 the colours are part of the spec you hand back.
 
+**Comparing two captures of the same thing** (a bug that only shows on one browser/device, or a
+before/after): **`--ab other.mov`** scores per-frame similarity over time and prints a `t,ssim`
+timeline (1.0 = identical, lower = more different), calling out the most divergent moments — so
+"where do these two intros differ?" is answered in one step rather than scrubbing both. Pair it
+with side-by-side timestamped tiles to *see* the difference once you know when it happens.
+
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
 the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact

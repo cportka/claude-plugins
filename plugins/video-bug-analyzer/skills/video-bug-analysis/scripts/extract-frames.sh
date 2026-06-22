@@ -23,6 +23,7 @@
 #   extract-frames.sh --video <path> --cadence [--window <sec>]      # stutter / frame-cadence timeline
 #   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
 #   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
+#   extract-frames.sh --video <path> --intro                        # load/splash preset (first ~2s)
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -32,6 +33,10 @@
 #                       Default: 4. Use 2 for an overview, 8+ to catch sub-second transients.
 #   --scene <thr>       Scene-change mode: capture frames where the scene score exceeds
 #                       <thr> (e.g. 0.1). Overrides --fps. Good for an unknown moment.
+#   --intro             Load/splash preset: the first ~2s as a dense, labelled contact sheet
+#                       (= --start 0 --end 2 --fps 12 --contact --label, portrait-aware). Each
+#                       part yields to an explicit flag (--end 3 / --fps 8 still win). Load and
+#                       splash bugs live at t=0 and are sub-second — this is the right default.
 #   --contact           Contact-sheet mode: tile the sampled frames into a single image
 #                       (or a few), so the whole timeline can be read in one file with
 #                       far fewer tokens. Combines with --fps or --scene for selection.
@@ -152,6 +157,7 @@
 #   extract-frames.sh --video splash.mov --cadence --window 0.5          # when does it stutter?
 #   extract-frames.sh --video splash.mov --motion --fps 12               # when/where is motion?
 #   extract-frames.sh --compare-videos fresh.mov,replay.mov --label      # A vs B, phase-aligned
+#   extract-frames.sh --video app.mov --intro                            # "the intro does X" — t=0
 #
 set -euo pipefail
 
@@ -200,6 +206,8 @@ AB=""          # ADDED (issue #35): --ab <other> SSIM-diffs two clips over time,
 CADENCE=""     # ADDED (issue #37): --cadence reports a frame-cadence/jitter timeline, then exits
 MOTION=""      # ADDED (issue #39): --motion prints a mean inter-frame pixel-delta timeline, exits
 CMP_VIDEOS=""  # ADDED (issue #41): --compare-videos a,b -> one stacked phase-aligned contact sheet
+INTRO=""       # ADDED (issue #43): --intro = load/splash preset (first ~2s, dense contact + labels)
+FPS_SET=""     # ADDED (issue #43): track whether --fps was passed (so presets don't override it)
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -332,7 +340,7 @@ while [[ $# -gt 0 ]]; do
     --video) VIDEO="${2:-}"; shift 2 ;;
     --start) START="${2:-}"; shift 2 ;;
     --end)   END="${2:-}";   shift 2 ;;
-    --fps)   FPS="${2:-}";   shift 2 ;;
+    --fps)   FPS="${2:-}";   FPS_SET=1; shift 2 ;;   # CHANGED: mark explicit override (issue #43)
     --scene) SCENE="${2:-}"; shift 2 ;;
     --contact) CONTACT="1"; shift ;;
     --portrait) PORTRAIT="1"; shift ;;                 # ADDED: tall-capture contact preset
@@ -366,11 +374,22 @@ while [[ $# -gt 0 ]]; do
     --cadence) CADENCE=1; shift ;;                    # ADDED (issue #37): frame-cadence timeline
     --motion) MOTION=1; shift ;;                      # ADDED (issue #39): inter-frame motion timeline
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # ADDED (issue #41): A/B stacked contact sheet
+    --intro) INTRO=1; shift ;;                        # ADDED (issue #43): first-seconds load preset
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
 done
+
+# ADDED (issue #43): --intro preset — load/splash bugs live at t=0 and are sub-second, so this
+# is shorthand for "the first ~2s, densely, as a labelled contact sheet". Each piece yields to an
+# explicit flag (e.g. --end 3 or --fps 8 still win); portrait auto-detection still applies.
+if [[ -n "$INTRO" ]]; then
+  [[ -z "$START" ]] && START="0"
+  [[ -z "$END"   ]] && END="2"
+  [[ -z "$FPS_SET" ]] && FPS="12"
+  CONTACT="1"; LABEL="1"
+fi
 
 # ADDED: --text preset bumps contact tiles to a code/transcript-legible width unless the
 # user set --tile-width explicitly.

@@ -592,6 +592,13 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "--label broke contact mode"
     fi
+    # --intro preset: load/splash shorthand should produce a contact sheet of the first ~2s (issue #43).
+    if bash "$SCRIPT" --video "$clip" --intro --out "$tmp/intro" >/dev/null 2>&1 \
+       && [[ "$(find "$tmp/intro" -name 'contact_*.png' | wc -l)" -gt 0 ]]; then
+      pass "--intro produces a first-seconds contact sheet"
+    else
+      fail "--intro did not produce a contact sheet"
+    fi
     # Smoothness header: every real extract prints a one-line "smoothness:" report (issue #41).
     bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 --out "$tmp/sm" >/dev/null 2>"$tmp/sm.err" || true
     if grep -q 'smoothness:' "$tmp/sm.err"; then
@@ -870,6 +877,16 @@ else
   fail "--compare-videos --dry-run did not print vstack/tile"
 fi
 rm -rf "$nf_tmp3"
+# --intro --dry-run resolves to the first-seconds preset, and explicit flags still win (issue #43).
+_intro_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --intro --dry-run 2>/dev/null || true)"
+_intro_ovr="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --intro --fps 8 --end 3 --dry-run 2>/dev/null || true)"
+if grep -q -- '-ss 0' <<<"$_intro_dry" && grep -q -- '-to 2' <<<"$_intro_dry" \
+   && grep -q 'fps=12' <<<"$_intro_dry" && grep -q 'tile=' <<<"$_intro_dry" \
+   && grep -q 'fps=8' <<<"$_intro_ovr" && grep -q -- '-to 3' <<<"$_intro_ovr"; then
+  pass "--intro resolves to the load preset; explicit --fps/--end override it"
+else
+  fail "--intro preset/override resolution not as expected"
+fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.
 _ver_json="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"

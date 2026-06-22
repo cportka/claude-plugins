@@ -44,6 +44,10 @@ Default workflow:
    sub-second transients) plus a **before/after strip** (`tsNN_strip.png`) that's the best
    way to show the user a one-frame change.
 
+For a **load / splash / "the intro does X"** bug, jump straight to **`--intro`** — shorthand for
+the first ~2s as a dense, labelled contact sheet (`--start 0 --end 2 --fps 12 --contact --label`,
+portrait-aware); any part yields to an explicit flag.
+
 Tighten the window rather than raising fps across the whole clip. Frames default to
 `.frames/<video-name>/`; `--out` overrides. Add **`--dry-run`** to print the exact ffmpeg
 commands without running them (replicate by hand when the plugin isn't loaded this session).
@@ -79,7 +83,9 @@ a logic/timing bug but **nothing near it changes in the frame**, the cause is of
 logic/state (a counter desynced, a body left the viewport) — say so and point the user at
 console logs or a small headless repro instead of extracting more frames. Likewise report
 feature sizes as **% of viewport** (`--measure`/`--probe`), since retina (dpr 2) device px
-mislead.
+mislead. And for **"an animation didn't play"**, frames confirm *absence* but not *cause* (the
+element may be in the DOM but paused, the first paint deferred, or JS threw) — pair the video
+pass with a DOM/console capture before concluding (see reference.md).
 
 **ffmpeg note:** ffmpeg is already on PATH in many environments (incl. many web containers).
 If it's missing the plugin tries apt → brew → a GitHub static build; a locked-down sandbox

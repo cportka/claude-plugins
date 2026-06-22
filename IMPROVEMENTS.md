@@ -131,6 +131,10 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
   sheet (a row per clip) for "why does B differ from A"; an automatic `smoothness:` header
   (effective vs nominal fps + dropped estimate) on every run; and `--label` now burns timestamps
   onto contact tiles + compare rows.
+- 1.0.0-rc.19 (issue #43): `--intro` load/splash preset (first ~2s, dense labelled contact,
+  portrait-aware; explicit flags still win), plus an "animation didn't play → frames show absence
+  not cause; pair with a DOM/console capture" doc note. #43's other asks shipped earlier
+  (compare/smoothness/label rc.18, motion rc.17).
 - 1.0.0-rc.17 (issue #39): `--motion` prints a `t,motion` mean-inter-frame-delta timeline
   (`tblend` + `signalstats`) — motion as a number, the quantitative companion to `--diff`. Also
   a 1.0.0 shore-up: SKILL.md slimmed ~29% (prose → a "pick by the question" table; detail stays

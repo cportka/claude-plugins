@@ -5,6 +5,44 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0] - 2026-06-22
+
+First stable release of the **portka-tools** marketplace, after 19 release candidates of
+dogfooding `video-bug-analyzer` on real bugs. All three plugins are now **1.0.0**.
+
+### video-bug-analyzer 1.0.0
+- Graduates from rc.19 with no behavioral change from rc.19 except the bonus below. The full
+  feature set: contact-sheet / scene-cut / per-timestamp extraction; `--strip`, `--diff`,
+  `--label`, `--crop`, `--intro`; and analysis modes `--blackdetect`, `--ocr-roi`, `--measure`,
+  `--probe`, `--palette`, `--ab`, `--compare-videos`, `--cadence`, `--motion`, plus the automatic
+  `smoothness:` header. (Per-RC history is the rc.1–rc.19 entries below.)
+- **Added `--saturation`** — a colour-saturation timeline (`signalstats` SATAVG per frame), so
+  "clownish/over-saturated vs muted/elegant" is measurable and verifiable after a fix (the
+  recurring rc.16/rc.17/rc.19 dogfood ask).
+
+### repo-bootstrap 1.0.0
+- Graduates from rc.1. **Added `--dry-run`** (preview the merged `.claude/settings.json` and
+  planned CI write without touching disk), complementing the existing idempotent merge, `--list`,
+  `--ci`/`--force`, marketplace validation, and the one-paste `/plugin` CLI fallback.
+
+### app-website-evaluator 1.0.0 (new plugin)
+- A new **`app-evaluation`** skill: classify the target (type + audience + goal), gather evidence
+  with the bundled **`evaluate-site.sh`** (`--url` live or `--dir` local; checks crawlability,
+  SEO, social/sharing, brand assets, AI-readiness incl. `llms.txt`, security headers, and
+  performance hints), then deliver a **prioritized, evidence-backed** report tailored to the
+  site's type and community — including which communities to join/submit to and concrete PR wins.
+  Self-referential: it judges each property (and its own advice) against what's best for *that*
+  kind of app/website and *that* community. Full checklists, the by-type submission directory,
+  and the impact×effort rubric live in the skill's `reference.md`.
+
+### Repo
+- **GitHub Pages** landing page (since rc.14) at `cportka.github.io/claude-plugins`.
+- **Cleanup:** stripped the per-change `# ADDED:/# CHANGED:` provenance prefixes from the scripts
+  (keeping the explanatory text); the shipped-history that lived in `IMPROVEMENTS.md` is now
+  consolidated here, leaving IMPROVEMENTS as a forward-looking roadmap.
+- Test suite: **102 checks**, including the new plugin's e2e, `--saturation`, and bootstrap
+  `--dry-run`; the `--help` documentation check is derived from the argparse (no hand-kept list).
+
 ## [1.0.0-rc.19] - 2026-06-22
 
 From the "splash doesn't play on mobile" dogfood (#43, iOS Safari vs MacBook Firefox). Its top
@@ -547,6 +585,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0
 [1.0.0-rc.19]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.19
 [1.0.0-rc.18]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.18
 [1.0.0-rc.17]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.17

@@ -120,13 +120,13 @@ section "versions: semver + README table sync"
 for pj in plugins/*/.claude-plugin/plugin.json; do
   ver="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$pj")"
   name="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$pj")"
-  # CHANGED: accept an optional SemVer pre-release suffix (e.g. 1.0.0-rc.1).
+  # accept an optional SemVer pre-release suffix (e.g. 1.0.0-rc.1).
   if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
     pass "semver $ver: $name"
   else
     fail "non-semver version '$ver': $pj"
   fi
-  # CHANGED: structured parse of the README plugin table (was a loose substring grep) — the
+  # structured parse of the README plugin table (was a loose substring grep) — the
   # version cell of the plugin's own row must equal its plugin.json version.
   if python3 - "$name" "$ver" <<'PY'
 import sys
@@ -575,6 +575,22 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a motion test clip (--motion)"
     fi
+    # --saturation: a grey clip reads ~0, a vivid clip reads clearly higher (1.0.0 bonus).
+    if ! command -v python3 >/dev/null 2>&1; then
+      skip "python3 not installed (--saturation e2e)"
+    elif ffmpeg -hide_banner -loglevel error -f lavfi -i "color=gray:size=120x80:rate=5:duration=1" "$tmp/gray.mp4" -y 2>/dev/null; then
+      _sat="$(bash "$SCRIPT" --video "$tmp/gray.mp4" --saturation --fps 3 2>/dev/null || true)"
+      _satv="$(bash "$SCRIPT" --video "$clip" --saturation --fps 3 2>/dev/null || true)"   # $clip is testsrc (vivid)
+      _grow="$(awk -F, 'NR==2{print ($2+0<5)?"low":"high"}' <<<"$_sat")"
+      _vrow="$(awk -F, 'NR==2{print ($2+0>20)?"high":"low"}' <<<"$_satv")"
+      if [[ "$(head -n1 <<<"$_sat")" == "t,saturation" ]] && [[ "$_grow" == "low" ]] && [[ "$_vrow" == "high" ]]; then
+        pass "--saturation reads ~0 on grey and high on a vivid clip"
+      else
+        fail "--saturation timeline not as expected (grey='$_grow' vivid='$_vrow')"
+      fi
+    else
+      skip "could not build a saturation test clip (--saturation)"
+    fi
     # --compare-videos: two clips of different lengths -> ONE stacked sheet, a row per clip
     # (issue #41). Reuse the contact clip + the small clip from earlier; assert compare.png is
     # produced and is a 2-row stack (height ~= 2x a single row).
@@ -676,35 +692,83 @@ PY
   else
     fail "bootstrap merge clobbered or dropped data"
   fi
-  # ADDED: unknown --plugin names warn (non-fatal) when the marketplace is locatable.
+  # unknown --plugin names warn (non-fatal) when the marketplace is locatable.
   if bash "$BOOTSTRAP" --plugin definitely-not-a-real-plugin --dir "$bt" 2>"$bt/uerr" >/dev/null \
      && grep -qi "not a known" "$bt/uerr"; then
     pass "bootstrap warns on an unknown plugin name"
   else
     fail "bootstrap did not warn on an unknown plugin name"
   fi
-  # ADDED: --list prints known plugin names. (Capture then match — piping into `grep -q`
+  # --list prints known plugin names. (Capture then match — piping into `grep -q`
   # under `set -o pipefail` can SIGPIPE the producer and flake; issue #21.)
   if grep -q 'video-bug-analyzer' <<<"$(bash "$BOOTSTRAP" --list 2>/dev/null || true)"; then
     pass "bootstrap --list shows known plugins"
   else
     fail "bootstrap --list did not list known plugins"
   fi
-  # ADDED (issue #19): prints the /plugin CLI one-paste fallback.
+  # prints the /plugin CLI one-paste fallback.
   _bs_fallback="$(bash "$BOOTSTRAP" --plugin video-bug-analyzer --dir "$bt" 2>&1 >/dev/null || true)"
   if grep -q '/plugin install video-bug-analyzer@portka-tools' <<<"$_bs_fallback"; then
     pass "bootstrap prints the /plugin CLI fallback"
   else
     fail "bootstrap did not print the CLI fallback"
   fi
+  # --dry-run previews without writing anything (1.0.0).
+  bd="$(mktemp -d)"
+  _bs_dry="$(bash "$BOOTSTRAP" --plugin video-bug-analyzer --ci --dir "$bd" --dry-run 2>&1 || true)"
+  if grep -q '\[dry-run\]' <<<"$_bs_dry" && [[ "$(find "$bd" -type f | wc -l)" -eq 0 ]]; then
+    pass "bootstrap --dry-run previews and writes nothing"
+  else
+    fail "bootstrap --dry-run wrote files or didn't preview"
+  fi
+  rm -rf "$bd"
   rm -rf "$bt"
 else
   fail "bootstrap script not found: $BOOTSTRAP"
 fi
 
+# --- 11b. app-website-evaluator end-to-end --------------------------------------------
+section "app-website-evaluator end-to-end"
+EVAL="plugins/app-website-evaluator/skills/app-evaluation/scripts/evaluate-site.sh"
+if [[ -f "$EVAL" ]]; then
+  [[ -x "$EVAL" ]] && pass "evaluate-site.sh is executable" || fail "evaluate-site.sh not executable"
+  bash "$EVAL" --help >/dev/null 2>&1 && pass "evaluate-site.sh --help exits 0" || fail "evaluate-site.sh --help failed"
+  bash "$EVAL" 2>/dev/null; [[ $? -eq 2 ]] && pass "evaluate-site.sh errors without --url/--dir" || fail "evaluate-site.sh should require an input"
+  bash "$EVAL" --url https://example.com --dry-run 2>/dev/null | grep -q 'Dry run' \
+    && pass "evaluate-site.sh --dry-run prints intended fetches (no network)" \
+    || fail "evaluate-site.sh --dry-run did not print"
+  # --dir on a fixture: a complete page passes the key checks; a bare page flags FAILs.
+  ev="$(mktemp -d)"
+  mkdir -p "$ev/good"
+  cat > "$ev/good/index.html" <<'H'
+<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width">
+<title>Acme — fast widgets</title><meta name="description" content="Fast widgets for devs.">
+<link rel="canonical" href="https://acme.dev/"><link rel="icon" href="/f.ico">
+<meta property="og:image" content="https://acme.dev/og.png"></head><body><h1>Acme</h1></body></html>
+H
+  printf 'User-agent: *\n' > "$ev/good/robots.txt"
+  _g="$(bash "$EVAL" --dir "$ev/good" 2>/dev/null || true)"
+  if grep -q 'robots.txt present' <<<"$_g" && grep -q 'meta description present' <<<"$_g" && grep -q 'og:image present' <<<"$_g"; then
+    pass "evaluate-site.sh --dir credits a well-formed site"
+  else
+    fail "evaluate-site.sh --dir missed good-site checks"
+  fi
+  mkdir -p "$ev/bad"
+  echo '<html><head><title>x</title></head><body>hi</body></html>' > "$ev/bad/index.html"
+  _b="$(bash "$EVAL" --dir "$ev/bad" 2>/dev/null || true)"
+  if grep -q 'FAIL' <<<"$_b" && grep -q 'meta description missing' <<<"$_b" && grep -q 'robots.txt missing' <<<"$_b"; then
+    pass "evaluate-site.sh --dir flags a bare site's gaps"
+  else
+    fail "evaluate-site.sh --dir didn't flag the bare site"
+  fi
+  rm -rf "$ev"
+else
+  fail "evaluate-site.sh not found: $EVAL"
+fi
+
 # --- 12. ffmpeg static fallback wired -------------------------------------------------
 section "ffmpeg static fallback"
-# CHANGED: the static download now lives ONLY in extract-frames.sh (the hook defers it to
+# the static download now lives ONLY in extract-frames.sh (the hook defers it to
 # first use to avoid its 120s timeout). So check the extractor for the installer, and the
 # hook for its immediate degraded-path message instead.
 EXTRACT="plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh"
@@ -714,7 +778,7 @@ if grep -q 'install_ffmpeg_static' "$EXTRACT"; then
 else
   fail "static ffmpeg fallback missing: $EXTRACT"
 fi
-# ADDED: the hook must NOT do the slow download, but MUST surface the SessionStart fallback.
+# the hook must NOT do the slow download, but MUST surface the SessionStart fallback.
 if grep -q 'install_ffmpeg_static' "$HOOK"; then
   fail "hook should not run the slow static download (install_ffmpeg_static present): $HOOK"
 elif grep -q 'additionalContext' "$HOOK" && grep -qi 'screenshot' "$HOOK"; then
@@ -769,9 +833,9 @@ else
   fail "--dry-run created output unexpectedly"
 fi
 rm -rf "$dr_tmp"
-# CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
+# capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
-# CHANGED (1.0.0 shore-up): derive the flag list from the argparse case arms instead of a
+# derive the flag list from the argparse case arms instead of a
 # hardcoded list, so every current/future --flag is auto-checked for documentation (no manual
 # upkeep). Matches "  --flag)" and the alias form "  --flag|--other)".
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
@@ -867,6 +931,13 @@ if grep -q 'tblend=all_mode=difference' <<<"$_mot_dry" && grep -q 'signalstats' 
   pass "--motion --dry-run prints the tblend+signalstats command"
 else
   fail "--motion --dry-run did not print tblend+signalstats"
+fi
+# --saturation --dry-run prints the signalstats command (1.0.0).
+_sat_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --saturation --dry-run 2>/dev/null || true)"
+if grep -q 'signalstats' <<<"$_sat_dry" && ! grep -q 'tblend' <<<"$_sat_dry"; then
+  pass "--saturation --dry-run prints the signalstats command"
+else
+  fail "--saturation --dry-run did not print signalstats"
 fi
 # --compare-videos --dry-run prints the two-input vstack/tile command (issue #41).
 nf_tmp3="$(mktemp -d)"; : >"$nf_tmp3/b.mov"

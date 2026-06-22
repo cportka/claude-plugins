@@ -20,6 +20,13 @@
       "description": "Set up a repo to use portka-tools plugins by writing .claude/settings.json and optional CI",
       "category": "workflow",
       "tags": ["bootstrap", "scaffold", "setup", "marketplace"]
+    },
+    {
+      "name": "app-website-evaluator",
+      "source": "./plugins/app-website-evaluator",
+      "description": "Evaluate an app or website — SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth (communities to join/submit to, PR wins) — tailored to the site's type and community.",
+      "category": "analysis",
+      "tags": ["seo", "audit", "website", "growth", "performance", "accessibility"]
     }
   ]
 }

@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+#
+# evaluate-site.sh — quick, evidence-gathering checklist for an app/website evaluation.
+#
+# Scans either a live URL (needs curl) or a local built site / repo directory, and prints a
+# PASS/WARN/FAIL/INFO checklist across crawlability, SEO, social/sharing, brand assets,
+# AI-readiness, security (URL mode), and performance hints. It is a *starting point* for the
+# app-evaluation skill — heuristic and best-effort, not a verdict. Read robots.txt, the sitemap,
+# the page <head>, and the source for the real story.
+#
+# Usage:
+#   evaluate-site.sh --url <https://example.com>
+#   evaluate-site.sh --dir <path-to-built-site-or-repo>
+#   evaluate-site.sh --url <url> --dry-run     # print what it would fetch, no network
+#
+# Options:
+#   --url <url>    Evaluate a live site (fetches the page, headers, robots.txt, sitemap, llms.txt).
+#   --dir <path>   Evaluate a local directory (an index.html / built site, or a repo).
+#   --dry-run      Print the requests/files that would be checked, without doing network I/O.
+#   -h, --help     Show this help.
+#
+# Exit: 0 always (this is an advisory report, not a gate); findings are in the output.
+#
+set -uo pipefail
+
+URL=""
+DIR=""
+DRY_RUN=""
+
+usage() { awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --url) URL="${2:-}"; shift 2 ;;
+    --dir) DIR="${2:-}"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "$URL" && -z "$DIR" ]]; then
+  echo "Error: pass --url <url> or --dir <path>. See --help." >&2
+  exit 2
+fi
+if [[ -n "$URL" && -n "$DIR" ]]; then
+  echo "Error: use one of --url or --dir, not both." >&2
+  exit 2
+fi
+
+# --- output helpers (markers, plus a tally) -------------------------------------------
+P=0; W=0; F=0
+sec()  { printf '\n\033[1m%s\033[0m\n' "$1"; }
+ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; P=$((P + 1)); }
+warn() { printf '  \033[33mWARN\033[0m  %s\n' "$1"; W=$((W + 1)); }
+bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; F=$((F + 1)); }
+info() { printf '  \033[36mINFO\033[0m  %s\n' "$1"; }
+
+# Case-insensitive "does the page HTML contain this regex?"  (best-effort; $HTML is the page)
+html_has() { grep -qiE "$1" <<<"$HTML"; }
+
+if [[ -n "$DRY_RUN" ]]; then
+  if [[ -n "$URL" ]]; then
+    echo "Dry run — would fetch (no network performed):"
+    echo "  curl -fsSL $URL                 # page HTML"
+    echo "  curl -sSI  $URL                 # response headers (HTTPS, security)"
+    echo "  curl -fsS  ${URL%/}/robots.txt"
+    echo "  curl -fsS  ${URL%/}/sitemap.xml"
+    echo "  curl -fsS  ${URL%/}/llms.txt"
+  else
+    echo "Dry run — would read from: $DIR (index.html, robots.txt, sitemap.xml, llms.txt, manifest, icons)"
+  fi
+  exit 0
+fi
+
+# --- acquire the page HTML + a way to test root files ---------------------------------
+HTML=""
+ROOT_DESC=""
+# root_has <relpath>: is this site-root file present/reachable? echoes "yes"/"no"/"unknown".
+root_has() { echo "unknown"; }
+
+if [[ -n "$URL" ]]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "Error: --url needs curl (not found). Use --dir on a local build, or install curl." >&2
+    exit 2
+  fi
+  ROOT_DESC="$URL"
+  base="${URL%/}"
+  UA="Mozilla/5.0 (compatible; portka-app-evaluator/1.0)"
+  HTML="$(curl -fsSL --max-time 20 -A "$UA" "$URL" 2>/dev/null || true)"
+  if [[ -z "$HTML" ]]; then
+    warn "could not fetch page HTML from $URL (network blocked, redirect, or non-200) — header/file checks still attempted"
+  fi
+  HEADERS="$(curl -sSI --max-time 20 -A "$UA" "$URL" 2>/dev/null || true)"
+  root_has() {
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${base}/$1" 2>/dev/null || true)"
+    [[ "$code" == "200" ]] && echo "yes" || echo "no"
+  }
+else
+  [[ -d "$DIR" ]] || { echo "Error: directory not found: $DIR" >&2; exit 2; }
+  ROOT_DESC="$DIR"
+  # Pick the main HTML: prefer ./index.html, then any top-level *.html, then the first found.
+  main_html=""
+  for cand in "$DIR/index.html" "$DIR/public/index.html" "$DIR/dist/index.html"; do
+    [[ -f "$cand" ]] && { main_html="$cand"; break; }
+  done
+  if [[ -z "$main_html" ]]; then
+    main_html="$(find "$DIR" -maxdepth 2 -iname '*.html' -print 2>/dev/null | head -n1 || true)"
+  fi
+  if [[ -n "$main_html" && -f "$main_html" ]]; then
+    HTML="$(cat "$main_html" 2>/dev/null || true)"
+    info "analyzing HTML: ${main_html#"$DIR"/}"
+  else
+    warn "no .html file found under $DIR — HTML checks skipped (point --dir at the built site)"
+  fi
+  HEADERS=""
+  # For a local dir, look for the file at the dir root (or common build subdirs).
+  root_has() {
+    local rel="$1" d
+    for d in "$DIR" "$DIR/public" "$DIR/dist" "$DIR/static" "$DIR/.well-known"; do
+      [[ -f "$d/$rel" ]] && { echo "yes"; return; }
+    done
+    # .well-known/security.txt special-case
+    [[ "$rel" == "security.txt" && -f "$DIR/.well-known/security.txt" ]] && { echo "yes"; return; }
+    echo "no"
+  }
+fi
+
+echo "App / website evaluation — $ROOT_DESC"
+[[ -n "$URL" ]] && info "URL mode (live fetch)" || info "directory mode (local files)"
+
+# --- Crawlability / indexing ----------------------------------------------------------
+sec "Crawlability / indexing"
+case "$(root_has robots.txt)" in
+  yes) ok "robots.txt present" ;;
+  no)  bad "robots.txt missing — add one (and point it at your sitemap)" ;;
+  *)   info "robots.txt: could not determine" ;;
+esac
+case "$(root_has sitemap.xml)" in
+  yes) ok "sitemap.xml present" ;;
+  no)  warn "sitemap.xml not found at root — add one and list it in robots.txt" ;;
+  *)   info "sitemap.xml: could not determine" ;;
+esac
+if [[ -n "$HTML" ]]; then
+  if html_has '<meta[^>]+name=["'"'"']?robots["'"'"']?[^>]*noindex'; then
+    warn "page has meta robots 'noindex' — intended? it will be kept out of search"
+  else
+    ok "no accidental meta robots noindex on the main page"
+  fi
+  html_has '<link[^>]+rel=["'"'"']?canonical' && ok "canonical link present" || warn "no <link rel=canonical> — add one to avoid duplicate-URL dilution"
+fi
+
+# --- SEO ------------------------------------------------------------------------------
+sec "SEO"
+if [[ -n "$HTML" ]]; then
+  if html_has '<title>[^<]'; then
+    tlen="$(sed -n 's/.*<title>\([^<]*\)<\/title>.*/\1/Ip' <<<"$(tr -d '\n' <<<"$HTML")" | head -n1 | wc -c)"
+    ok "<title> present (~$((tlen-1)) chars)"
+    [[ "$tlen" -gt 70 ]] && warn "title is long (>70 chars) — search may truncate it"
+  else
+    bad "<title> missing — the single most important on-page SEO tag"
+  fi
+  html_has '<meta[^>]+name=["'"'"']?description' && ok "meta description present" || bad "meta description missing — add ~150 chars; drives search snippet + CTR"
+  html_has '<h1' && ok "<h1> present" || warn "no <h1> — give each page one clear top heading"
+  html_has 'application/ld\+json' && ok "structured data (JSON-LD) present" || warn "no JSON-LD structured data — add schema.org for your content type"
+else
+  info "SEO tag checks skipped (no HTML)"
+fi
+
+# --- Social / sharing -----------------------------------------------------------------
+sec "Social / sharing"
+if [[ -n "$HTML" ]]; then
+  html_has '<meta[^>]+property=["'"'"']?og:title'       && ok "og:title present"       || warn "no og:title — links won't share with a rich title"
+  html_has '<meta[^>]+property=["'"'"']?og:description'  && ok "og:description present" || warn "no og:description"
+  html_has '<meta[^>]+property=["'"'"']?og:image'        && ok "og:image present"       || bad  "no og:image — shared links show no preview image (big CTR loss)"
+  html_has '<meta[^>]+name=["'"'"']?twitter:card'        && ok "twitter:card present"   || warn "no twitter:card — add summary_large_image"
+else
+  info "social tag checks skipped (no HTML)"
+fi
+
+# --- Brand assets / standards ---------------------------------------------------------
+sec "Brand assets / standards"
+if [[ -n "$HTML" ]]; then
+  html_has '<link[^>]+rel=["'"'"']?[^"'"'"'>]*icon'  && ok "favicon link present"      || warn "no favicon <link> — add a favicon set"
+  html_has 'apple-touch-icon'                         && ok "apple-touch-icon present"  || warn "no apple-touch-icon — iOS home-screen icon"
+  html_has '<link[^>]+rel=["'"'"']?manifest'          && ok "web app manifest linked"  || info "no web app manifest (fine for simple sites; needed for installable PWAs)"
+  html_has '<html[^>]+lang='                          && ok "html lang set"            || warn "no <html lang> — hurts a11y and SEO"
+  html_has '<meta[^>]+name=["'"'"']?viewport'         && ok "viewport meta present"    || bad  "no viewport meta — not mobile-friendly"
+fi
+
+# --- AI-readiness ---------------------------------------------------------------------
+sec "AI-readiness"
+case "$(root_has llms.txt)" in
+  yes) ok "llms.txt present (LLM-friendly site map)" ;;
+  no)  info "no llms.txt — an emerging convention; high-leverage for docs/dev tools" ;;
+  *)   info "llms.txt: could not determine" ;;
+esac
+if [[ -n "$HTML" ]]; then
+  html_has 'application/ld\+json' && ok "machine-readable JSON-LD present (good for AI extraction)" || info "no JSON-LD — add schema.org so assistants can parse your content"
+fi
+
+# --- Security (URL mode) --------------------------------------------------------------
+sec "Security / hygiene"
+if [[ -n "$URL" ]]; then
+  [[ "$URL" == https://* ]] && ok "served over HTTPS" || bad "not HTTPS — serve over TLS and redirect http→https"
+  if [[ -n "$HEADERS" ]]; then
+    grep -qi '^strict-transport-security:' <<<"$HEADERS" && ok "HSTS header set" || warn "no Strict-Transport-Security header"
+    grep -qi '^content-security-policy:'   <<<"$HEADERS" && ok "Content-Security-Policy set" || warn "no Content-Security-Policy header"
+    grep -qi '^x-content-type-options:'    <<<"$HEADERS" && ok "X-Content-Type-Options set" || warn "no X-Content-Type-Options: nosniff"
+    grep -qi '^referrer-policy:'           <<<"$HEADERS" && ok "Referrer-Policy set" || info "no Referrer-Policy header"
+  else
+    info "no response headers captured — security-header checks skipped"
+  fi
+  case "$(root_has .well-known/security.txt)" in
+    yes) ok "security.txt present" ;;
+    *)   info "no /.well-known/security.txt (a contact for security reports)" ;;
+  esac
+else
+  info "security/header checks need --url (live HTTPS + headers can't be read from a directory)"
+fi
+
+# --- Performance hints (heuristic) ----------------------------------------------------
+sec "Performance / load (hints)"
+if [[ -n "$HTML" ]]; then
+  if html_has '<img[^>]+loading=["'"'"']?lazy'; then ok "uses loading=\"lazy\" on images"; else info "no lazy-loaded images found — add loading=\"lazy\" below the fold"; fi
+  if html_has '<script[^>]+\b(async|defer)\b'; then ok "scripts use async/defer"; else warn "no async/defer scripts found — render-blocking JS slows first paint"; fi
+  info "for real numbers (LCP/CLS/INP, payload size) run Lighthouse/PageSpeed on the live URL"
+else
+  info "performance hints skipped (no HTML)"
+fi
+
+# --- Summary --------------------------------------------------------------------------
+printf '\n\033[1mChecklist:\033[0m %d pass, %d warn, %d fail. This is evidence, not a grade —\n' "$P" "$W" "$F"
+echo "weight it by the site's type/community and turn it into a prioritized report (see reference.md)."
+exit 0

@@ -22,6 +22,7 @@
 #                              tests/run-tests.sh when present).
 #   --dir <path>               Target repo root. Default: current directory.
 #   --force                    Overwrite the CI workflow if it already exists.
+#   --dry-run                  Print the resulting settings.json and planned actions; write nothing.
 #   -h, --help                 Show this help.
 #
 # Examples:
@@ -37,9 +38,10 @@ PLUGINS=()
 ADD_CI=""
 DIR="."
 FORCE=""
-LIST=""   # ADDED: --list flag
+LIST=""   # --list flag
+DRY_RUN=""   # --dry-run previews without writing
 
-# ADDED: resolve where this script lives, so we can find the marketplace manifest when the
+# resolve where this script lives, so we can find the marketplace manifest when the
 # script is run from a checkout of the marketplace repo.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -47,7 +49,7 @@ usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
-# ADDED: locate marketplace.json (env override, the target repo, or this repo checkout).
+# locate marketplace.json (env override, the target repo, or this repo checkout).
 locate_marketplace() {
   local c
   for c in \
@@ -59,7 +61,7 @@ locate_marketplace() {
   return 1
 }
 
-# ADDED: print the plugin names declared in a marketplace.json, one per line.
+# print the plugin names declared in a marketplace.json, one per line.
 known_plugin_names() {
   python3 - "$1" <<'PY'
 import json, sys
@@ -82,6 +84,7 @@ while [[ $# -gt 0 ]]; do
     --ci)    ADD_CI="1"; shift ;;
     --dir)   DIR="${2:-}"; shift 2 ;;
     --force) FORCE="1"; shift ;;
+    --dry-run) DRY_RUN="1"; shift ;;   # ADDED (1.0.0)
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
@@ -92,7 +95,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-# ADDED: --list known plugins, then exit.
+# --list known plugins, then exit.
 if [[ -n "$LIST" ]]; then
   if _mj="$(locate_marketplace)"; then
     echo "Known plugins in $MARKET_NAME ($_mj):"
@@ -109,7 +112,7 @@ if [[ ! -d "$DIR" ]]; then
   exit 1
 fi
 
-# ADDED: warn (non-fatal) about --plugin names that aren't in the marketplace, when we can
+# warn (non-fatal) about --plugin names that aren't in the marketplace, when we can
 # see it. A user may legitimately bootstrap before a plugin exists locally, so don't fail.
 if [[ ${#PLUGINS[@]} -gt 0 ]] && _mj="$(locate_marketplace)"; then
   mapfile -t _known < <(known_plugin_names "$_mj")
@@ -122,11 +125,13 @@ fi
 
 SETTINGS_DIR="$DIR/.claude"
 SETTINGS="$SETTINGS_DIR/settings.json"
-mkdir -p "$SETTINGS_DIR"
+[[ -n "$DRY_RUN" ]] || mkdir -p "$SETTINGS_DIR"   # no writes in --dry-run
 
 # Merge the marketplace + enabled plugins into .claude/settings.json without clobbering
 # any keys that are already there. python3 does the JSON read/merge/write safely.
+# under --dry-run, print the merged result instead of writing it.
 SETTINGS="$SETTINGS" MARKET_NAME="$MARKET_NAME" MARKET_REPO="$MARKET_REPO" \
+DRY_RUN="$DRY_RUN" \
 PLUGINS_CSV="$(IFS=,; echo "${PLUGINS[*]:-}")" \
 python3 <<'PY'
 import json, os
@@ -134,6 +139,7 @@ import json, os
 settings = os.environ["SETTINGS"]
 name = os.environ["MARKET_NAME"]
 repo = os.environ["MARKET_REPO"]
+dry = bool(os.environ.get("DRY_RUN"))
 plugins = [p for p in os.environ.get("PLUGINS_CSV", "").split(",") if p]
 
 data = {}
@@ -153,14 +159,19 @@ enabled = data.setdefault("enabledPlugins", {})
 for p in plugins:
     enabled[f"{p}@{name}"] = True
 
-with open(settings, "w") as fh:
-    json.dump(data, fh, indent=2)
-    fh.write("\n")
-
-print(f"Wrote {settings}: marketplace '{name}' -> {repo}; enabled {len(plugins)} plugin(s).")
+if dry:
+    print(f"[dry-run] would write {settings} as:")
+    print(json.dumps(data, indent=2))
+else:
+    with open(settings, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    print(f"Wrote {settings}: marketplace '{name}' -> {repo}; enabled {len(plugins)} plugin(s).")
 PY
 
-if [[ -n "$ADD_CI" ]]; then
+if [[ -n "$ADD_CI" && -n "$DRY_RUN" ]]; then
+  echo "[dry-run] would write $DIR/.github/workflows/validate.yml (runs tests/run-tests.sh)"
+elif [[ -n "$ADD_CI" ]]; then
   WF_DIR="$DIR/.github/workflows"
   WF="$WF_DIR/validate.yml"
   mkdir -p "$WF_DIR"
@@ -191,7 +202,7 @@ YAML
   fi
 fi
 
-# ADDED (issue #19): Claude Code's auto-permission classifier may DENY the committed-settings
+# Claude Code's auto-permission classifier may DENY the committed-settings
 # path (it flags enabling a third-party plugin as self-modification / untrusted integration)
 # until the user approves. Emit the one-paste CLI fallback that needs no settings write.
 {
@@ -208,4 +219,8 @@ fi
   fi
 } >&2
 
-echo "Done. Commit .claude/settings.json (and any workflow) so it applies in web sessions."
+if [[ -n "$DRY_RUN" ]]; then
+  echo "Done (dry-run — nothing was written). Re-run without --dry-run to apply."
+else
+  echo "Done. Commit .claude/settings.json (and any workflow) so it applies in web sessions."
+fi

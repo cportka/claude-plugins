@@ -2,7 +2,7 @@
 #
 # ensure-ffmpeg.sh — SessionStart hook for the video-bug-analyzer plugin.
 #
-# CHANGED: fast install only. Tries the package manager (apt/brew) and a cached static
+# fast install only. Tries the package manager (apt/brew) and a cached static
 # build, but does NOT attempt the slow static download here — under the hook's 120s timeout
 # that download gets killed mid-flight (it neither installs ffmpeg nor reaches the warning
 # below). extract-frames.sh owns the static download on first use, with no 120s cap.
@@ -15,7 +15,7 @@ set -uo pipefail
 # to PATH on use — so a build installed here is found even if it's not on the session PATH.
 FFMPEG_CACHE="${HOME:-/tmp}/.cache/portka-video-bug-analyzer/bin"
 
-# REMOVED: the static-download helper lived here. The slow download moved entirely to
+# the static-download helper lived here. The slow download moved entirely to
 # extract-frames.sh (called on first use, no 120s cap). The hook only does fast installs.
 
 # Already present, or a static build cached by a prior extract-frames.sh run? Done.
@@ -39,7 +39,7 @@ if command -v ffmpeg >/dev/null 2>&1; then
   exit 0
 fi
 
-# CHANGED: no static download here (it would be killed by the hook's 120s timeout). The
+# no static download here (it would be killed by the hook's 120s timeout). The
 # package manager couldn't install ffmpeg, so surface the fallback immediately and let the
 # session continue — extract-frames.sh attempts the static build (uncapped) on first use.
 cat <<'JSON'

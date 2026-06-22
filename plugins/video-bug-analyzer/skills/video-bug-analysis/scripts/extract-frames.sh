@@ -22,6 +22,7 @@
 #   extract-frames.sh --video <a> --ab <b> [--fps <n>]               # A/B divergence over time
 #   extract-frames.sh --video <path> --cadence [--window <sec>]      # stutter / frame-cadence timeline
 #   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
+#   extract-frames.sh --video <path> --saturation [--fps <n>]        # colour-saturation timeline
 #   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
 #   extract-frames.sh --video <path> --intro                        # load/splash preset (first ~2s)
 #
@@ -125,6 +126,10 @@
 #                       per sampled frame, so "is it moving / where does motion concentrate?"
 #                       becomes a number. Quantifies --diff. Sample rate from --fps; honors
 #                       --start/--end. (ffmpeg tblend+signalstats; needs python3.)
+#   --saturation        Colour-saturation timeline: print t,saturation (signalstats SATAVG,
+#                       0 grey .. ~180 vivid) per sampled frame, so "clownish/over-saturated vs
+#                       muted/elegant" is measurable and verifiable after a fix. Sample rate from
+#                       --fps; honors --start/--end. (ffmpeg signalstats; needs python3.)
 #   --compare-videos a,b  A/B comparison sheet: ONE image, a row per clip, each clip sampled
 #                       into <--cols> tiles spread across its OWN duration (normalized phase
 #                       axis), so two clips of different lengths line up by % through the
@@ -156,13 +161,14 @@
 #   extract-frames.sh --video safari.mov --ab firefox.mov --fps 10       # where do they diverge?
 #   extract-frames.sh --video splash.mov --cadence --window 0.5          # when does it stutter?
 #   extract-frames.sh --video splash.mov --motion --fps 12               # when/where is motion?
+#   extract-frames.sh --video splash.mov --saturation --fps 6            # vivid vs muted, over time
 #   extract-frames.sh --compare-videos fresh.mov,replay.mov --label      # A vs B, phase-aligned
 #   extract-frames.sh --video app.mov --intro                            # "the intro does X" — t=0
 #
 set -euo pipefail
 
-ORIG_ARGS=("$@")   # ADDED: remember the invocation for the end-of-run feedback link
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # ADDED: locate plugin.json
+ORIG_ARGS=("$@")   # remember the invocation for the end-of-run feedback link
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.json
 
 VIDEO=""
 START=""
@@ -171,43 +177,44 @@ FPS="4"
 SCENE=""
 CONTACT=""
 COLS="4"
-COLS_SET=""        # ADDED: track whether --cols was passed explicitly
+COLS_SET=""        # track whether --cols was passed explicitly
 ROWS="4"
-PORTRAIT=""        # ADDED: --portrait (or auto-detected) -> fewer cols for tall captures
-TILEW="480"        # CHANGED: was 320 — too small for text/code UIs (per DedTxt dogfood)
-TILEW_SET=""       # ADDED: track whether --tile-width was passed explicitly
-TEXT=""            # ADDED: --text preset (legible tiles for code/transcript UIs)
-STRIP=""           # ADDED: --strip a,b -> hstack two existing frames (no --video needed)
+PORTRAIT=""        # --portrait (or auto-detected) -> fewer cols for tall captures
+TILEW="480"        # was 320 — too small for text/code UIs (per DedTxt dogfood)
+TILEW_SET=""       # track whether --tile-width was passed explicitly
+TEXT=""            # --text preset (legible tiles for code/transcript UIs)
+STRIP=""           # --strip a,b -> hstack two existing frames (no --video needed)
 TIMESTAMPS=""
 WINDOW="0.5"
 FRAMEW="820"
-MAXW="1280"   # ADDED: cap width for dense/scene frames so native 4K doesn't blow tokens
+MAXW="1280"   # cap width for dense/scene frames so native 4K doesn't blow tokens
 OUT="./.frames"
-OUT_SET=""    # ADDED: track whether --out was passed (else default per-video, see below)
-DRY_RUN=""    # ADDED: --dry-run prints the exact ffmpeg commands instead of running them
-DIFF=""       # ADDED: --diff emits frame-difference images (motion highlight)
-LABEL=""      # ADDED: --label burns the source timestamp onto each frame (best-effort)
-LIST_SCENES="" # ADDED: --list-scenes prints detected scene-cut timestamps, then exits
+OUT_SET=""    # track whether --out was passed (else default per-video, see below)
+DRY_RUN=""    # --dry-run prints the exact ffmpeg commands instead of running them
+DIFF=""       # --diff emits frame-difference images (motion highlight)
+LABEL=""      # --label burns the source timestamp onto each frame (best-effort)
+LIST_SCENES="" # --list-scenes prints detected scene-cut timestamps, then exits
 LABEL_VF=""   # computed drawtext filter segment (empty unless --label works on this build)
-CROP=""       # ADDED: --crop W:H:X:Y (ffmpeg geometry) -> crop a region, then scale = zoom
+CROP=""       # --crop W:H:X:Y (ffmpeg geometry) -> crop a region, then scale = zoom
 CROP_VF=""    # computed crop filter segment (empty unless --crop given)
-BLACKDETECT="" # ADDED (issue #25): --blackdetect finds blacked-out spans, then exits
-BLACK_D="0.1"  # ADDED: --black-min, minimum black-span duration (seconds) to report
-BLACK_RATIO="0.98" # ADDED: --black-ratio, fraction of pixels that must be black (pic_th)
-OCR_ROI=""     # ADDED (issue #27): --ocr-roi W:H:X:Y -> OCR a region per frame -> t,text CSV
-OCR_DIGITS=""  # ADDED: --ocr-digits restricts OCR to a numeric whitelist (counts/readouts)
-MEASURE=""     # ADDED (issue #29): --measure W:H:X:Y -> bounding box / diameter of a feature
-MEASURE_LIMIT="80"  # ADDED: --measure-limit, luma threshold (dark<thr / bright>thr) 0..255
-MEASURE_BRIGHT=""   # ADDED: --measure-bright measures a bright feature (else dark, default)
-PROBE=""       # ADDED (issue #31): --probe prints capture geometry (aspect/orientation), exits
-PALETTE=""     # ADDED (issue #33): --palette prints dominant colours (hex swatches), then exits
-COLORS="8"     # ADDED: --colors, how many dominant colours --palette extracts
-AB=""          # ADDED (issue #35): --ab <other> SSIM-diffs two clips over time, then exits
-CADENCE=""     # ADDED (issue #37): --cadence reports a frame-cadence/jitter timeline, then exits
-MOTION=""      # ADDED (issue #39): --motion prints a mean inter-frame pixel-delta timeline, exits
-CMP_VIDEOS=""  # ADDED (issue #41): --compare-videos a,b -> one stacked phase-aligned contact sheet
-INTRO=""       # ADDED (issue #43): --intro = load/splash preset (first ~2s, dense contact + labels)
-FPS_SET=""     # ADDED (issue #43): track whether --fps was passed (so presets don't override it)
+BLACKDETECT="" # --blackdetect finds blacked-out spans, then exits
+BLACK_D="0.1"  # --black-min, minimum black-span duration (seconds) to report
+BLACK_RATIO="0.98" # --black-ratio, fraction of pixels that must be black (pic_th)
+OCR_ROI=""     # --ocr-roi W:H:X:Y -> OCR a region per frame -> t,text CSV
+OCR_DIGITS=""  # --ocr-digits restricts OCR to a numeric whitelist (counts/readouts)
+MEASURE=""     # --measure W:H:X:Y -> bounding box / diameter of a feature
+MEASURE_LIMIT="80"  # --measure-limit, luma threshold (dark<thr / bright>thr) 0..255
+MEASURE_BRIGHT=""   # --measure-bright measures a bright feature (else dark, default)
+PROBE=""       # --probe prints capture geometry (aspect/orientation), exits
+PALETTE=""     # --palette prints dominant colours (hex swatches), then exits
+COLORS="8"     # --colors, how many dominant colours --palette extracts
+AB=""          # --ab <other> SSIM-diffs two clips over time, then exits
+CADENCE=""     # --cadence reports a frame-cadence/jitter timeline, then exits
+MOTION=""      # --motion prints a mean inter-frame pixel-delta timeline, exits
+CMP_VIDEOS=""  # --compare-videos a,b -> one stacked phase-aligned contact sheet
+INTRO=""       # --intro = load/splash preset (first ~2s, dense contact + labels)
+SATURATION=""  # --saturation prints a per-frame colour-saturation timeline, exits
+FPS_SET=""     # track whether --fps was passed (so presets don't override it)
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -218,7 +225,7 @@ to_seconds() {
   awk -F: '{ s=$NF; if (NF>=2) s+=$(NF-1)*60; if (NF>=3) s+=$(NF-2)*3600; printf "%.3f", s }' <<<"$1"
 }
 
-# ADDED: read this plugin's version from plugin.json (for --version and the feedback link).
+# read this plugin's version from plugin.json (for --version and the feedback link).
 _plugin_version() {
   local pj="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/.claude-plugin/plugin.json"
   [[ -f "$pj" ]] || { echo "unknown"; return 0; }
@@ -229,7 +236,7 @@ _plugin_version() {
   fi
 }
 
-# ADDED (issue #19): at the end of a real run, print a one-click, pre-filled feedback link
+# at the end of a real run, print a one-click, pre-filled feedback link
 # (plugin + ffmpeg version + the exact command already encoded) and a one-line nudge. Goes to
 # stderr so it never pollutes output; suppress with VBA_NO_FEEDBACK_HINT=1.
 feedback_hint() {
@@ -259,7 +266,7 @@ PY
   } >&2
 }
 
-# ADDED: warn (best-effort) when the source's real frame rate is well below the requested
+# warn (best-effort) when the source's real frame rate is well below the requested
 # --fps, so duplicate frames aren't a surprise. Needs ffprobe; silent no-op without it.
 warn_if_sparse() {
   command -v ffprobe >/dev/null 2>&1 || return 0
@@ -275,14 +282,14 @@ warn_if_sparse() {
   return 0
 }
 
-# ADDED: echo "<width> <height>" of the source via ffprobe, or nothing if unavailable.
+# echo "<width> <height>" of the source via ffprobe, or nothing if unavailable.
 probe_wh() {
   command -v ffprobe >/dev/null 2>&1 || return 0
   ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
     -of csv=s=x:p=0 "$VIDEO" 2>/dev/null | tr 'x' ' '
 }
 
-# ADDED: contact-sheet tuning for tall/dense captures (issue #14). Auto-drops --cols to 2 for
+# contact-sheet tuning for tall/dense captures (issue #14). Auto-drops --cols to 2 for
 # portrait sources (unless --cols was given), and warns when tiles downscale the source so far
 # that small UI text will be illegible — suggesting full-res individual frames instead.
 tune_contact_for_source() {
@@ -300,7 +307,7 @@ tune_contact_for_source() {
   fi
 }
 
-# ADDED: find a usable TrueType font for --label (drawtext). Echoes a path or nothing.
+# find a usable TrueType font for --label (drawtext). Echoes a path or nothing.
 _find_font() {
   local f
   if command -v fc-match >/dev/null 2>&1; then
@@ -316,7 +323,7 @@ _find_font() {
   return 1
 }
 
-# ADDED: build the --label drawtext segment, but only after PROBING that drawtext + the font
+# build the --label drawtext segment, but only after PROBING that drawtext + the font
 # actually work on this ffmpeg build. If anything's off (no drawtext, no font, bad syntax),
 # LABEL_VF stays empty and extraction proceeds unlabeled — the label never breaks a run.
 build_label_vf() {
@@ -340,48 +347,49 @@ while [[ $# -gt 0 ]]; do
     --video) VIDEO="${2:-}"; shift 2 ;;
     --start) START="${2:-}"; shift 2 ;;
     --end)   END="${2:-}";   shift 2 ;;
-    --fps)   FPS="${2:-}";   FPS_SET=1; shift 2 ;;   # CHANGED: mark explicit override (issue #43)
+    --fps)   FPS="${2:-}";   FPS_SET=1; shift 2 ;;   # mark explicit override (issue #43)
     --scene) SCENE="${2:-}"; shift 2 ;;
     --contact) CONTACT="1"; shift ;;
-    --portrait) PORTRAIT="1"; shift ;;                 # ADDED: tall-capture contact preset
-    --cols)  COLS="${2:-}";  COLS_SET=1; shift 2 ;;    # CHANGED: mark explicit override
+    --portrait) PORTRAIT="1"; shift ;;                 # tall-capture contact preset
+    --cols)  COLS="${2:-}";  COLS_SET=1; shift 2 ;;    # mark explicit override
     --rows)  ROWS="${2:-}";  shift 2 ;;
-    --tile-width) TILEW="${2:-}"; TILEW_SET=1; shift 2 ;;   # CHANGED: mark explicit override
-    --text) TEXT="1"; shift ;;                              # ADDED: legible-tiles preset
-    --strip|--compare) STRIP="${2:-}"; shift 2 ;;           # ADDED: hstack two existing frames
+    --tile-width) TILEW="${2:-}"; TILEW_SET=1; shift 2 ;;   # mark explicit override
+    --text) TEXT="1"; shift ;;                              # legible-tiles preset
+    --strip|--compare) STRIP="${2:-}"; shift 2 ;;           # hstack two existing frames
     --timestamps) TIMESTAMPS="${2:-}"; shift 2 ;;
     --window) WINDOW="${2:-}"; shift 2 ;;
     --frame-width) FRAMEW="${2:-}"; shift 2 ;;
-    --max-width) MAXW="${2:-}"; shift 2 ;;   # ADDED: cap for dense/scene frame width
-    --out)   OUT="${2:-}";   OUT_SET=1; shift 2 ;;   # CHANGED: mark explicit override
-    --dry-run) DRY_RUN=1; shift ;;                   # ADDED: print ffmpeg commands, don't run
-    --diff)  DIFF=1; shift ;;                         # ADDED: frame-difference (motion) frames
-    --label) LABEL=1; shift ;;                        # ADDED: burn source timestamp on frames
-    --list-scenes) LIST_SCENES=1; shift ;;            # ADDED: print scene-cut timestamps, exit
-    --crop) CROP="${2:-}"; shift 2 ;;                  # ADDED: crop region W:H:X:Y, then zoom
-    --blackdetect) BLACKDETECT=1; shift ;;            # ADDED (issue #25): find black spans, exit
-    --black-min) BLACK_D="${2:-}"; shift 2 ;;         # ADDED: min black-span duration (seconds)
-    --black-ratio) BLACK_RATIO="${2:-}"; shift 2 ;;   # ADDED: black-pixel fraction (pic_th)
-    --ocr-roi) OCR_ROI="${2:-}"; shift 2 ;;           # ADDED (issue #27): OCR a region -> CSV
-    --ocr-digits) OCR_DIGITS=1; shift ;;              # ADDED: numeric-only OCR whitelist
-    --measure) MEASURE="${2:-}"; shift 2 ;;           # ADDED (issue #29): feature bbox/diameter
-    --measure-limit) MEASURE_LIMIT="${2:-}"; shift 2 ;;  # ADDED: cropdetect luma cutoff
-    --measure-bright) MEASURE_BRIGHT=1; shift ;;      # ADDED: measure a bright feature (not dark)
-    --probe) PROBE=1; shift ;;                        # ADDED (issue #31): print capture geometry
-    --palette) PALETTE=1; shift ;;                    # ADDED (issue #33): dominant colours, exit
-    --colors) COLORS="${2:-}"; shift 2 ;;             # ADDED: number of palette colours
-    --ab) AB="${2:-}"; shift 2 ;;                      # ADDED (issue #35): A/B divergence vs <other>
-    --cadence) CADENCE=1; shift ;;                    # ADDED (issue #37): frame-cadence timeline
-    --motion) MOTION=1; shift ;;                      # ADDED (issue #39): inter-frame motion timeline
-    --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # ADDED (issue #41): A/B stacked contact sheet
-    --intro) INTRO=1; shift ;;                        # ADDED (issue #43): first-seconds load preset
+    --max-width) MAXW="${2:-}"; shift 2 ;;   # cap for dense/scene frame width
+    --out)   OUT="${2:-}";   OUT_SET=1; shift 2 ;;   # mark explicit override
+    --dry-run) DRY_RUN=1; shift ;;                   # print ffmpeg commands, don't run
+    --diff)  DIFF=1; shift ;;                         # frame-difference (motion) frames
+    --label) LABEL=1; shift ;;                        # burn source timestamp on frames
+    --list-scenes) LIST_SCENES=1; shift ;;            # print scene-cut timestamps, exit
+    --crop) CROP="${2:-}"; shift 2 ;;                  # crop region W:H:X:Y, then zoom
+    --blackdetect) BLACKDETECT=1; shift ;;            # find black spans, exit
+    --black-min) BLACK_D="${2:-}"; shift 2 ;;         # min black-span duration (seconds)
+    --black-ratio) BLACK_RATIO="${2:-}"; shift 2 ;;   # black-pixel fraction (pic_th)
+    --ocr-roi) OCR_ROI="${2:-}"; shift 2 ;;           # OCR a region -> CSV
+    --ocr-digits) OCR_DIGITS=1; shift ;;              # numeric-only OCR whitelist
+    --measure) MEASURE="${2:-}"; shift 2 ;;           # feature bbox/diameter
+    --measure-limit) MEASURE_LIMIT="${2:-}"; shift 2 ;;  # cropdetect luma cutoff
+    --measure-bright) MEASURE_BRIGHT=1; shift ;;      # measure a bright feature (not dark)
+    --probe) PROBE=1; shift ;;                        # print capture geometry
+    --palette) PALETTE=1; shift ;;                    # dominant colours, exit
+    --colors) COLORS="${2:-}"; shift 2 ;;             # number of palette colours
+    --ab) AB="${2:-}"; shift 2 ;;                      # A/B divergence vs <other>
+    --cadence) CADENCE=1; shift ;;                    # frame-cadence timeline
+    --motion) MOTION=1; shift ;;                      # inter-frame motion timeline
+    --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
+    --intro) INTRO=1; shift ;;                        # first-seconds load preset
+    --saturation) SATURATION=1; shift ;;             # colour-saturation timeline
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
 done
 
-# ADDED (issue #43): --intro preset — load/splash bugs live at t=0 and are sub-second, so this
+# --intro preset — load/splash bugs live at t=0 and are sub-second, so this
 # is shorthand for "the first ~2s, densely, as a labelled contact sheet". Each piece yields to an
 # explicit flag (e.g. --end 3 or --fps 8 still win); portrait auto-detection still applies.
 if [[ -n "$INTRO" ]]; then
@@ -391,11 +399,11 @@ if [[ -n "$INTRO" ]]; then
   CONTACT="1"; LABEL="1"
 fi
 
-# ADDED: --text preset bumps contact tiles to a code/transcript-legible width unless the
+# --text preset bumps contact tiles to a code/transcript-legible width unless the
 # user set --tile-width explicitly.
 [[ -n "$TEXT" && -z "$TILEW_SET" ]] && TILEW="640"
 
-# CHANGED: --video is required EXCEPT in --strip and --compare-videos modes (they name their
+# --video is required EXCEPT in --strip and --compare-videos modes (they name their
 # own inputs / operate on existing frames).
 if [[ -z "$STRIP" && -z "$CMP_VIDEOS" ]]; then
   if [[ -z "$VIDEO" ]]; then
@@ -409,7 +417,7 @@ if [[ -z "$STRIP" && -z "$CMP_VIDEOS" ]]; then
   fi
 fi
 
-# ADDED: default output to a per-video dir so a second clip in the same session doesn't
+# default output to a per-video dir so a second clip in the same session doesn't
 # clobber the first's frames. --out overrides; --strip (no video) keeps the plain default.
 [[ -z "$OUT_SET" && -n "$VIDEO" ]] && OUT=".frames/$(basename "${VIDEO%.*}")"
 
@@ -495,13 +503,13 @@ EOF
 # Reuse a previously cached static build (e.g. installed by the SessionStart hook).
 [[ -x "$FFMPEG_CACHE/ffmpeg" ]] && export PATH="$FFMPEG_CACHE:$PATH"
 
-# CHANGED: skip install/diagnostic in --dry-run (no ffmpeg needed just to print commands).
+# skip install/diagnostic in --dry-run (no ffmpeg needed just to print commands).
 [[ -n "$DRY_RUN" ]] || ensure_ffmpeg
 
 # Diagnostic: which ffmpeg is in use (cite this when reporting extraction problems).
 [[ -n "$DRY_RUN" ]] || echo "ffmpeg: $(ffmpeg -version 2>/dev/null | head -n1)" >&2
 
-# ADDED (issue #41): a one-line smoothness header on every run — effective (avg) vs nominal (r)
+# a one-line smoothness header on every run — effective (avg) vs nominal (r)
 # frame rate + a dropped/duplicated estimate. The single best "is it choppy?" number, for free
 # (one ffprobe call), so it never has to be reached for by hand. Best-effort; silent without it.
 print_smoothness() {
@@ -521,7 +529,7 @@ print_smoothness() {
 }
 [[ -n "$DRY_RUN" ]] || print_smoothness
 
-# ADDED: run an ffmpeg command, or — under --dry-run — print it (copy-pasteable) instead.
+# run an ffmpeg command, or — under --dry-run — print it (copy-pasteable) instead.
 # Lets a live agent that can't load the plugin mid-session replicate the workflow by hand.
 run_ff() {
   if [[ -n "$DRY_RUN" ]]; then
@@ -536,7 +544,7 @@ run_ff() {
 # to -vsync on older builds (or if the version string can't be parsed).
 VFR=()
 set_vfr_flag() {
-  # CHANGED: no ffmpeg (e.g. --dry-run on a host without it)? assume modern, don't crash.
+  # no ffmpeg (e.g. --dry-run on a host without it)? assume modern, don't crash.
   command -v ffmpeg >/dev/null 2>&1 || { VFR=(-fps_mode vfr); return 0; }
   local ver major minor
   ver="$(ffmpeg -version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+' | head -n1)"
@@ -550,7 +558,7 @@ set_vfr_flag() {
   fi
 }
 
-# ADDED (issue #25): blackdetect mode — find blacked-out spans and classify each as transient
+# blackdetect mode — find blacked-out spans and classify each as transient
 # (a flash) or permanent (sustained to end of file). Honors --crop, so a static UI overlay
 # (a lil-gui panel, a HUD) can be excluded from the black-ratio test before detection — the
 # manual canvas-crop step the dogfood reporter had to do by hand. Uses CROP_VF / PRE_ARGS,
@@ -597,7 +605,7 @@ run_blackdetect() {
   [[ -z "$dur" ]] && echo "Note: ffprobe not found — can't classify permanent-vs-transient (showing spans only)." >&2
 }
 
-# ADDED (issue #27): ROI value tracker — sample a small region per frame and OCR it into a
+# ROI value tracker — sample a small region per frame and OCR it into a
 # "t,text" CSV (on stdout). For state/logic bugs the symptom is a panel readout changing
 # (a count going 4->5->4), not a render artifact — a value timeline localises it in seconds
 # where staring at frames can't. Needs tesseract (the one mode beyond ffmpeg); degrades with a
@@ -636,7 +644,7 @@ run_ocr_roi() {
   echo "pixel change, the cause is likely logic/state (off-screen) — check logs / a headless repro." >&2
 }
 
-# ADDED (issue #29): geometry/measurement — measure the bounding box (apparent diameter +
+# geometry/measurement — measure the bounding box (apparent diameter +
 # center) of a dark (or --measure-bright) feature inside an ROI, once per sampled frame, as a
 # t,...,diam_px,diam_pct,cx,cy CSV. For visual-tuning/alignment work the question is often "how
 # big is this circle, as a % of viewport, over time" — a naive center-row dark-run breaks on a
@@ -728,7 +736,7 @@ PY
   [[ -z "$vw" ]] && echo "Note: ffprobe not found — diam_pct_* left blank (px only)." >&2
 }
 
-# ADDED (issue #31): --probe — print the capture's geometry (dimensions, aspect, orientation,
+# --probe — print the capture's geometry (dimensions, aspect, orientation,
 # fps, duration) so measurements aren't reasoned about on the wrong axis. dpr can't be known
 # from pixels alone, so we report orientation + which axis vmin maps to instead.
 run_probe() {
@@ -766,7 +774,7 @@ run_probe() {
   }'
 }
 
-# ADDED (issue #33): --palette — extract the dominant colours of a clip (or a --start/--end
+# --palette — extract the dominant colours of a clip (or a --start/--end
 # window, e.g. one phase of a reference) as a hex swatch list. For art-direction reference work
 # the palette IS part of the deliverable. ffmpeg's palettegen computes a representative palette
 # to a PPM; python3 reads the swatches (so no PNG decoder is needed). Uses PRE_ARGS — run after.
@@ -816,7 +824,7 @@ PY
   echo "Palette: up to ${COLORS} dominant colours${START:+ from ${START}}${END:+ to ${END}} (sampled at ${FPS} fps)." >&2
 }
 
-# ADDED (issue #35): A/B divergence — compare two captures of the SAME sequence (e.g. the same
+# A/B divergence — compare two captures of the SAME sequence (e.g. the same
 # intro on two browsers) and flag WHERE in time they diverge. Both are sampled at --fps and
 # scaled to the primary's dimensions, then ffmpeg's ssim filter scores per-frame similarity to a
 # stats file; we emit a t,ssim CSV (lower = more different) and headline the most divergent
@@ -862,7 +870,7 @@ run_ab() {
   echo "(Both scaled to ${W}x${H} @ ${FPS} fps to compare; differing aspect ratios are stretched.)" >&2
 }
 
-# ADDED (issue #37): frame-cadence / jitter timeline. The container's nominal rate (r_frame_rate)
+# frame-cadence / jitter timeline. The container's nominal rate (r_frame_rate)
 # vs its real average (avg_frame_rate) localizes choppiness to dropped/duplicated frames (the
 # dogfood MVP); then mpdecimate finds the UNIQUE frames and we bucket them into --window bins so
 # you see WHEN the stutter is (e.g. concentrated during an end-of-splash burst), not just an
@@ -936,7 +944,7 @@ PY
   rm -f "$tf"
 }
 
-# ADDED (issue #39): motion timeline — the mean inter-frame pixel delta over time, so "feels too
+# motion timeline — the mean inter-frame pixel delta over time, so "feels too
 # long / choppy / is the dust even moving?" becomes a number and you can see WHERE motion
 # concentrates. tblend=difference gives |this - previous|; signalstats' YAVG is that frame's
 # average magnitude; metadata=print dumps it. Quantifies what --diff shows visually. Uses
@@ -991,9 +999,58 @@ PY
   rm -f "$mfile"
 }
 
-[[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
+# colour-saturation timeline — signalstats' SATAVG per sampled frame, so "is this
+# clownish/over-saturated or muted/elegant?" is a number you can verify after a fix (requested in
+# the rc.16/rc.17 dogfeeds). 0 ≈ greyscale; higher ≈ more vivid (SAT maxes ~180). Uses PRE_ARGS.
+run_saturation() {
+  local vf="fps=${FPS},signalstats,metadata=mode=print:file="
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" \
+      -vf "${vf}<tmp>" -an -f null -
+    printf '\n'
+    echo "# read lavfi.signalstats.SATAVG per frame -> CSV t,saturation (0 grey .. ~180 vivid)"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --saturation needs python3 to read the per-frame stats. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local base; base="$(to_seconds "${START:-0}")"
+  local mfile; mfile="$(mktemp)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
+  python3 - "$mfile" "$base" "$FPS" <<'PY'
+import sys
+mfile, base, fps = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]) or 1.0
+t=None; n=0; rows=[]
+print("t,saturation")
+for line in open(mfile):
+    line=line.strip()
+    if line.startswith("frame:"):
+        t=None
+        for tok in line.split():
+            if tok.startswith("pts_time:"):
+                try: t=float(tok.split(":",1)[1])
+                except ValueError: t=None
+    elif line.startswith("lavfi.signalstats.SATAVG="):
+        try: s=float(line.split("=",1)[1])
+        except ValueError: continue
+        tt = (base+t) if t is not None else (base+n/fps)
+        rows.append((tt,s)); print("%.3f,%.2f" % (tt,s)); n+=1
+e=sys.stderr
+if rows:
+    peak=max(rows,key=lambda r:r[1]); avg=sum(r[1] for r in rows)/len(rows)
+    e.write("Saturation: average %.1f (0 grey .. ~180 vivid); peak %.1f @ %.2fs over %d frames.\n"
+            % (avg, peak[1], peak[0], len(rows)))
+    e.write("High/sustained = vivid/'clownish'; low = muted/'elegant'. Compare against the look you want.\n")
+else:
+    e.write("No saturation samples — clip too short or --fps too low.\n")
+PY
+  rm -f "$mfile"
+}
 
-# ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
+[[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # don't create dirs in --dry-run
+
+# --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
 # The single most useful artifact for a UI-state-transition bug (per DedTxt dogfood).
 if [[ -n "$STRIP" ]]; then
   IFS=',' read -r _sa _sb <<<"$STRIP"
@@ -1001,13 +1058,13 @@ if [[ -n "$STRIP" ]]; then
     echo "Error: --strip needs two frames: --strip before.png,after.png" >&2
     exit 2
   fi
-  if [[ -z "$DRY_RUN" ]]; then   # CHANGED: skip existence check when only printing commands
+  if [[ -z "$DRY_RUN" ]]; then   # skip existence check when only printing commands
     for _img in "$_sa" "$_sb"; do
       [[ -f "$_img" ]] || { echo "Error: --strip frame not found: $_img" >&2; exit 1; }
     done
   fi
   echo "Strip mode: $_sa | $_sb -> $OUT/strip.png" >&2
-  # CHANGED: normalize both frames to a common height (even width via -2) before hstack, so
+  # normalize both frames to a common height (even width via -2) before hstack, so
   # mismatched resolutions (e.g. a .mov frame vs a .webm frame) still stitch cleanly.
   run_ff -hide_banner -loglevel error -i "$_sa" -i "$_sb" \
     -filter_complex "[0:v]scale=-2:720[a];[1:v]scale=-2:720[b];[a][b]hstack=inputs=2" \
@@ -1017,7 +1074,7 @@ if [[ -n "$STRIP" ]]; then
   exit 0
 fi
 
-# ADDED: --list-scenes — print the timestamps (seconds, one per line) of detected scene cuts,
+# --list-scenes — print the timestamps (seconds, one per line) of detected scene cuts,
 # then exit. Feed the interesting ones back into --timestamps. Threshold from --scene (def 0.3).
 if [[ -n "$LIST_SCENES" ]]; then
   _thr="${SCENE:-0.3}"
@@ -1027,7 +1084,7 @@ if [[ -n "$LIST_SCENES" ]]; then
     exit 0
   fi
   echo "Scene cuts (threshold=$_thr) in $VIDEO — pts_time seconds:" >&2
-  # CHANGED (issue #21): capture, then guide the user if no cuts were found at this threshold.
+  # capture, then guide the user if no cuts were found at this threshold.
   _cuts="$(ffmpeg -hide_banner -nostats -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" \
     -f null - 2>&1 | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' || true)"
   if [[ -n "$_cuts" ]]; then
@@ -1039,10 +1096,10 @@ if [[ -n "$LIST_SCENES" ]]; then
   exit 0
 fi
 
-# ADDED: prepare the optional --label timestamp-burn-in segment (probed; empty if unsupported).
+# prepare the optional --label timestamp-burn-in segment (probed; empty if unsupported).
 build_label_vf
 
-# ADDED (issue #41): --compare-videos a,b — ONE stacked contact sheet, a row per clip on a
+# --compare-videos a,b — ONE stacked contact sheet, a row per clip on a
 # NORMALIZED phase axis (N columns spread across each clip's own duration), so two clips of
 # different lengths line up by % through the sequence, not by absolute time. Answers "why does B
 # differ from A" (fresh vs replay, before/after a fix, two browsers) in a single image. With
@@ -1084,11 +1141,11 @@ if [[ -n "$CMP_VIDEOS" ]]; then
   exit 0
 fi
 
-# ADDED (issue #23): crop a region (e.g. an on-screen FPS/HUD), applied before scale so the
+# crop a region (e.g. an on-screen FPS/HUD), applied before scale so the
 # region is zoomed. Geometry is ffmpeg crop syntax W:H:X:Y (expressions like iw/ih allowed).
 [[ -n "$CROP" ]] && CROP_VF="crop=${CROP},"
 
-# ADDED: heads-up if the clip is sparser than the requested fps (dense/contact/timestamps).
+# heads-up if the clip is sparser than the requested fps (dense/contact/timestamps).
 [[ -z "$SCENE" && -z "$DRY_RUN" ]] && warn_if_sparse "$FPS"
 
 # Build the leading seek/duration args (apply -ss/-to before -i for speed/accuracy).
@@ -1096,58 +1153,65 @@ PRE_ARGS=()
 [[ -n "$START" ]] && PRE_ARGS+=(-ss "$START")
 [[ -n "$END"   ]] && PRE_ARGS+=(-to "$END")
 
-# ADDED (issue #25): blackdetect is an analysis mode (no PNGs) — report spans and exit.
+# blackdetect is an analysis mode (no PNGs) — report spans and exit.
 if [[ -n "$BLACKDETECT" ]]; then
   run_blackdetect
   feedback_hint
   exit 0
 fi
 
-# ADDED (issue #27): --ocr-roi is an analysis mode — emit a t,text value timeline and exit.
+# --ocr-roi is an analysis mode — emit a t,text value timeline and exit.
 if [[ -n "$OCR_ROI" ]]; then
   run_ocr_roi "$OCR_ROI"
   feedback_hint
   exit 0
 fi
 
-# ADDED (issue #29): --measure is an analysis mode — emit a geometry timeline and exit.
+# --measure is an analysis mode — emit a geometry timeline and exit.
 if [[ -n "$MEASURE" ]]; then
   run_measure "$MEASURE"
   feedback_hint
   exit 0
 fi
 
-# ADDED (issue #31): --probe is an analysis mode — print capture geometry and exit.
+# --probe is an analysis mode — print capture geometry and exit.
 if [[ -n "$PROBE" ]]; then
   run_probe
   feedback_hint
   exit 0
 fi
 
-# ADDED (issue #33): --palette is an analysis mode — print dominant colours and exit.
+# --palette is an analysis mode — print dominant colours and exit.
 if [[ -n "$PALETTE" ]]; then
   run_palette
   feedback_hint
   exit 0
 fi
 
-# ADDED (issue #35): --ab is an analysis mode — print an A/B divergence timeline and exit.
+# --ab is an analysis mode — print an A/B divergence timeline and exit.
 if [[ -n "$AB" ]]; then
   run_ab "$AB"
   feedback_hint
   exit 0
 fi
 
-# ADDED (issue #37): --cadence is an analysis mode — print a frame-cadence timeline and exit.
+# --cadence is an analysis mode — print a frame-cadence timeline and exit.
 if [[ -n "$CADENCE" ]]; then
   run_cadence
   feedback_hint
   exit 0
 fi
 
-# ADDED (issue #39): --motion is an analysis mode — print an inter-frame motion timeline and exit.
+# --motion is an analysis mode — print an inter-frame motion timeline and exit.
 if [[ -n "$MOTION" ]]; then
   run_motion
+  feedback_hint
+  exit 0
+fi
+
+# --saturation is an analysis mode — print a colour-saturation timeline and exit.
+if [[ -n "$SATURATION" ]]; then
+  run_saturation
   feedback_hint
   exit 0
 fi
@@ -1195,7 +1259,7 @@ elif [[ -n "$CONTACT" ]]; then
   # Contact-sheet mode: scale each selected frame down and tile them into a grid, so the
   # whole timeline is one image (or a few). Spills into contact_0002.png, ... if needed.
   [[ -n "$DRY_RUN" ]] || tune_contact_for_source   # portrait auto-cols + illegibility (issue #14)
-  # CHANGED (issue #41): --label now burns the source timestamp into each tile too (drawtext is
+  # --label now burns the source timestamp into each tile too (drawtext is
   # applied per-frame, before tiling), which is exactly what timing analysis wants.
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
   run_ff -hide_banner -loglevel error \
@@ -1203,7 +1267,7 @@ elif [[ -n "$CONTACT" ]]; then
     -vf "${SELECT},${CROP_VF}scale=${TILEW}:-1${LABEL_VF},tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
 elif [[ -n "$DIFF" ]]; then
-  # ADDED: frame-difference mode — each frame is |this − previous| (tblend), so motion lights
+  # frame-difference mode — each frame is |this − previous| (tblend), so motion lights
   # up. Scan consecutive diffs to see what moved and infer direction (issue #16).
   set_vfr_flag
   echo "Frame-diff mode (fps=$FPS) -> $OUT (bright = changed pixels between frames)" >&2
@@ -1213,14 +1277,14 @@ elif [[ -n "$DIFF" ]]; then
     "$OUT/diff_%04d.png"
 elif [[ -n "$SCENE" ]]; then
   echo "Scene-change mode (threshold=$SCENE) -> $OUT" >&2
-  # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
+  # cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
     -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1${LABEL_VF}" \
     "$OUT/scene_%04d.png"
 else
   echo "Dense mode (fps=$FPS) -> $OUT" >&2
-  # CHANGED: cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
+  # cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" \
     -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1${LABEL_VF}" \
@@ -1239,4 +1303,4 @@ else
   fi
 fi
 
-feedback_hint   # ADDED (issue #19): one-click pre-filled feedback nudge at end of run
+feedback_hint   # one-click pre-filled feedback nudge at end of run

@@ -5,6 +5,30 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.19] - 2026-06-22
+
+From the "splash doesn't play on mobile" dogfood (#43, iOS Safari vs MacBook Firefox). Its top
+asks — compare mode, smoothness header, contact `--label` — already shipped in rc.17/rc.18; the
+new one is a first-seconds preset, since load/splash bugs always live at t=0.
+`video-bug-analyzer` → 1.0.0-rc.19.
+
+### Added
+- **`--intro`** (issue #43) — load/splash preset: the first ~2s as a dense, labelled contact
+  sheet (= `--start 0 --end 2 --fps 12 --contact --label`, portrait-aware). Every part yields to
+  an explicit flag (`--end 3` / `--fps 8` still win). "The intro does X" is the most common load
+  report and people kept re-typing those flags.
+
+### Docs
+- An **"an animation didn't play"** note (SKILL + reference, issue #43): frames confirm the
+  *absence* of an animation but not the *cause* (DOM-present-but-paused, deferred first paint, JS
+  threw, reduced-motion) — pair the video pass with a DOM/console capture and a code read. Builds
+  on the existing headless-virtual-time/`getAnimations()` capture note.
+
+### Notes
+- #43 re-raised compare mode (`--compare-videos`, rc.18), the smoothness header (rc.18), contact
+  `--label` (rc.18), and motion magnitude (`--motion`, rc.17) — all already shipped; `--intro`
+  was the remaining gap.
+
 ## [1.0.0-rc.18] - 2026-06-22
 
 From the fresh-vs-replay dogfood (#41): comparing two clips of the same intro meant running the
@@ -523,6 +547,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.19]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.19
 [1.0.0-rc.18]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.18
 [1.0.0-rc.17]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.17
 [1.0.0-rc.16]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.16

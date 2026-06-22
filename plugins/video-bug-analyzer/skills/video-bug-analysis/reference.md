@@ -193,6 +193,17 @@ Ask the user for one of these instead of guessing:
 - A **tighter timestamp** so you can sample densely in a small window.
 - The **console/network logs** for the same moment, since those are invisible in the video.
 
+## "An animation didn't play" — a cause frames can't see
+
+Frames reliably show that an animation is **absent** (e.g. an iOS sheet jumps straight to the
+formed state, skipping the splash), but **not why**. Common invisible causes: the element is in
+the DOM but its CSS animation never started (deferred first paint / a backgrounded tab), JS threw
+before kicking it off, or a media query/`prefers-reduced-motion` disabled it. So when the symptom
+is "X didn't animate," confirm the absence from frames, then **pair the video pass with a
+DOM/console capture** (computed styles + `getAnimations()` state + console errors at t≈0) and a
+**code read** — don't conclude the cause from pixels. `--intro` is the fast way to confirm the
+absence; the cause comes from the page state.
+
 ## Capturing a recording (note for whoever produces the clip)
 
 If a clip is being generated **headlessly** with virtual/synthetic time (e.g. a screenshot

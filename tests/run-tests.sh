@@ -234,6 +234,26 @@ if [[ -f .nojekyll ]]; then
 else
   fail ".nojekyll missing (GitHub Pages may try to Jekyll-build the repo)"
 fi
+# 1.0.1: brand + web assets, and social/SEO meta in the page.
+_assets_ok=1
+for a in favicon.svg robots.txt sitemap.xml llms.txt assets/logo.svg assets/og.png assets/apple-touch-icon.png; do
+  [[ -s "$a" ]] || { _assets_ok=0; echo "    missing/empty asset: $a"; }
+done
+if [[ "$_assets_ok" -eq 1 ]]; then pass "brand/web assets present (logo, favicon, og:image, robots, sitemap, llms.txt)"; else fail "one or more site assets missing"; fi
+if grep -q 'og:image' index.html && grep -q 'theme-color' index.html && grep -q 'apple-touch-icon' index.html; then
+  pass "index.html has social/SEO meta (og:image, theme-color, apple-touch-icon)"
+else
+  fail "index.html missing social/SEO meta"
+fi
+# Dogfood gate: our own site must pass our own evaluator with zero FAILs.
+_self_eval="plugins/app-website-evaluator/skills/app-evaluation/scripts/evaluate-site.sh"
+if [[ -x "$_self_eval" ]]; then
+  if [[ "$(bash "$_self_eval" --dir . 2>/dev/null | grep -c 'FAIL')" -eq 0 ]]; then
+    pass "dogfood: the Pages site passes app-website-evaluator with 0 FAILs"
+  else
+    fail "dogfood: app-website-evaluator reports FAILs on our own site"
+  fi
+fi
 
 # --- 5. extraction script present + executable ----------------------------------------
 section "extraction script present + executable"

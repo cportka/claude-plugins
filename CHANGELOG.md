@@ -5,6 +5,24 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.1] - 2026-06-22
+
+Dogfooding our own `app-website-evaluator` on the project's own GitHub Pages site, then fixing
+what it flagged — brand + web assets the 1.0.0 site was missing.
+
+### Added (repo / Pages site)
+- **Brand assets:** an SVG **logo** (`assets/logo.svg`) + **favicon** (`favicon.svg`), an
+  `apple-touch-icon` and a 1200×630 **`og:image`** (`assets/og.png`, rendered with ffmpeg) so
+  shared links preview richly.
+- **Social/SEO meta** in `index.html`: `og:image`/`twitter:card` (absolute URLs), `og:url`,
+  `canonical`, `theme-color`, and the logo in the page header.
+- **Crawlability / AI-readiness:** `robots.txt` (+ sitemap reference), `sitemap.xml`, and an
+  **`llms.txt`** that maps the marketplace and its three plugins for LLMs.
+
+### Changed
+- **app-website-evaluator → 1.0.1:** the checker now also flags a missing `<meta name="theme-color">`
+  (a gap the dogfood surfaced on our own site). `reference.md` brand checklist updated.
+
 ## [1.0.0] - 2026-06-22
 
 First stable release of the **portka-tools** marketplace, after 19 release candidates of
@@ -585,6 +603,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.1
 [1.0.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0
 [1.0.0-rc.19]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.19
 [1.0.0-rc.18]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.18

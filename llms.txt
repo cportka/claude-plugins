@@ -1,0 +1,19 @@
+# Portka Tools
+
+> A Claude Code plugin marketplace (handle: `portka-tools`, repo `cportka/claude-plugins`) by
+> Chris Portka. Add it once — `/plugin marketplace add cportka/claude-plugins` — then install any
+> plugin with `/plugin install <name>@portka-tools`. Plugins work in the local CLI and in
+> ephemeral web sessions. MIT licensed.
+
+## Plugins
+
+- [video-bug-analyzer](https://github.com/cportka/claude-plugins/tree/main/plugins/video-bug-analyzer): Analyze a screen recording — extract frames (contact sheet, scene cuts, per-timestamp zoom, before/after strips) and reason over them, plus analysis modes (black-screen detection, ROI OCR, feature measurement, palette, cross-clip diff/compare, cadence, motion, saturation). Needs ffmpeg.
+- [app-website-evaluator](https://github.com/cportka/claude-plugins/tree/main/plugins/app-website-evaluator): Evaluate an app/website — SEO, crawlability, AI-readiness (llms.txt), social/sharing assets, security, performance, and growth — tailored to the site's type and community.
+- [repo-bootstrap](https://github.com/cportka/claude-plugins/tree/main/plugins/repo-bootstrap): Onboard a repo to a marketplace by safely merging `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run` and a one-paste `/plugin` CLI fallback.
+
+## Docs
+
+- [README](https://github.com/cportka/claude-plugins/blob/main/README.md): overview, install, usage.
+- [CHANGELOG](https://github.com/cportka/claude-plugins/blob/main/CHANGELOG.md): release history.
+- [RELEASING](https://github.com/cportka/claude-plugins/blob/main/RELEASING.md): release + submission process.
+- [Roadmap](https://github.com/cportka/claude-plugins/blob/main/IMPROVEMENTS.md): known gaps and ideas.

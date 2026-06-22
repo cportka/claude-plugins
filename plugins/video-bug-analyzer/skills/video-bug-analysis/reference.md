@@ -133,6 +133,16 @@ two browsers/devices, or a before/after), this aligns them by time and prints a 
 the cross-browser-bug tool: find *when* they diverge here, then pull side-by-side timestamped
 tiles at that moment to *see* how.
 
+**Cadence / stutter timeline (`--cadence`):** localizes choppiness in time. It reports the
+container's nominal rate (`r_frame_rate`) vs its real average (`avg_frame_rate`) — a large gap
+means dropped/duplicated frames, i.e. perceived stutter — then runs `mpdecimate` to count
+*unique* frames per `--window` bin and prints a `t,unique_frames,fps` CSV, headlining the
+choppiest windows (e.g. "stutter concentrated at the end-of-splash burst"). It measures
+unique-*content* cadence, so a deliberately static scene also reads low (nothing new is drawn) —
+the honest signal. `--start`/`--end` scope it; needs `python3` (and `ffprobe` for the
+nominal/average split). The avg-vs-nominal number alone often localizes a perf bug to overdraw;
+the per-window timeline tells you *when*.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

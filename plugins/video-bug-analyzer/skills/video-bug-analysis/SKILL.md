@@ -102,6 +102,12 @@ timeline (1.0 = identical, lower = more different), calling out the most diverge
 "where do these two intros differ?" is answered in one step rather than scrubbing both. Pair it
 with side-by-side timestamped tiles to *see* the difference once you know when it happens.
 
+**Is it choppy, and where?** **`--cadence`** reports the nominal frame rate vs the real average
+(a big gap = dropped/duplicated frames) and a per-window timeline of *unique* frames, so a
+stutter localizes to a span ("choppiest @0.7–1.0 s") instead of hiding in an average. It
+measures unique-content cadence (a frozen/static scene also reads low), which is the honest
+signal for "the splash→render handoff hitches here."
+
 Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
 first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
 the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact

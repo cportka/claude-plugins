@@ -20,6 +20,7 @@
 #   extract-frames.sh --video <path> --probe                         # capture geometry/orientation
 #   extract-frames.sh --video <path> --palette [--colors <n>]        # dominant colours (hex)
 #   extract-frames.sh --video <a> --ab <b> [--fps <n>]               # A/B divergence over time
+#   extract-frames.sh --video <path> --cadence [--window <sec>]      # stutter / frame-cadence timeline
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -105,6 +106,13 @@
 #                       moments. Both are sampled at --fps and scaled to the primary's size, so
 #                       it answers "these intros differ most at 0.20-0.28s". --start/--end align
 #                       the window on both. The cross-browser-bug tool. (Uses ffmpeg ssim.)
+#   --cadence           Stutter timeline: report the nominal frame rate vs the real average
+#                       (dropped/duplicated frames = choppiness), then a per-window count of
+#                       UNIQUE frames so you see WHEN it stutters. Prints t,unique_frames,fps and
+#                       headlines the choppiest windows. --window sets the bin (default 0.5s);
+#                       honors --start/--end. Measures UNIQUE-content cadence, so a deliberately
+#                       static scene also reads low (nothing new). (ffmpeg mpdecimate + ffprobe;
+#                       needs python3.)
 #   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
@@ -125,6 +133,7 @@
 #   extract-frames.sh --video bug.mov --probe                            # aspect/orientation/dpr note
 #   extract-frames.sh --video ref.mov --start 4 --end 5.7 --palette      # one phase's colours
 #   extract-frames.sh --video safari.mov --ab firefox.mov --fps 10       # where do they diverge?
+#   extract-frames.sh --video splash.mov --cadence --window 0.5          # when does it stutter?
 #
 set -euo pipefail
 
@@ -170,6 +179,7 @@ PROBE=""       # ADDED (issue #31): --probe prints capture geometry (aspect/orie
 PALETTE=""     # ADDED (issue #33): --palette prints dominant colours (hex swatches), then exits
 COLORS="8"     # ADDED: --colors, how many dominant colours --palette extracts
 AB=""          # ADDED (issue #35): --ab <other> SSIM-diffs two clips over time, then exits
+CADENCE=""     # ADDED (issue #37): --cadence reports a frame-cadence/jitter timeline, then exits
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -333,6 +343,7 @@ while [[ $# -gt 0 ]]; do
     --palette) PALETTE=1; shift ;;                    # ADDED (issue #33): dominant colours, exit
     --colors) COLORS="${2:-}"; shift 2 ;;             # ADDED: number of palette colours
     --ab) AB="${2:-}"; shift 2 ;;                      # ADDED (issue #35): A/B divergence vs <other>
+    --cadence) CADENCE=1; shift ;;                    # ADDED (issue #37): frame-cadence timeline
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -789,6 +800,80 @@ run_ab() {
   echo "(Both scaled to ${W}x${H} @ ${FPS} fps to compare; differing aspect ratios are stretched.)" >&2
 }
 
+# ADDED (issue #37): frame-cadence / jitter timeline. The container's nominal rate (r_frame_rate)
+# vs its real average (avg_frame_rate) localizes choppiness to dropped/duplicated frames (the
+# dogfood MVP); then mpdecimate finds the UNIQUE frames and we bucket them into --window bins so
+# you see WHEN the stutter is (e.g. concentrated during an end-of-splash burst), not just an
+# average. Emits a t,unique_frames,fps CSV; headlines nominal/effective + the choppiest windows.
+run_cadence() {
+  local rfr="" afr="" dur=""
+  if command -v ffprobe >/dev/null 2>&1; then
+    rfr="$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate   -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    afr="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    dur="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+  fi
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "mpdecimate,showinfo" -an -f null -
+    printf '\n'
+    echo "# + ffprobe r_frame_rate/avg_frame_rate; bucket unique-frame pts_time into --window bins"
+    echo "# -> CSV t,unique_frames,fps; headline nominal-vs-effective + choppiest windows"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --cadence needs python3 to bucket the timeline. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local base; base="$(to_seconds "${START:-0}")"
+  # mpdecimate drops near-duplicate frames; showinfo logs the surviving (unique) frames' times.
+  # Write them to a temp file and pass its PATH to python — a `python3 - <<'PY'` heredoc already
+  # uses stdin for the program, so the frame times can't also come in on stdin.
+  local tf; tf="$(mktemp)"
+  ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "mpdecimate,showinfo" -an -f null - 2>&1 \
+    | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' > "$tf" || true
+  python3 - "${WINDOW}" "$base" "${rfr:-0}" "${afr:-0}" "${dur:-0}" "$tf" <<'PY'
+import sys, math
+window=float(sys.argv[1]) or 0.5
+base=float(sys.argv[2])
+def fr(s):
+    try:
+        if '/' in s:
+            a,b=s.split('/'); b=float(b) or 1.0; return float(a)/b
+        return float(s)
+    except Exception:
+        return 0.0
+nominal=fr(sys.argv[3]); avg=fr(sys.argv[4])
+try: duration=float(sys.argv[5])
+except Exception: duration=0.0
+times=sorted(base+float(x) for x in open(sys.argv[6]).read().split())
+uniq=len(times)
+span=(times[-1]-times[0]) if uniq>=2 else (duration or 0.0)
+eff=uniq/span if span>0 else 0.0
+# windowed unique-frame timeline
+print("t,unique_frames,fps")
+rows=[]
+if times:
+    t0=times[0]; tN=times[-1]
+    nb=max(1, int(math.ceil((tN-t0)/window)) ) if window>0 else 1
+    buckets={}
+    for t in times:
+        k=int((t-t0)//window)
+        buckets[k]=buckets.get(k,0)+1
+    for k in range(nb):
+        cnt=buckets.get(k,0); ws=t0+k*window; fps=cnt/window
+        rows.append((ws,cnt,fps)); print("%.3f,%d,%.2f"%(ws,cnt,fps))
+e=sys.stderr
+e.write("Cadence: nominal %.2f fps (r_frame_rate); container avg %.2f fps; unique %.2f fps over %.2fs (%d unique frames).\n"
+        % (nominal, avg, eff, span, uniq))
+if nominal>0 and eff>0 and eff < 0.85*nominal:
+    e.write("Effective cadence is well below nominal -> dropped/duplicated frames (stutter). Choppiest windows:\n")
+    for ws,cnt,fps in sorted(rows, key=lambda r:r[2])[:3]:
+        e.write("  @%.2fs: %.1f fps (%d unique in %.2fs)\n" % (ws, fps, cnt, window))
+else:
+    e.write("Cadence looks steady (effective near nominal).\n")
+PY
+  rm -f "$tf"
+}
+
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
 
 # ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
@@ -890,6 +975,13 @@ fi
 # ADDED (issue #35): --ab is an analysis mode — print an A/B divergence timeline and exit.
 if [[ -n "$AB" ]]; then
   run_ab "$AB"
+  feedback_hint
+  exit 0
+fi
+
+# ADDED (issue #37): --cadence is an analysis mode — print a frame-cadence timeline and exit.
+if [[ -n "$CADENCE" ]]; then
+  run_cadence
   feedback_hint
   exit 0
 fi

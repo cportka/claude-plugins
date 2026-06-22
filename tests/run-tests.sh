@@ -539,6 +539,23 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build A/B test clips (--ab)"
     fi
+    # --cadence: a clip whose unique content updates ~2x/s but is muxed at 20fps CFR should read
+    # an effective cadence far below nominal, and localize it per window (issue #37). Needs python3.
+    if ! command -v python3 >/dev/null 2>&1; then
+      skip "python3 not installed (--cadence e2e)"
+    elif ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=size=160x120:rate=2:duration=2" \
+         -r 20 "$tmp/dup.mp4" -y 2>/dev/null; then
+      _cad="$(bash "$SCRIPT" --video "$tmp/dup.mp4" --cadence 2>"$tmp/cad.err" || true)"
+      _lowrow="$(awk -F, 'NR>1 && ($3+0)<=5 {print; exit}' <<<"$_cad")"
+      if [[ "$(head -n1 <<<"$_cad")" == "t,unique_frames,fps" ]] \
+         && [[ -n "$_lowrow" ]] && grep -q 'nominal 20' "$tmp/cad.err"; then
+        pass "--cadence localizes low effective cadence vs nominal"
+      else
+        fail "--cadence timeline not as expected (lowrow='$_lowrow')"
+      fi
+    else
+      skip "could not build a cadence test clip (--cadence)"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -705,7 +722,7 @@ rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--probe" "--palette" "--ab" "--version"; do
+for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--probe" "--palette" "--ab" "--cadence" "--version"; do
   if grep -qF -- "$f" <<<"$_help"; then
     pass "extract-frames --help documents $f"
   else
@@ -780,6 +797,13 @@ else
   fail "--ab --dry-run did not print the ssim command"
 fi
 rm -rf "$nf_tmp2"
+# --cadence --dry-run prints the mpdecimate command (issue #37).
+_cad_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --cadence --dry-run 2>/dev/null || true)"
+if grep -q 'mpdecimate' <<<"$_cad_dry" && grep -q 'showinfo' <<<"$_cad_dry"; then
+  pass "--cadence --dry-run prints the mpdecimate command"
+else
+  fail "--cadence --dry-run did not print mpdecimate"
+fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.
 _ver_json="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"

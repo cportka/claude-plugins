@@ -5,6 +5,28 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.16] - 2026-06-22
+
+From the stutter-localization dogfood (#37, OSP v0.16.3 WebGPU splash): the avg-vs-nominal
+frame-rate split caught the choppiness, but the reporter wanted to see *when* it stutters, not
+just an average. `video-bug-analyzer` → 1.0.0-rc.16.
+
+### Added
+- **`--cadence`** (issue #37) — frame-cadence / jitter timeline. Reports the container's nominal
+  rate (`r_frame_rate`) vs its real average (`avg_frame_rate`) — a big gap = dropped/duplicated
+  frames (the dogfood MVP that localized the perf bug to overdraw) — then runs `mpdecimate` to
+  count *unique* frames per `--window` bin (default 0.5s), printing a `t,unique_frames,fps` CSV
+  and headlining the choppiest windows so a hitch localizes to a span (e.g. an end-of-splash
+  burst). Measures unique-content cadence (a static scene reads low — the honest signal). Honors
+  `--start`/`--end`; uses ffmpeg `mpdecimate` + `ffprobe`, needs `python3`. Documented in
+  `--help`, SKILL.md, reference.md; covered by e2e + dry-run + help-doc tests.
+
+### Notes
+- #37's other asks logged in IMPROVEMENTS: a per-shot **saturation histogram** (HSV, to make
+  "clownish vs elegant" measurable — tractable via `signalstats`, likely next), an **overdraw/
+  fill-rate** hint (not derivable from pixels — needs DPR/CSS size), and **motion-coherence**
+  (optical flow). The avg/nominal split surfaced here pairs with rc.13's `--probe`.
+
 ## [1.0.0-rc.15] - 2026-06-21
 
 From the cross-browser dogfood (#35): two captures of the same intro (Safari iOS vs Firefox/
@@ -445,6 +467,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.16]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.16
 [1.0.0-rc.15]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.15
 [1.0.0-rc.14]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.14
 [1.0.0-rc.13]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.13

@@ -29,12 +29,14 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - **Two-timestamp overlay / contour diff (issue #29).** Overlay frame A onto frame B at matched
   scale + center (with opacity, or an edge/contour diff) to eyeball whether two circles align.
   `--strip` does side-by-side hstack today; a true centered overlay is open.
-- **Cadence / stutter timeline (issues #23, #35 — next up).** Report dropped/duplicated frames
-  and frame-time variance over a window ("stutter at 0.7–1.0 s: 3 long frames"), to localize a
-  splash→render handoff hitch. The reporter hand-ran `mpdecimate`; a built-in `--cadence`
-  (mpdecimate to find content-duplicate runs on CFR captures, + PTS-delta variance) is the
-  planned follow-up to `--ab`. `--diff` shows per-frame motion magnitude today.
-- **Per-blob motion / trajectory readout (issue #35).** Track a feature's path over time ("two
+- **Per-shot saturation/HSV histogram (issue #37 — next up).** A saturation distribution per
+  sampled frame ("80% of dust pixels are >0.7 saturation") to make "clownish vs elegant"
+  measurable and verify a palette fix objectively. Tractable via ffmpeg `signalstats`
+  (SATAVG/SATMAX per frame) → a saturation-over-time CSV; complements `--palette`.
+- **Overdraw / fill-rate hint (issue #37).** "Canvas backing store is N× the CSS size on this
+  DPR" would name a retina-overdraw perf cause directly. Not derivable from pixels alone (needs
+  the DPR + CSS viewport, like the dpr note in `--probe`); open.
+- **Per-blob motion / trajectory readout (issues #35, #37).** Track a feature's path over time ("two
   objects spiralling inward, ~2.5 turns, accelerating") → keyframes. Needs optical-flow/tracking
   beyond `--diff`/`--measure`; open.
 - **Letterboxed A/B compare (issue #35).** `--ab` stretches differing aspect ratios to a common
@@ -117,6 +119,9 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - 1.0.0-rc.15 (issue #35 — "the big one for cross-browser bugs"): `--ab <other>` compares two
   captures of the same sequence and prints a `t,ssim` divergence timeline (ffmpeg `ssim`),
   headlining the most divergent moments — "these intros differ most at 0.20–0.28 s" in one step.
+- 1.0.0-rc.16 (issue #37 — ranked #1): `--cadence` reports nominal-vs-effective frame rate
+  (dropped/duplicated frames = stutter) and a per-`--window` unique-frame timeline (ffmpeg
+  `mpdecimate` + `ffprobe`) so choppiness localizes to a span, not just an average.
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right

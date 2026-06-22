@@ -575,6 +575,30 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a motion test clip (--motion)"
     fi
+    # --compare-videos: two clips of different lengths -> ONE stacked sheet, a row per clip
+    # (issue #41). Reuse the contact clip + the small clip from earlier; assert compare.png is
+    # produced and is a 2-row stack (height ~= 2x a single row).
+    if [[ -f "$tmp/small.mp4" ]] \
+       && bash "$SCRIPT" --compare-videos "$clip,$tmp/small.mp4" --cols 6 --out "$tmp/cmp" >/dev/null 2>&1 \
+       && [[ -f "$tmp/cmp/compare.png" ]]; then
+      pass "--compare-videos wrote a stacked A/B sheet"
+    else
+      fail "--compare-videos did not produce compare.png"
+    fi
+    # --label in contact mode: should still produce a sheet (drawtext per tile, best-effort) (issue #41).
+    if bash "$SCRIPT" --video "$clip" --start 0 --end 2 --fps 3 --contact --label --out "$tmp/clab" >/dev/null 2>&1 \
+       && [[ "$(find "$tmp/clab" -name 'contact_*.png' | wc -l)" -gt 0 ]]; then
+      pass "--label works in contact mode (sheet still produced)"
+    else
+      fail "--label broke contact mode"
+    fi
+    # Smoothness header: every real extract prints a one-line "smoothness:" report (issue #41).
+    bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 --out "$tmp/sm" >/dev/null 2>"$tmp/sm.err" || true
+    if grep -q 'smoothness:' "$tmp/sm.err"; then
+      pass "smoothness header prints on a normal run"
+    else
+      fail "smoothness header missing"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -837,6 +861,15 @@ if grep -q 'tblend=all_mode=difference' <<<"$_mot_dry" && grep -q 'signalstats' 
 else
   fail "--motion --dry-run did not print tblend+signalstats"
 fi
+# --compare-videos --dry-run prints the two-input vstack/tile command (issue #41).
+nf_tmp3="$(mktemp -d)"; : >"$nf_tmp3/b.mov"
+_cmp_dry="$(bash "$EXTRACT" --compare-videos "$nf_tmp/clip.mov,$nf_tmp3/b.mov" --cols 6 --dry-run 2>/dev/null || true)"
+if grep -q 'vstack=inputs=2' <<<"$_cmp_dry" && grep -q 'tile=6x1' <<<"$_cmp_dry"; then
+  pass "--compare-videos --dry-run prints the stacked-sheet command"
+else
+  fail "--compare-videos --dry-run did not print vstack/tile"
+fi
+rm -rf "$nf_tmp3"
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.
 _ver_json="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"

@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 1.0.0-rc.17 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+> **Version:** 1.0.0-rc.18 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -11,7 +11,7 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 
 | Plugin | Version | What it does |
 | :-- | :-- | :-- |
-| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.0.0-rc.17 | Diagnose a bug in a screen recording — extract frames (overview contact sheet, scene cuts, or per-timestamp zoom + before/after strips) and reason over them. Strong on persistent visual bugs; honest about flickers, timing, and off-screen state. |
+| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.0.0-rc.18 | Diagnose a bug in a screen recording — extract frames (overview contact sheet, scene cuts, or per-timestamp zoom + before/after strips) and reason over them. Strong on persistent visual bugs; honest about flickers, timing, and off-screen state. |
 | [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.0.0-rc.1 | Onboard a repo to this marketplace — write/merge `.claude/settings.json` (+ optional CI). |
 
 ## Add a plugin

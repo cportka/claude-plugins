@@ -133,6 +133,21 @@ two browsers/devices, or a before/after), this aligns them by time and prints a 
 the cross-browser-bug tool: find *when* they diverge here, then pull side-by-side timestamped
 tiles at that moment to *see* how.
 
+**A/B contact sheet (`--compare-videos a,b`):** one image, a **row per clip**, each clip sampled
+into `--cols` tiles spread across its **own** duration (a normalized *phase* axis), so two clips
+of different lengths line up by **% through the sequence**, not by absolute time. This is the
+visual companion to `--ab` (which gives the divergence *number*): use it to see "why does B differ
+from A" — fresh-load vs replay, before/after a fix, two browsers — in a single sheet (top row A,
+bottom row B). Default 8 columns (`--cols` to change); `--label` burns each tile's source
+timestamp. Writes `<out>/compare.png`; needs `ffprobe`. Note the axis is phase-normalized — if an
+event (a flash) lands at a different *fraction* in each clip the columns won't coincide; that's
+the known gap a future `--align-on scene`/`--t0` would close.
+
+**Smoothness header (automatic):** every real run prints one line — `smoothness: effective <avg>
+fps vs nominal <r> fps` and, when the average trails the nominal rate, a `~N% frames
+dropped/duplicated` estimate. It's the single quickest "is it choppy?" read (one `ffprobe` call,
+on by default); `--cadence` and `--motion` localize *when/where*.
+
 **Cadence / stutter timeline (`--cadence`):** localizes choppiness in time. It reports the
 container's nominal rate (`r_frame_rate`) vs its real average (`avg_frame_rate`) — a large gap
 means dropped/duplicated frames, i.e. perceived stutter — then runs `mpdecimate` to count

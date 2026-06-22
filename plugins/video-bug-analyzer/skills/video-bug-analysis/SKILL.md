@@ -67,9 +67,12 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 | Capture size / aspect / orientation | `--probe` (also: which axis CSS `vmin` is) |
 | Dominant colours (palette) | `--palette [--colors n]` → hex swatches |
 | Two captures of the same thing differ where | `--ab other.mov` → `t,ssim` divergence timeline |
+| Two clips side-by-side, phase-aligned | `--compare-videos a,b` → one stacked sheet (row per clip) |
 
-Also: `--label` burns the source timestamp onto frames (best-effort); `--text`/`--tile-width`
-tune contact legibility; `--window`/`--frame-width` tune bursts.
+Also: `--label` burns the source timestamp onto frames (now incl. contact tiles &
+`--compare-videos`); `--text`/`--tile-width` tune contact legibility; `--window`/`--frame-width`
+tune bursts. **Every run prints a one-line `smoothness:` header** (effective vs nominal fps + a
+dropped-frame estimate) — the quickest "is it choppy?" read.
 
 **Key steer — frames can't see state.** If a tracked value changes (`--ocr-roi`) or you suspect
 a logic/timing bug but **nothing near it changes in the frame**, the cause is off-screen

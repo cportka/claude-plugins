@@ -53,9 +53,13 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - **Cursor / click tracking (issue #25).** Surface pointer position + click events; the cursor
   on a button at the failure frame identifies the trigger action. No ffmpeg-native source for
   this (needs the recording tool to capture input events); open.
-- **Contact-sheet timestamp index (issue #25).** Burn `t` onto overview-sheet tiles and emit a
-  `frame,t` CSV. `--label` burns `t` in dense/`--diff`/`--timestamps` today; per-tile drawtext
-  through the `tile` filter is harder — open.
+- **Contact-sheet `frame,t` CSV index (issue #25).** `--label` now burns `t` onto contact tiles
+  too (rc.18); a machine-readable `frame,t` sidecar CSV alongside the sheet is the remaining bit.
+- **Event alignment for compare (`--align-on scene` / per-clip `--t0`, issue #41).**
+  `--compare-videos` aligns by *phase fraction* (cols across each clip's duration); if a key event
+  (a merger flash) lands at a different fraction in each clip, the columns won't coincide. An
+  `--align-on scene` (detect a cut and align both to it) or per-clip `--t0 0.45` offset would line
+  clips up on the *event*. Next step for compare.
 - **Automatic phase labeling (issue #33).** Auto-split a reference clip into motion phases and
   describe each ("two blobs orbiting", "radial burst", "expanding rings"). `--list-scenes` gives
   the boundaries and `--palette` the colours, but a one-line semantic label per segment needs
@@ -123,6 +127,10 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - 1.0.0-rc.16 (issue #37 — ranked #1): `--cadence` reports nominal-vs-effective frame rate
   (dropped/duplicated frames = stutter) and a per-`--window` unique-frame timeline (ffmpeg
   `mpdecimate` + `ffprobe`) so choppiness localizes to a span, not just an average.
+- 1.0.0-rc.18 (issue #41): `--compare-videos a,b` emits one stacked, phase-normalized contact
+  sheet (a row per clip) for "why does B differ from A"; an automatic `smoothness:` header
+  (effective vs nominal fps + dropped estimate) on every run; and `--label` now burns timestamps
+  onto contact tiles + compare rows.
 - 1.0.0-rc.17 (issue #39): `--motion` prints a `t,motion` mean-inter-frame-delta timeline
   (`tblend` + `signalstats`) — motion as a number, the quantitative companion to `--diff`. Also
   a 1.0.0 shore-up: SKILL.md slimmed ~29% (prose → a "pick by the question" table; detail stays

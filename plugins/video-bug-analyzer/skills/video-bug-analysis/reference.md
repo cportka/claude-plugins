@@ -167,6 +167,12 @@ The first frame is skipped (no previous to difference against). `--fps` sets the
 `--start`/`--end`; needs `python3`. It measures *magnitude*, not direction — for coherent-vs-random
 (spiral) motion, frames + `--diff` are still the read; a true optical-flow overlay is a known gap.
 
+**Saturation timeline (`--saturation`):** prints `t,saturation` — the mean colour saturation
+(`signalstats` SATAVG, 0 ≈ greyscale, higher ≈ more vivid, maxing ~180) per sampled frame — so
+"clownish / over-saturated vs muted / elegant" is a number you can verify after a palette fix.
+Pairs with `--palette` (which colours) and `--motion` (how much movement). `--fps` sets the rate;
+honors `--start`/`--end`; needs `python3`.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone

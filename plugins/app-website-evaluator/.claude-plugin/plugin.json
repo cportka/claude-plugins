@@ -1,0 +1,12 @@
+{
+  "name": "app-website-evaluator",
+  "version": "1.0.0",
+  "description": "Evaluate an app or website and produce a prioritized, evidence-backed report: SEO and crawlability (robots.txt, sitemap, metadata, structured data), AI-readiness (llms.txt, semantic HTML, machine-readable data), social/sharing assets (Open Graph, Twitter cards, favicons, logo, tagline), security and standards best-practices, performance/load-time, and growth — which communities to join or submit to, and concrete PR/advertising wins — all tailored to the specific type of app/website and its community.",
+  "author": {
+    "name": "Chris Portka"
+  },
+  "homepage": "https://github.com/cportka/claude-plugins/tree/main/plugins/app-website-evaluator",
+  "repository": "https://github.com/cportka/claude-plugins",
+  "license": "MIT",
+  "keywords": ["seo", "audit", "website", "evaluation", "growth", "accessibility", "performance", "robots-txt", "open-graph", "llms-txt", "claude-code-plugin", "portka-tools"]
+}

@@ -64,6 +64,7 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 | Did it move / which direction? | `--diff` (bright = changed pixels) |
 | Is it moving, and *how much* over time? | `--motion` → `t,motion` (mean inter-frame delta) |
 | Is it choppy, and *where*? | `--cadence` (nominal vs real fps + per-window unique frames) |
+| Too vivid / "clownish" vs muted? | `--saturation` → `t,saturation` (per-frame colour intensity) |
 | Read a tiny region (FPS/HUD/label) | `--crop W:H:X:Y` (crop+zoom; combines with any mode) |
 | Black / blank screen | `--blackdetect` (spans, flags PERMANENT vs transient) |
 | A readout *number* changing (4→5→4) | `--ocr-roi W:H:X:Y` → `t,text` (needs tesseract) |

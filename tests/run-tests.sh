@@ -731,12 +731,15 @@ fi
 section "app-website-evaluator end-to-end"
 EVAL="plugins/app-website-evaluator/skills/app-evaluation/scripts/evaluate-site.sh"
 if [[ -f "$EVAL" ]]; then
-  [[ -x "$EVAL" ]] && pass "evaluate-site.sh is executable" || fail "evaluate-site.sh not executable"
-  bash "$EVAL" --help >/dev/null 2>&1 && pass "evaluate-site.sh --help exits 0" || fail "evaluate-site.sh --help failed"
-  bash "$EVAL" 2>/dev/null; [[ $? -eq 2 ]] && pass "evaluate-site.sh errors without --url/--dir" || fail "evaluate-site.sh should require an input"
-  bash "$EVAL" --url https://example.com --dry-run 2>/dev/null | grep -q 'Dry run' \
-    && pass "evaluate-site.sh --dry-run prints intended fetches (no network)" \
-    || fail "evaluate-site.sh --dry-run did not print"
+  if [[ -x "$EVAL" ]]; then pass "evaluate-site.sh is executable"; else fail "evaluate-site.sh not executable"; fi
+  if bash "$EVAL" --help >/dev/null 2>&1; then pass "evaluate-site.sh --help exits 0"; else fail "evaluate-site.sh --help failed"; fi
+  bash "$EVAL" >/dev/null 2>&1; _ev_rc=$?
+  if [[ "$_ev_rc" -eq 2 ]]; then pass "evaluate-site.sh errors without --url/--dir"; else fail "evaluate-site.sh should require an input"; fi
+  if bash "$EVAL" --url https://example.com --dry-run 2>/dev/null | grep -q 'Dry run'; then
+    pass "evaluate-site.sh --dry-run prints intended fetches (no network)"
+  else
+    fail "evaluate-site.sh --dry-run did not print"
+  fi
   # --dir on a fixture: a complete page passes the key checks; a bare page flags FAILs.
   ev="$(mktemp -d)"
   mkdir -p "$ev/good"

@@ -59,6 +59,12 @@ info() { printf '  \033[36mINFO\033[0m  %s\n' "$1"; }
 # Case-insensitive "does the page HTML contain this regex?"  (best-effort; $HTML is the page)
 html_has() { grep -qiE "$1" <<<"$HTML"; }
 
+# htest <regex> <good-fn> <good-msg> <bad-fn> <bad-msg> — dispatch on whether the HTML matches.
+# (Avoids the `A && B || C` pattern, which isn't if-then-else.)
+htest() { if html_has "$1"; then "$2" "$3"; else "$4" "$5"; fi; }
+# hdr <header-regex> <good-msg> <bad-fn> <bad-msg> — dispatch on a response header (URL mode).
+hdr()   { if grep -qi "$1" <<<"$HEADERS"; then ok "$2"; else "$3" "$4"; fi; }
+
 if [[ -n "$DRY_RUN" ]]; then
   if [[ -n "$URL" ]]; then
     echo "Dry run — would fetch (no network performed):"
@@ -76,8 +82,9 @@ fi
 # --- acquire the page HTML + a way to test root files ---------------------------------
 HTML=""
 ROOT_DESC=""
-# root_has <relpath>: is this site-root file present/reachable? echoes "yes"/"no"/"unknown".
-root_has() { echo "unknown"; }
+# root_has <relpath>: is this site-root file present/reachable? Echoes "yes"/"no" (and "unknown"
+# from the URL branch when a request can't be made). Defined per-mode just below; one of the two
+# branches always runs (we already errored if neither --url nor --dir was given).
 
 if [[ -n "$URL" ]]; then
   if ! command -v curl >/dev/null 2>&1; then
@@ -95,7 +102,7 @@ if [[ -n "$URL" ]]; then
   root_has() {
     local code
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${base}/$1" 2>/dev/null || true)"
-    [[ "$code" == "200" ]] && echo "yes" || echo "no"
+    if [[ "$code" == "200" ]]; then echo "yes"; else echo "no"; fi
   }
 else
   [[ -d "$DIR" ]] || { echo "Error: directory not found: $DIR" >&2; exit 2; }
@@ -128,7 +135,7 @@ else
 fi
 
 echo "App / website evaluation — $ROOT_DESC"
-[[ -n "$URL" ]] && info "URL mode (live fetch)" || info "directory mode (local files)"
+if [[ -n "$URL" ]]; then info "URL mode (live fetch)"; else info "directory mode (local files)"; fi
 
 # --- Crawlability / indexing ----------------------------------------------------------
 sec "Crawlability / indexing"
@@ -148,7 +155,7 @@ if [[ -n "$HTML" ]]; then
   else
     ok "no accidental meta robots noindex on the main page"
   fi
-  html_has '<link[^>]+rel=["'"'"']?canonical' && ok "canonical link present" || warn "no <link rel=canonical> — add one to avoid duplicate-URL dilution"
+  htest '<link[^>]+rel=["'"'"']?canonical' ok "canonical link present" warn "no <link rel=canonical> — add one to avoid duplicate-URL dilution"
 fi
 
 # --- SEO ------------------------------------------------------------------------------
@@ -161,9 +168,9 @@ if [[ -n "$HTML" ]]; then
   else
     bad "<title> missing — the single most important on-page SEO tag"
   fi
-  html_has '<meta[^>]+name=["'"'"']?description' && ok "meta description present" || bad "meta description missing — add ~150 chars; drives search snippet + CTR"
-  html_has '<h1' && ok "<h1> present" || warn "no <h1> — give each page one clear top heading"
-  html_has 'application/ld\+json' && ok "structured data (JSON-LD) present" || warn "no JSON-LD structured data — add schema.org for your content type"
+  htest '<meta[^>]+name=["'"'"']?description' ok "meta description present" bad "meta description missing — add ~150 chars; drives search snippet + CTR"
+  htest '<h1' ok "<h1> present" warn "no <h1> — give each page one clear top heading"
+  htest 'application/ld\+json' ok "structured data (JSON-LD) present" warn "no JSON-LD structured data — add schema.org for your content type"
 else
   info "SEO tag checks skipped (no HTML)"
 fi
@@ -171,10 +178,10 @@ fi
 # --- Social / sharing -----------------------------------------------------------------
 sec "Social / sharing"
 if [[ -n "$HTML" ]]; then
-  html_has '<meta[^>]+property=["'"'"']?og:title'       && ok "og:title present"       || warn "no og:title — links won't share with a rich title"
-  html_has '<meta[^>]+property=["'"'"']?og:description'  && ok "og:description present" || warn "no og:description"
-  html_has '<meta[^>]+property=["'"'"']?og:image'        && ok "og:image present"       || bad  "no og:image — shared links show no preview image (big CTR loss)"
-  html_has '<meta[^>]+name=["'"'"']?twitter:card'        && ok "twitter:card present"   || warn "no twitter:card — add summary_large_image"
+  htest '<meta[^>]+property=["'"'"']?og:title'      ok "og:title present"       warn "no og:title — links won't share with a rich title"
+  htest '<meta[^>]+property=["'"'"']?og:description' ok "og:description present" warn "no og:description"
+  htest '<meta[^>]+property=["'"'"']?og:image'       ok "og:image present"       bad  "no og:image — shared links show no preview image (big CTR loss)"
+  htest '<meta[^>]+name=["'"'"']?twitter:card'       ok "twitter:card present"   warn "no twitter:card — add summary_large_image"
 else
   info "social tag checks skipped (no HTML)"
 fi
@@ -182,11 +189,11 @@ fi
 # --- Brand assets / standards ---------------------------------------------------------
 sec "Brand assets / standards"
 if [[ -n "$HTML" ]]; then
-  html_has '<link[^>]+rel=["'"'"']?[^"'"'"'>]*icon'  && ok "favicon link present"      || warn "no favicon <link> — add a favicon set"
-  html_has 'apple-touch-icon'                         && ok "apple-touch-icon present"  || warn "no apple-touch-icon — iOS home-screen icon"
-  html_has '<link[^>]+rel=["'"'"']?manifest'          && ok "web app manifest linked"  || info "no web app manifest (fine for simple sites; needed for installable PWAs)"
-  html_has '<html[^>]+lang='                          && ok "html lang set"            || warn "no <html lang> — hurts a11y and SEO"
-  html_has '<meta[^>]+name=["'"'"']?viewport'         && ok "viewport meta present"    || bad  "no viewport meta — not mobile-friendly"
+  htest '<link[^>]+rel=["'"'"']?[^"'"'"'>]*icon' ok "favicon link present"     warn "no favicon <link> — add a favicon set"
+  htest 'apple-touch-icon'                        ok "apple-touch-icon present" warn "no apple-touch-icon — iOS home-screen icon"
+  htest '<link[^>]+rel=["'"'"']?manifest'         ok "web app manifest linked"  info "no web app manifest (fine for simple sites; needed for installable PWAs)"
+  htest '<html[^>]+lang='                         ok "html lang set"            warn "no <html lang> — hurts a11y and SEO"
+  htest '<meta[^>]+name=["'"'"']?viewport'        ok "viewport meta present"    bad  "no viewport meta — not mobile-friendly"
 fi
 
 # --- AI-readiness ---------------------------------------------------------------------
@@ -197,18 +204,18 @@ case "$(root_has llms.txt)" in
   *)   info "llms.txt: could not determine" ;;
 esac
 if [[ -n "$HTML" ]]; then
-  html_has 'application/ld\+json' && ok "machine-readable JSON-LD present (good for AI extraction)" || info "no JSON-LD — add schema.org so assistants can parse your content"
+  htest 'application/ld\+json' ok "machine-readable JSON-LD present (good for AI extraction)" info "no JSON-LD — add schema.org so assistants can parse your content"
 fi
 
 # --- Security (URL mode) --------------------------------------------------------------
 sec "Security / hygiene"
 if [[ -n "$URL" ]]; then
-  [[ "$URL" == https://* ]] && ok "served over HTTPS" || bad "not HTTPS — serve over TLS and redirect http→https"
+  if [[ "$URL" == https://* ]]; then ok "served over HTTPS"; else bad "not HTTPS — serve over TLS and redirect http→https"; fi
   if [[ -n "$HEADERS" ]]; then
-    grep -qi '^strict-transport-security:' <<<"$HEADERS" && ok "HSTS header set" || warn "no Strict-Transport-Security header"
-    grep -qi '^content-security-policy:'   <<<"$HEADERS" && ok "Content-Security-Policy set" || warn "no Content-Security-Policy header"
-    grep -qi '^x-content-type-options:'    <<<"$HEADERS" && ok "X-Content-Type-Options set" || warn "no X-Content-Type-Options: nosniff"
-    grep -qi '^referrer-policy:'           <<<"$HEADERS" && ok "Referrer-Policy set" || info "no Referrer-Policy header"
+    hdr '^strict-transport-security:' "HSTS header set" warn "no Strict-Transport-Security header"
+    hdr '^content-security-policy:'   "Content-Security-Policy set" warn "no Content-Security-Policy header"
+    hdr '^x-content-type-options:'    "X-Content-Type-Options set" warn "no X-Content-Type-Options: nosniff"
+    hdr '^referrer-policy:'           "Referrer-Policy set" info "no Referrer-Policy header"
   else
     info "no response headers captured — security-header checks skipped"
   fi

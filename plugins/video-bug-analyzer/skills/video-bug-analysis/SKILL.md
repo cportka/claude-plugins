@@ -44,75 +44,39 @@ Default workflow:
    sub-second transients) plus a **before/after strip** (`tsNN_strip.png`) that's the best
    way to show the user a one-frame change.
 
-Other knobs: `--scene 0.1` to find transitions when the moment is unknown; `--start/--end`
-for a manual window; `--window`/`--frame-width` to tune bursts; **`--strip a.png,b.png`** to
-stitch a before/after from two frames you already extracted. Tighten the window rather than
-raising fps across the whole clip.
+Tighten the window rather than raising fps across the whole clip. Frames default to
+`.frames/<video-name>/`; `--out` overrides. Add **`--dry-run`** to print the exact ffmpeg
+commands without running them (replicate by hand when the plugin isn't loaded this session).
 
-For motion/timing work: **`--list-scenes`** prints the timestamps of detected scene cuts
-(feed them into `--timestamps`); **`--diff`** emits frame-difference images (bright = what
-moved, to confirm motion/direction); **`--label`** burns the source timestamp onto each
-frame (dense/`--diff`/`--timestamps`; best-effort — needs ffmpeg drawtext + a font).
+### More modes — pick by the question (full detail in `reference.md`, flags in `--help`)
 
-To zoom a small UI region (an on-screen FPS counter, a HUD, a tiny label), pass
-**`--crop W:H:X:Y`** (ffmpeg geometry, e.g. `--crop 320:120:40:900`): the region is cropped
-out and scaled up to fill the frame, so a few pixels become legible and tokens stay low.
-Works in every mode (dense/scene/contact/diff/timestamps); `iw`/`ih` expressions allowed.
+Most of these are **analysis modes** that print a CSV/report and exit (no frames). All honor
+`--start/--end`; CSV modes use `--fps` for the sample rate.
 
-For a **black/blank-screen bug**, run **`--blackdetect`**: it reports each blacked-out span
-as `black START -> END (dur) — PERMANENT/transient`, where *permanent* means it never
-recovers before EOF — the key diagnostic for a stuck/crashed renderer. If a static UI overlay
-(a settings panel, a HUD) keeps a few pixels lit, blackdetect can miss the blackout; crop to
-the app canvas first with `--crop` (and/or lower `--black-ratio`, default 0.98).
+| The question | Mode |
+| :-- | :-- |
+| Where's the transition? | `--scene 0.1` (capture cuts) · `--list-scenes` (print cut times) |
+| Before/after of two frames I have | `--strip a.png,b.png` |
+| Did it move / which direction? | `--diff` (bright = changed pixels) |
+| Is it moving, and *how much* over time? | `--motion` → `t,motion` (mean inter-frame delta) |
+| Is it choppy, and *where*? | `--cadence` (nominal vs real fps + per-window unique frames) |
+| Read a tiny region (FPS/HUD/label) | `--crop W:H:X:Y` (crop+zoom; combines with any mode) |
+| Black / blank screen | `--blackdetect` (spans, flags PERMANENT vs transient) |
+| A readout *number* changing (4→5→4) | `--ocr-roi W:H:X:Y` → `t,text` (needs tesseract) |
+| How big / where is a feature, over time | `--measure W:H:X:Y` → diameter + center (% of viewport) |
+| Capture size / aspect / orientation | `--probe` (also: which axis CSS `vmin` is) |
+| Dominant colours (palette) | `--palette [--colors n]` → hex swatches |
+| Two captures of the same thing differ where | `--ab other.mov` → `t,ssim` divergence timeline |
 
-**When the symptom is a number, not a picture** (a panel readout changing — a body count going
-4→5→4, a Speed value, a timer), staring at frames won't show the cause; track the *value*
-instead. **`--ocr-roi W:H:X:Y`** OCRs a small region once per sampled frame and prints a
-`t,text` CSV (add **`--ocr-digits`** for numeric readouts; `--fps` sets the rate). This needs
-`tesseract` (the one mode beyond ffmpeg; it prints an install hint if missing). **Important
-steer:** if a tracked value changes but nothing near it changes in the frame, the bug is
-almost certainly **logic/state** (the body left off-screen, a counter desynced) — frame
-analysis can't see it. Say so plainly and point the user at logs or a small headless repro
-rather than extracting more frames.
+Also: `--label` burns the source timestamp onto frames (best-effort); `--text`/`--tile-width`
+tune contact legibility; `--window`/`--frame-width` tune bursts.
 
-**When the question is "how big / where", not "what's wrong"** (visual-tuning / alignment work
-— the diameter of a shadow or dot as a fraction of the viewport, whether two circles line up),
-measure it: **`--measure W:H:X:Y`** bounds a feature inside the ROI once per sampled frame and
-prints `t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy` (diameter in px *and* as % of viewport
-width **and** height; center in full-frame px). Use `--measure-bright` for a ring/glow instead of
-a dark feature, and `--measure-limit` to tune sensitivity. Prefer this over eyeballing or a
-center-row luma scan — a photon ring or accretion disk breaks a single-row scan, but the 2D
-bounding box is robust.
-
-**First, know the canvas.** Run **`--probe`** to report dimensions, aspect ratio, **orientation**
-(portrait/landscape), fps, and duration. It matters because CSS `vmin` maps to viewport *width*
-in portrait but *height* in landscape — so read `diam_pct_w` on a portrait capture and
-`diam_pct_h` on a landscape one (the `--measure` summary says which). Recordings may also be
-retina (dpr 2); device px aren't CSS px, so report fractions of the viewport, not raw px.
-
-**Reading a clip as a reference, not a bug** (art direction — "recreate this choreography"):
-a timestamped contact tile reads the **phases** at a glance, and **`--list-scenes`** gives the
-phase boundaries to feed `--timestamps`. For the **palette**, run **`--palette`** (narrow with
-`--start/--end` to one phase) to get an exact hex swatch list instead of eyeballing colours —
-the colours are part of the spec you hand back.
-
-**Comparing two captures of the same thing** (a bug that only shows on one browser/device, or a
-before/after): **`--ab other.mov`** scores per-frame similarity over time and prints a `t,ssim`
-timeline (1.0 = identical, lower = more different), calling out the most divergent moments — so
-"where do these two intros differ?" is answered in one step rather than scrubbing both. Pair it
-with side-by-side timestamped tiles to *see* the difference once you know when it happens.
-
-**Is it choppy, and where?** **`--cadence`** reports the nominal frame rate vs the real average
-(a big gap = dropped/duplicated frames) and a per-window timeline of *unique* frames, so a
-stutter localizes to a span ("choppiest @0.7–1.0 s") instead of hiding in an average. It
-measures unique-content cadence (a frozen/static scene also reads low), which is the honest
-signal for "the splash→render handoff hitches here."
-
-Frames default to `.frames/<video-name>/` (so analyzing a second clip won't clobber the
-first); pass `--out <dir>` to choose. If the clip's real frame rate is below your `--fps`,
-the script warns that extra fps just repeats frames. Add **`--dry-run`** to print the exact
-ffmpeg commands without running them — handy for replicating the workflow by hand (e.g. in a
-session where the plugin isn't loaded).
+**Key steer — frames can't see state.** If a tracked value changes (`--ocr-roi`) or you suspect
+a logic/timing bug but **nothing near it changes in the frame**, the cause is off-screen
+logic/state (a counter desynced, a body left the viewport) — say so and point the user at
+console logs or a small headless repro instead of extracting more frames. Likewise report
+feature sizes as **% of viewport** (`--measure`/`--probe`), since retina (dpr 2) device px
+mislead.
 
 **ffmpeg note:** ffmpeg is already on PATH in many environments (incl. many web containers).
 If it's missing the plugin tries apt → brew → a GitHub static build; a locked-down sandbox

@@ -29,16 +29,17 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - **Two-timestamp overlay / contour diff (issue #29).** Overlay frame A onto frame B at matched
   scale + center (with opacity, or an edge/contour diff) to eyeball whether two circles align.
   `--strip` does side-by-side hstack today; a true centered overlay is open.
-- **Per-shot saturation/HSV histogram (issue #37 — next up).** A saturation distribution per
+- **Per-shot saturation/HSV histogram (issues #37, #39 — next up).** A saturation distribution per
   sampled frame ("80% of dust pixels are >0.7 saturation") to make "clownish vs elegant"
   measurable and verify a palette fix objectively. Tractable via ffmpeg `signalstats`
   (SATAVG/SATMAX per frame) → a saturation-over-time CSV; complements `--palette`.
 - **Overdraw / fill-rate hint (issue #37).** "Canvas backing store is N× the CSS size on this
   DPR" would name a retina-overdraw perf cause directly. Not derivable from pixels alone (needs
   the DPR + CSS viewport, like the dpr note in `--probe`); open.
-- **Per-blob motion / trajectory readout (issues #35, #37).** Track a feature's path over time ("two
-  objects spiralling inward, ~2.5 turns, accelerating") → keyframes. Needs optical-flow/tracking
-  beyond `--diff`/`--measure`; open.
+- **Optical-flow / trajectory overlay (issues #35, #37, #39).** `--motion` (rc.17) quantifies
+  motion *magnitude* over time; the open half is *direction/coherence* — "two objects spiralling
+  inward, ~2.5 turns" vs random drift — which needs optical-flow vectors or per-blob tracking
+  (heavier, filter/version-dependent). Open.
 - **Letterboxed A/B compare (issue #35).** `--ab` stretches differing aspect ratios to a common
   size; a letterbox-preserving compare would avoid distortion when the two captures differ in
   shape. Open.
@@ -122,6 +123,11 @@ arrive via the **Plugin feedback** issue form and are triaged into the items bel
 - 1.0.0-rc.16 (issue #37 — ranked #1): `--cadence` reports nominal-vs-effective frame rate
   (dropped/duplicated frames = stutter) and a per-`--window` unique-frame timeline (ffmpeg
   `mpdecimate` + `ffprobe`) so choppiness localizes to a span, not just an average.
+- 1.0.0-rc.17 (issue #39): `--motion` prints a `t,motion` mean-inter-frame-delta timeline
+  (`tblend` + `signalstats`) — motion as a number, the quantitative companion to `--diff`. Also
+  a 1.0.0 shore-up: SKILL.md slimmed ~29% (prose → a "pick by the question" table; detail stays
+  in reference.md), and the `--help` doc test is now derived from the argparse (no hand-kept
+  list). reference.md gained a headless-virtual-time/CSS-animation capture note.
 
 **Hard constraint (Claude Code, not the plugin)**
 - Plugins load at session *start* — there's no supported hot-load, so a video dropped right

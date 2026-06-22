@@ -556,6 +556,25 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a cadence test clip (--cadence)"
     fi
+    # --motion: a static segment then a moving one should read ~0 motion early and a clear spike
+    # later (issue #39). Build gray(1s)+testsrc(1s). Needs python3.
+    if ! command -v python3 >/dev/null 2>&1; then
+      skip "python3 not installed (--motion e2e)"
+    elif ffmpeg -hide_banner -loglevel error \
+         -f lavfi -i "color=gray:size=160x120:rate=10:duration=1" \
+         -f lavfi -i "testsrc=size=160x120:rate=10:duration=1" \
+         -filter_complex "[0:v][1:v]concat=n=2:v=1[v]" -map "[v]" "$tmp/mot.mp4" -y 2>/dev/null; then
+      _mot="$(bash "$SCRIPT" --video "$tmp/mot.mp4" --motion --fps 10 2>/dev/null || true)"
+      _still="$(awk -F, 'NR>1 && $1<0.9 && ($2+0)<1 {print; exit}' <<<"$_mot")"   # near-zero in static span
+      _moved="$(awk -F, 'NR>1 && ($2+0)>5 {print; exit}' <<<"$_mot")"             # a clear motion spike
+      if [[ "$(head -n1 <<<"$_mot")" == "t,motion" ]] && [[ -n "$_still" ]] && [[ -n "$_moved" ]]; then
+        pass "--motion reads ~0 in a static span and spikes on motion"
+      else
+        fail "--motion timeline not as expected (still='$_still' moved='$_moved')"
+      fi
+    else
+      skip "could not build a motion test clip (--motion)"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -721,14 +740,21 @@ fi
 rm -rf "$dr_tmp"
 # CHANGED (issue #21): capture --help once and match a here-string — `--help | grep -q`
 # under `set -o pipefail` can SIGPIPE the producer and flake (false "missing flag").
+# CHANGED (1.0.0 shore-up): derive the flag list from the argparse case arms instead of a
+# hardcoded list, so every current/future --flag is auto-checked for documentation (no manual
+# upkeep). Matches "  --flag)" and the alias form "  --flag|--other)".
 _help="$(bash "$EXTRACT" --help 2>/dev/null || true)"
-for f in "--dry-run" "--diff" "--label" "--list-scenes" "--crop" "--blackdetect" "--ocr-roi" "--measure" "--probe" "--palette" "--ab" "--cadence" "--version"; do
-  if grep -qF -- "$f" <<<"$_help"; then
-    pass "extract-frames --help documents $f"
-  else
-    fail "extract-frames --help missing $f"
-  fi
+mapfile -t _flags < <(grep -oE '^[[:space:]]*--[a-z][a-z-]*[)|]' "$SCRIPT_ABS" | tr -d ' )|' | sort -u)
+[[ ${#_flags[@]} -ge 20 ]] || fail "flag extraction found only ${#_flags[@]} flags (parser changed?)"
+_undoc=""
+for f in "${_flags[@]}"; do
+  grep -qF -- "$f" <<<"$_help" || _undoc="$_undoc $f"
 done
+if [[ -z "$_undoc" ]]; then
+  pass "every argparse --flag (${#_flags[@]}) is documented in --help"
+else
+  fail "--help missing flags:$_undoc"
+fi
 nf_tmp="$(mktemp -d)"; : >"$nf_tmp/clip.mov"
 _diff_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --fps 4 --diff --dry-run 2>/dev/null || true)"
 if grep -q 'tblend=all_mode=difference' <<<"$_diff_dry"; then
@@ -803,6 +829,13 @@ if grep -q 'mpdecimate' <<<"$_cad_dry" && grep -q 'showinfo' <<<"$_cad_dry"; the
   pass "--cadence --dry-run prints the mpdecimate command"
 else
   fail "--cadence --dry-run did not print mpdecimate"
+fi
+# --motion --dry-run prints the tblend+signalstats command (issue #39).
+_mot_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --motion --fps 12 --dry-run 2>/dev/null || true)"
+if grep -q 'tblend=all_mode=difference' <<<"$_mot_dry" && grep -q 'signalstats' <<<"$_mot_dry"; then
+  pass "--motion --dry-run prints the tblend+signalstats command"
+else
+  fail "--motion --dry-run did not print tblend+signalstats"
 fi
 rm -rf "$nf_tmp"
 # --version reports the plugin version from plugin.json.

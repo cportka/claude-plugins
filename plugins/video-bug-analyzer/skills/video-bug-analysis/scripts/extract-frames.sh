@@ -21,6 +21,7 @@
 #   extract-frames.sh --video <path> --palette [--colors <n>]        # dominant colours (hex)
 #   extract-frames.sh --video <a> --ab <b> [--fps <n>]               # A/B divergence over time
 #   extract-frames.sh --video <path> --cadence [--window <sec>]      # stutter / frame-cadence timeline
+#   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -113,6 +114,10 @@
 #                       honors --start/--end. Measures UNIQUE-content cadence, so a deliberately
 #                       static scene also reads low (nothing new). (ffmpeg mpdecimate + ffprobe;
 #                       needs python3.)
+#   --motion            Motion timeline: print t,motion (mean inter-frame pixel delta, 0..255)
+#                       per sampled frame, so "is it moving / where does motion concentrate?"
+#                       becomes a number. Quantifies --diff. Sample rate from --fps; honors
+#                       --start/--end. (ffmpeg tblend+signalstats; needs python3.)
 #   --version           Print the plugin version and exit.
 #   -h, --help          Show this help.
 #
@@ -134,6 +139,7 @@
 #   extract-frames.sh --video ref.mov --start 4 --end 5.7 --palette      # one phase's colours
 #   extract-frames.sh --video safari.mov --ab firefox.mov --fps 10       # where do they diverge?
 #   extract-frames.sh --video splash.mov --cadence --window 0.5          # when does it stutter?
+#   extract-frames.sh --video splash.mov --motion --fps 12               # when/where is motion?
 #
 set -euo pipefail
 
@@ -180,6 +186,7 @@ PALETTE=""     # ADDED (issue #33): --palette prints dominant colours (hex swatc
 COLORS="8"     # ADDED: --colors, how many dominant colours --palette extracts
 AB=""          # ADDED (issue #35): --ab <other> SSIM-diffs two clips over time, then exits
 CADENCE=""     # ADDED (issue #37): --cadence reports a frame-cadence/jitter timeline, then exits
+MOTION=""      # ADDED (issue #39): --motion prints a mean inter-frame pixel-delta timeline, exits
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -344,6 +351,7 @@ while [[ $# -gt 0 ]]; do
     --colors) COLORS="${2:-}"; shift 2 ;;             # ADDED: number of palette colours
     --ab) AB="${2:-}"; shift 2 ;;                      # ADDED (issue #35): A/B divergence vs <other>
     --cadence) CADENCE=1; shift ;;                    # ADDED (issue #37): frame-cadence timeline
+    --motion) MOTION=1; shift ;;                      # ADDED (issue #39): inter-frame motion timeline
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -874,6 +882,61 @@ PY
   rm -f "$tf"
 }
 
+# ADDED (issue #39): motion timeline — the mean inter-frame pixel delta over time, so "feels too
+# long / choppy / is the dust even moving?" becomes a number and you can see WHERE motion
+# concentrates. tblend=difference gives |this - previous|; signalstats' YAVG is that frame's
+# average magnitude; metadata=print dumps it. Quantifies what --diff shows visually. Uses
+# PRE_ARGS — run after them. Honors --crop? No: full-frame motion (crop the source first if needed).
+run_motion() {
+  local vf="fps=${FPS},tblend=all_mode=difference,signalstats,metadata=mode=print:file="
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" \
+      -vf "${vf}<tmp>" -an -f null -
+    printf '\n'
+    echo "# read lavfi.signalstats.YAVG (mean |frame - prev|) per frame -> CSV t,motion (0..255)"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --motion needs python3 to read the per-frame stats. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local base; base="$(to_seconds "${START:-0}")"
+  local mfile; mfile="$(mktemp)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
+  python3 - "$mfile" "$base" "$FPS" <<'PY'
+import sys
+mfile, base, fps = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]) or 1.0
+t=None; n=0; rows=[]
+print("t,motion")
+for line in open(mfile):
+    line=line.strip()
+    if line.startswith("frame:"):
+        # frame:N pts:.. pts_time:..
+        t=None
+        for tok in line.split():
+            if tok.startswith("pts_time:"):
+                try: t=float(tok.split(":",1)[1])
+                except ValueError: t=None
+    elif line.startswith("lavfi.signalstats.YAVG="):
+        try: y=float(line.split("=",1)[1])
+        except ValueError: continue
+        tt = (base+t) if t is not None else (base+n/fps)
+        # n==0 is the first frame (no previous) — tblend passes it through, so skip the spurious value.
+        if n>0:
+            rows.append((tt,y)); print("%.3f,%.2f" % (tt,y))
+        n+=1
+e=sys.stderr
+if rows:
+    peak=max(rows,key=lambda r:r[1]); avg=sum(r[1] for r in rows)/len(rows)
+    e.write("Motion: mean inter-frame delta %.2f (0-255 luma); peak %.2f @ %.2fs over %d samples.\n"
+            % (avg, peak[1], peak[0], len(rows)))
+    e.write("Brightest = most motion; flat-low spans = little/no change (static).\n")
+else:
+    e.write("No motion samples — clip too short or --fps too low.\n")
+PY
+  rm -f "$mfile"
+}
+
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # CHANGED: don't create dirs in --dry-run
 
 # ADDED: --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
@@ -982,6 +1045,13 @@ fi
 # ADDED (issue #37): --cadence is an analysis mode — print a frame-cadence timeline and exit.
 if [[ -n "$CADENCE" ]]; then
   run_cadence
+  feedback_hint
+  exit 0
+fi
+
+# ADDED (issue #39): --motion is an analysis mode — print an inter-frame motion timeline and exit.
+if [[ -n "$MOTION" ]]; then
+  run_motion
   feedback_hint
   exit 0
 fi

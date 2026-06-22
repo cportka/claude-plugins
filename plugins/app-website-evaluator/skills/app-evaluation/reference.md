@@ -41,6 +41,7 @@ community** (see SKILL.md §1) — these are defaults, not a one-size checklist.
 - Full **favicon** set + `apple-touch-icon` + `manifest.webmanifest` (name, theme color, icons).
 - A **logo** (incl. an SVG and a dark/light variant) and a clear, memorable **tagline** above the
   fold that states what it is and who it's for.
+- A `<meta name="theme-color">` for browser/PWA chrome; a social share image (`og:image`).
 - Consistent product naming/capitalization; a branded, helpful **404**; print/OG variants of the logo.
 
 ### Security / hygiene

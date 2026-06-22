@@ -194,6 +194,7 @@ if [[ -n "$HTML" ]]; then
   htest '<link[^>]+rel=["'"'"']?manifest'         ok "web app manifest linked"  info "no web app manifest (fine for simple sites; needed for installable PWAs)"
   htest '<html[^>]+lang='                         ok "html lang set"            warn "no <html lang> — hurts a11y and SEO"
   htest '<meta[^>]+name=["'"'"']?viewport'        ok "viewport meta present"    bad  "no viewport meta — not mobile-friendly"
+  htest '<meta[^>]+name=["'"'"']?theme-color'      ok "theme-color set"          info "no theme-color meta — sets the browser/PWA chrome colour"
 fi
 
 # --- AI-readiness ---------------------------------------------------------------------
@@ -231,7 +232,13 @@ fi
 sec "Performance / load (hints)"
 if [[ -n "$HTML" ]]; then
   if html_has '<img[^>]+loading=["'"'"']?lazy'; then ok "uses loading=\"lazy\" on images"; else info "no lazy-loaded images found — add loading=\"lazy\" below the fold"; fi
-  if html_has '<script[^>]+\b(async|defer)\b'; then ok "scripts use async/defer"; else warn "no async/defer scripts found — render-blocking JS slows first paint"; fi
+  # Only external <script src=…> is render-blocking; inline / JSON-LD scripts aren't, and a page
+  # with no scripts at all has nothing to flag.
+  if html_has '<script[^>]+src='; then
+    if html_has '<script[^>]+\b(async|defer)\b'; then ok "external scripts use async/defer"; else warn "external <script> without async/defer — render-blocking JS slows first paint"; fi
+  else
+    info "no external <script> tags (nothing render-blocking here)"
+  fi
   info "for real numbers (LCP/CLS/INP, payload size) run Lighthouse/PageSpeed on the live URL"
 else
   info "performance hints skipped (no HTML)"

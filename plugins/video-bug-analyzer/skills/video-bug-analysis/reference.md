@@ -143,6 +143,15 @@ the honest signal. `--start`/`--end` scope it; needs `python3` (and `ffprobe` fo
 nominal/average split). The avg-vs-nominal number alone often localizes a perf bug to overdraw;
 the per-window timeline tells you *when*.
 
+**Motion timeline (`--motion`):** prints `t,motion` where `motion` is the mean inter-frame pixel
+delta (0–255 luma) per sampled frame — the *quantitative* companion to `--diff`. It turns "feels
+too long / choppy / is the dust even moving?" into a number and shows **where** motion
+concentrates (e.g. a flat-low span = nothing moving, a spike = a cut or burst). Built on
+`tblend=difference` + `signalstats` (YAVG); the headline reports the average and the peak moment.
+The first frame is skipped (no previous to difference against). `--fps` sets the rate; honors
+`--start`/`--end`; needs `python3`. It measures *magnitude*, not direction — for coherent-vs-random
+(spiral) motion, frames + `--diff` are still the read; a true optical-flow overlay is a known gap.
+
 **Reading dense text/UI** (inventory features, transcribe a demo — not a bug): contact sheets
 pack too tightly for small text. Extract **full-resolution individual frames** (`--fps 1`–`2`,
 no `--contact`) and read them one at a time. This is the most reliable path for portrait phone
@@ -168,3 +177,14 @@ Ask the user for one of these instead of guessing:
 - A **still screenshot** of the exact bad moment (most reliable).
 - A **tighter timestamp** so you can sample densely in a small window.
 - The **console/network logs** for the same moment, since those are invisible in the video.
+
+## Capturing a recording (note for whoever produces the clip)
+
+If a clip is being generated **headlessly** with virtual/synthetic time (e.g. a screenshot
+script that advances a fake clock), be aware that **virtual time does not drive the
+compositor** — CSS keyframe/transition animations won't advance, so the capture can look frozen
+even though the page "logically" progressed. To screenshot CSS animations deterministically,
+freeze them by setting `Element.getAnimations()[i].currentTime` (Web Animations API) at each
+step, or capture against **real wall-clock** time. This is a capture-side gotcha, not something
+the extractor can detect — but it explains a "nothing is moving" clip that `--motion` reads as
+flat-zero.

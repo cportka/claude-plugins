@@ -5,6 +5,35 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.17] - 2026-06-22
+
+A 1.0.0 shore-up: incorporates the latest dogfood (#39) and tightens tests + token usage ahead
+of the final release. `video-bug-analyzer` → 1.0.0-rc.17.
+
+### Added
+- **`--motion`** (issue #39) — motion timeline: prints `t,motion` (mean inter-frame pixel delta,
+  0–255) per sampled frame, so "is it moving / where does motion concentrate / does it feel too
+  long?" becomes a number. The quantitative companion to `--diff` (built on
+  `tblend=difference` + `signalstats`); headlines the average and peak moment. Needs `python3`.
+
+### Changed
+- **SKILL.md slimmed ~29%** (1468→1047 words): the per-mode prose (which duplicated
+  `reference.md`) is now a compact "pick by the question" table plus the key *frames-can't-see-
+  state* steer. All detail still lives in `reference.md` + `--help`. Lower context cost every
+  session, same discoverability.
+- **Tests: the `--help` documentation check is now derived from the argparse** (every `--flag`
+  case arm must appear in `--help`) instead of a hand-maintained list — auto-covers new flags and
+  removes an upkeep footgun. Added `--motion` e2e + dry-run.
+
+### Docs
+- reference.md: a capture-side note that **headless virtual time doesn't drive the compositor**,
+  so CSS animations won't advance unless you freeze `getAnimations().currentTime` or use real
+  wall-clock — explains a "nothing moving" clip (#39).
+
+### Notes
+- #39's optical-flow/trajectory overlay (coherent-vs-random motion) and per-shot saturation/hue
+  histogram remain logged in IMPROVEMENTS; `--motion` covers the magnitude/"where" half.
+
 ## [1.0.0-rc.16] - 2026-06-22
 
 From the stutter-localization dogfood (#37, OSP v0.16.3 WebGPU splash): the avg-vs-nominal
@@ -467,6 +496,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.17]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.17
 [1.0.0-rc.16]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.16
 [1.0.0-rc.15]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.15
 [1.0.0-rc.14]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.14

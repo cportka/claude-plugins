@@ -5,6 +5,33 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.0-rc.18] - 2026-06-22
+
+From the fresh-vs-replay dogfood (#41): comparing two clips of the same intro meant running the
+tool twice and eyeballing two sheets with different time axes, and the "is it choppy" smoking gun
+(avg_frame_rate 24 vs nominal 60) lived in raw ffprobe, outside the tool.
+`video-bug-analyzer` → 1.0.0-rc.18.
+
+### Added
+- **`--compare-videos a,b`** (issue #41, "a top-3 real request") — one stacked contact sheet, a
+  **row per clip**, each sampled into `--cols` tiles across its **own** duration (a normalized
+  phase axis) so different-length clips line up by % through the sequence, not absolute time.
+  The visual companion to `--ab`'s divergence number. Writes `<out>/compare.png`; `--label` burns
+  each tile's timestamp; needs `ffprobe`.
+- **Automatic `smoothness:` header on every run** — effective (`avg_frame_rate`) vs nominal
+  (`r_frame_rate`) fps plus a dropped/duplicated-frame estimate. The single best free "is it
+  choppy?" number; no more reaching for raw ffprobe.
+
+### Changed
+- **`--label` now applies to contact tiles** (and `--compare-videos`) — drawtext is burned
+  per-frame before tiling, which is exactly what timing analysis wants. The old "not applied to
+  contact" note is gone.
+
+### Notes
+- #41's event-alignment ask (`--align-on scene` / per-clip `--t0`, so two clips line up on an
+  event when it lands at a different phase fraction) is logged in IMPROVEMENTS as the next step
+  for compare. #41's motion-magnitude reaffirmation shipped in rc.17 (`--motion`).
+
 ## [1.0.0-rc.17] - 2026-06-22
 
 A 1.0.0 shore-up: incorporates the latest dogfood (#39) and tightens tests + token usage ahead
@@ -496,6 +523,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.0-rc.18]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.18
 [1.0.0-rc.17]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.17
 [1.0.0-rc.16]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.16
 [1.0.0-rc.15]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.15

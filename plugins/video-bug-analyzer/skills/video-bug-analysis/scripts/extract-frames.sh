@@ -22,6 +22,7 @@
 #   extract-frames.sh --video <a> --ab <b> [--fps <n>]               # A/B divergence over time
 #   extract-frames.sh --video <path> --cadence [--window <sec>]      # stutter / frame-cadence timeline
 #   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
+#   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -63,8 +64,9 @@
 #                       timestamp modes. iw/ih expressions allowed (e.g. iw/4:ih/4:0:0).
 #   --diff              Frame-difference mode: emit diff_*.png where each frame is the change
 #                       from the previous one (bright = motion). Confirms what moved / where.
-#   --label             Burn the source timestamp onto each frame (dense/--diff/--timestamps).
-#                       Best-effort: needs ffmpeg drawtext + a font; silently skipped if not.
+#   --label             Burn the source timestamp onto each frame (dense/--diff/--timestamps,
+#                       and contact tiles + --compare-videos). Best-effort: needs ffmpeg
+#                       drawtext + a font; silently skipped if unavailable.
 #   --list-scenes       Print the timestamps (seconds) of detected scene cuts and exit; tune
 #                       with --scene <thr> (default 0.3). Feed the cuts into --timestamps.
 #   --blackdetect       Find blacked-out spans (black/blank screen bug) and exit, printing
@@ -118,7 +120,16 @@
 #                       per sampled frame, so "is it moving / where does motion concentrate?"
 #                       becomes a number. Quantifies --diff. Sample rate from --fps; honors
 #                       --start/--end. (ffmpeg tblend+signalstats; needs python3.)
+#   --compare-videos a,b  A/B comparison sheet: ONE image, a row per clip, each clip sampled
+#                       into <--cols> tiles spread across its OWN duration (normalized phase
+#                       axis), so two clips of different lengths line up by % through the
+#                       sequence — "why does B differ from A" (fresh vs replay, before/after,
+#                       two browsers). Writes <out>/compare.png. --label burns each tile's
+#                       timestamp. Needs ffprobe. (Names its own inputs; no --video.)
 #   --version           Print the plugin version and exit.
+#
+# Every run prints a one-line "smoothness:" header (effective vs nominal fps + a dropped-frame
+# estimate) — the quickest "is it choppy?" read; --cadence / --motion localize it.
 #   -h, --help          Show this help.
 #
 # ffmpeg is required. It's already on PATH in many environments; if it's missing this tries
@@ -140,6 +151,7 @@
 #   extract-frames.sh --video safari.mov --ab firefox.mov --fps 10       # where do they diverge?
 #   extract-frames.sh --video splash.mov --cadence --window 0.5          # when does it stutter?
 #   extract-frames.sh --video splash.mov --motion --fps 12               # when/where is motion?
+#   extract-frames.sh --compare-videos fresh.mov,replay.mov --label      # A vs B, phase-aligned
 #
 set -euo pipefail
 
@@ -187,6 +199,7 @@ COLORS="8"     # ADDED: --colors, how many dominant colours --palette extracts
 AB=""          # ADDED (issue #35): --ab <other> SSIM-diffs two clips over time, then exits
 CADENCE=""     # ADDED (issue #37): --cadence reports a frame-cadence/jitter timeline, then exits
 MOTION=""      # ADDED (issue #39): --motion prints a mean inter-frame pixel-delta timeline, exits
+CMP_VIDEOS=""  # ADDED (issue #41): --compare-videos a,b -> one stacked phase-aligned contact sheet
 
 usage() {
   awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -352,6 +365,7 @@ while [[ $# -gt 0 ]]; do
     --ab) AB="${2:-}"; shift 2 ;;                      # ADDED (issue #35): A/B divergence vs <other>
     --cadence) CADENCE=1; shift ;;                    # ADDED (issue #37): frame-cadence timeline
     --motion) MOTION=1; shift ;;                      # ADDED (issue #39): inter-frame motion timeline
+    --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # ADDED (issue #41): A/B stacked contact sheet
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -362,8 +376,9 @@ done
 # user set --tile-width explicitly.
 [[ -n "$TEXT" && -z "$TILEW_SET" ]] && TILEW="640"
 
-# CHANGED: --video is required EXCEPT in --strip mode (which operates on existing frames).
-if [[ -z "$STRIP" ]]; then
+# CHANGED: --video is required EXCEPT in --strip and --compare-videos modes (they name their
+# own inputs / operate on existing frames).
+if [[ -z "$STRIP" && -z "$CMP_VIDEOS" ]]; then
   if [[ -z "$VIDEO" ]]; then
     echo "Error: --video is required." >&2
     echo "Run with --help for usage." >&2
@@ -466,6 +481,26 @@ EOF
 
 # Diagnostic: which ffmpeg is in use (cite this when reporting extraction problems).
 [[ -n "$DRY_RUN" ]] || echo "ffmpeg: $(ffmpeg -version 2>/dev/null | head -n1)" >&2
+
+# ADDED (issue #41): a one-line smoothness header on every run — effective (avg) vs nominal (r)
+# frame rate + a dropped/duplicated estimate. The single best "is it choppy?" number, for free
+# (one ffprobe call), so it never has to be reached for by hand. Best-effort; silent without it.
+print_smoothness() {
+  command -v ffprobe >/dev/null 2>&1 || return 0
+  [[ -n "$VIDEO" && -f "$VIDEO" ]] || return 0
+  local rfr afr
+  rfr="$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate   -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+  afr="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+  [[ -n "$rfr" && -n "$afr" ]] || return 0
+  awk -v r="$rfr" -v a="$afr" '
+    function fr(s,  p){ if(index(s,"/")){split(s,p,"/"); return (p[2]+0)?p[1]/p[2]:0} return s+0 }
+    BEGIN{ R=fr(r); A=fr(a); if(R<=0||A<=0) exit;
+      printf "smoothness: effective %.1f fps vs nominal %.1f fps", A, R;
+      if (A < R) { d=(1-A/R)*100; if (d>=5) printf "  (~%.0f%% frames dropped/duplicated — likely choppy; --cadence/--motion to localize)", d }
+      printf "\n";
+    }' >&2
+}
+[[ -n "$DRY_RUN" ]] || print_smoothness
 
 # ADDED: run an ffmpeg command, or — under --dry-run — print it (copy-pasteable) instead.
 # Lets a live agent that can't load the plugin mid-session replicate the workflow by hand.
@@ -988,6 +1023,48 @@ fi
 # ADDED: prepare the optional --label timestamp-burn-in segment (probed; empty if unsupported).
 build_label_vf
 
+# ADDED (issue #41): --compare-videos a,b — ONE stacked contact sheet, a row per clip on a
+# NORMALIZED phase axis (N columns spread across each clip's own duration), so two clips of
+# different lengths line up by % through the sequence, not by absolute time. Answers "why does B
+# differ from A" (fresh vs replay, before/after a fix, two browsers) in a single image. With
+# --label, each tile gets its source timestamp burned in. Uses LABEL_VF — runs after build_label_vf.
+run_compare_videos() {
+  local a b; IFS=',' read -r a b <<<"$CMP_VIDEOS"
+  if [[ -z "$a" || -z "$b" ]]; then
+    echo "Error: --compare-videos needs two files: --compare-videos a.mov,b.mov" >&2; exit 2
+  fi
+  local cols="$COLS"; [[ -z "$COLS_SET" ]] && cols=8   # finer default phase axis for a comparison
+  local da db
+  da="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$a" 2>/dev/null | head -n1 || true)"
+  db="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$b" 2>/dev/null | head -n1 || true)"
+  # Frames-per-second to land ~cols frames across each clip's full duration (the phase axis).
+  local fa fb
+  fa="$(awk -v c="$cols" -v d="${da:-0}" 'BEGIN{ printf "%.6f", (d>0)?c/d:c }')"
+  fb="$(awk -v c="$cols" -v d="${db:-0}" 'BEGIN{ printf "%.6f", (d>0)?c/d:c }')"
+  local fc="[0:v]fps=${fa},scale=${TILEW}:-1${LABEL_VF},tile=${cols}x1[a];[1:v]fps=${fb},scale=${TILEW}:-1${LABEL_VF},tile=${cols}x1[b];[a][b]vstack=inputs=2"
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error -i "$a" -i "$b" -filter_complex "$fc" -frames:v 1 "${OUT}/compare.png"
+    printf '\n'
+    echo "# top row = $a, bottom row = $b; ${cols} columns each = % through that clip (normalized phase axis)"
+    return 0
+  fi
+  for f in "$a" "$b"; do [[ -f "$f" ]] || { echo "Error: --compare-videos file not found: $f" >&2; exit 2; }; done
+  if [[ -z "$da" || -z "$db" ]]; then
+    echo "Error: --compare-videos needs ffprobe to read each clip's duration." >&2; exit 2
+  fi
+  if ffmpeg -hide_banner -loglevel error -i "$a" -i "$b" -filter_complex "$fc" -frames:v 1 "$OUT/compare.png"; then
+    echo "Wrote $OUT/compare.png — top row $a (${da}s), bottom row $b (${db}s), ${cols} cols across each." >&2
+    echo "Columns align by % through each clip (normalized phase axis), NOT absolute time." >&2
+  else
+    echo "Error: --compare-videos failed (do both files decode?)." >&2; exit 1
+  fi
+}
+if [[ -n "$CMP_VIDEOS" ]]; then
+  run_compare_videos
+  feedback_hint
+  exit 0
+fi
+
 # ADDED (issue #23): crop a region (e.g. an on-screen FPS/HUD), applied before scale so the
 # region is zoomed. Geometry is ffmpeg crop syntax W:H:X:Y (expressions like iw/ih allowed).
 [[ -n "$CROP" ]] && CROP_VF="crop=${CROP},"
@@ -1099,11 +1176,12 @@ elif [[ -n "$CONTACT" ]]; then
   # Contact-sheet mode: scale each selected frame down and tile them into a grid, so the
   # whole timeline is one image (or a few). Spills into contact_0002.png, ... if needed.
   [[ -n "$DRY_RUN" ]] || tune_contact_for_source   # portrait auto-cols + illegibility (issue #14)
-  [[ -n "$LABEL" ]] && echo "Note: --label isn't applied to contact tiles; use it with dense/--diff/--timestamps." >&2
+  # CHANGED (issue #41): --label now burns the source timestamp into each tile too (drawtext is
+  # applied per-frame, before tiling), which is exactly what timing analysis wants.
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "${SELECT},${CROP_VF}scale=${TILEW}:-1,tile=${COLS}x${ROWS}" \
+    -vf "${SELECT},${CROP_VF}scale=${TILEW}:-1${LABEL_VF},tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
 elif [[ -n "$DIFF" ]]; then
   # ADDED: frame-difference mode — each frame is |this − previous| (tblend), so motion lights

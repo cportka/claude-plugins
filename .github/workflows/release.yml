@@ -1,0 +1,62 @@
+name: release
+
+# Auto-create a GitHub Release whenever a version tag is pushed. The notes are pulled from the
+# matching section of CHANGELOG.md (falling back to GitHub's auto-generated notes if that section
+# is empty). So: bump the version + add a `## [x.y.z]` CHANGELOG entry in a PR, merge, then
+# `git tag -a vX.Y.Z -m … && git push origin vX.Y.Z` — the release is created for you.
+#
+# NOTE: tag-triggered workflows run the workflow file *as it exists on the tagged commit*, so this
+# automation applies to tags cut after this file is on main (e.g. v1.0.2+). Older tags (v1.0.0,
+# v1.0.1) are released manually.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          # Print the body of the `## [VER]` section, up to the next `## [` heading.
+          awk -v ver="$VER" '
+            $0 ~ ("^## \\[" ver "\\]") { insec=1; next }
+            insec && /^## \[/ { exit }
+            insec { print }
+          ' CHANGELOG.md > notes.md
+          # Strip leading/trailing blank lines.
+          sed -i -e '/./,$!d' notes.md
+          if [ ! -s notes.md ]; then
+            echo "no CHANGELOG section for $VER; will fall back to auto-generated notes" >&2
+            echo "have_notes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_notes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          VER="${TAG#v}"
+          if [ "${{ steps.notes.outputs.have_notes }}" = "true" ]; then
+            NOTES_ARGS=(--notes-file notes.md)
+          else
+            NOTES_ARGS=(--generate-notes)
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "portka-tools $VER" "${NOTES_ARGS[@]}"
+          else
+            gh release create "$TAG" --title "portka-tools $VER" --verify-tag "${NOTES_ARGS[@]}"
+          fi

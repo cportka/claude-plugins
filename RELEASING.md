@@ -25,8 +25,18 @@ git tag -a v1.0.0 -m "portka-tools 1.0.0"
 git push origin v1.0.0
 ```
 
-Then create a **GitHub Release** from that tag (paste the CHANGELOG section as the notes):
-`gh release create v1.0.0 --title "v1.0.0" --notes-file <(...)`, or via the GitHub UI.
+Then create a **GitHub Release** from that tag. For **v1.0.2 and later this is automatic**:
+`.github/workflows/release.yml` triggers on a `v*` tag push and creates the Release with notes
+taken from the matching `## [x.y.z]` section of `CHANGELOG.md` (falling back to GitHub's
+auto-generated notes if that section is missing). So the whole flow is: bump version + add the
+CHANGELOG entry in the release PR, merge, then `git push origin vX.Y.Z` — the Release appears on
+its own. (Tag-triggered workflows use the workflow file *as of the tagged commit*, so v1.0.0 and
+v1.0.1 — tagged before the workflow landed — are created by hand: `gh release create vX.Y.Z
+--title "vX.Y.Z" --notes-file <(...)`, or the GitHub UI, pasting that CHANGELOG section.)
+
+**Is a Release required?** No — the marketplace installs from `main`/the cloned repo, not from
+Releases. A Release is just nicer packaging: a public notes page, a watchable event, and
+attachable assets. Worth doing for visibility; not needed for installs.
 
 ## 3. GitHub Pages **(manual, one-time)**
 
@@ -57,6 +67,15 @@ Get the plugins listed where Claude Code users browse:
    /plugin install app-website-evaluator@portka-tools
    /plugin install repo-bootstrap@portka-tools
    ```
+
+## 5b. Submit to community directories (e.g. buildwithclaude) **(manual)**
+
+[buildwithclaude](https://github.com/davepoon/buildwithclaude) is a community directory of
+components. It lists **skills**, not marketplaces, so you PR a skill into *their* repo. A staging
+kit is provided: `submissions/buildwithclaude/` — run `prepare.sh <fork>` to stage the
+`video-bug-analysis` skill (pointing back here via `plugin.json`), then follow its printed
+branch/PR steps. See `submissions/buildwithclaude/README.md`. (Only `video-bug-analysis` is
+prepared for now; the others can be staged the same way.)
 
 ## 6. Announce (optional, by audience)
 

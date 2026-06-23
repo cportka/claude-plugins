@@ -5,6 +5,22 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.2] - 2026-06-22
+
+Release tooling and submission prep — no plugin code changed (`video-bug-analyzer` 1.0.0,
+`repo-bootstrap` 1.0.0, `app-website-evaluator` 1.0.1 are unchanged).
+
+### Added
+- **Auto-release workflow** (`.github/workflows/release.yml`): pushing a `vX.Y.Z` tag now creates
+  a GitHub Release whose notes are extracted from the matching `## [x.y.z]` CHANGELOG section
+  (falling back to GitHub's auto-generated notes). Applies to tags cut after this lands (v1.0.2+);
+  v1.0.0/v1.0.1 are released manually.
+- **buildwithclaude submission kit** (`submissions/buildwithclaude/`): `prepare.sh` stages the
+  `video-bug-analysis` skill into a buildwithclaude fork (pointing back to `cportka/claude-plugins`
+  via `plugin.json`), with a README of the fork/PR steps.
+- Tests now lint scripts under `submissions/` and assert the release workflow is wired to tags +
+  CHANGELOG, and that the current version has a CHANGELOG section. RELEASING.md updated.
+
 ## [1.0.1] - 2026-06-22
 
 Dogfooding our own `app-website-evaluator` on the project's own GitHub Pages site, then fixing
@@ -603,6 +619,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.2
 [1.0.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.1
 [1.0.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0
 [1.0.0-rc.19]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0-rc.19

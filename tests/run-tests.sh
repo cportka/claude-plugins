@@ -220,6 +220,22 @@ for tmpl in .github/ISSUE_TEMPLATE/*.yml; do
 done
 [[ $it_found -eq 1 ]] || skip "no issue form templates"
 
+# --- 4c2. release automation ----------------------------------------------------------
+section "release automation"
+RW=".github/workflows/release.yml"
+if [[ -s "$RW" ]] && grep -q 'tags:' "$RW" && grep -q 'CHANGELOG.md' "$RW"; then
+  pass "release workflow present (tag-triggered, reads CHANGELOG)"
+else
+  fail "release workflow missing or not wired to tags/CHANGELOG: $RW"
+fi
+# The README header Version must have a matching CHANGELOG section (so auto-notes won't be empty).
+_hdr_ver="$(sed -n 's/^> \*\*Version:\*\* \([0-9][0-9.A-Za-z-]*\).*/\1/p' README.md | head -n1)"
+if [[ -n "$_hdr_ver" ]] && grep -qF "## [$_hdr_ver]" CHANGELOG.md; then
+  pass "CHANGELOG has a section for the current version ($_hdr_ver)"
+else
+  fail "no CHANGELOG '## [$_hdr_ver]' section for the README version"
+fi
+
 # --- 4d. GitHub Pages landing page ----------------------------------------------------
 section "GitHub Pages site"
 if [[ -s index.html ]] \
@@ -273,7 +289,7 @@ section "bash syntax check"
 scripts=()
 while IFS= read -r -d '' sh; do
   scripts+=("$sh")
-done < <(find plugins tests -name '*.sh' -print0 2>/dev/null)
+done < <(find plugins tests submissions -name '*.sh' -print0 2>/dev/null)
 for sh in "${scripts[@]}"; do
   if bash -n "$sh" 2>/dev/null; then
     pass "bash -n clean: $sh"

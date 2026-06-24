@@ -15,3 +15,39 @@ jobs:
 
       - name: Run test suite
         run: bash tests/run-tests.sh
+
+  # P0-1: fail when a plugin's files change but its plugin.json `version` doesn't — so a fix
+  # can't ship invisibly (installed copies are pinned by version; an unchanged version is a no-op
+  # for `claude plugin update`). Brand-new plugins (no version at the base ref) pass.
+  version-bump-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # need history to diff against the base
+      - name: Require a version bump when a plugin's files change
+        run: |
+          set -euo pipefail
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            base="origin/${GITHUB_BASE_REF}"
+            git fetch -q origin "${GITHUB_BASE_REF}"
+          else
+            base="${GITHUB_SHA}^"
+          fi
+          fail=0
+          for dir in plugins/*/; do
+            name="$(basename "$dir")"
+            manifest="${dir}.claude-plugin/plugin.json"
+            [ -f "$manifest" ] || continue
+            if ! git diff --quiet "$base" -- "$dir"; then
+              old_ver="$(git show "$base:$manifest" 2>/dev/null \
+                        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || echo "")"
+              new_ver="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$manifest")"
+              # New plugin (no old_ver) passes; an unchanged version on a changed plugin fails.
+              if [ -n "$old_ver" ] && [ "$old_ver" = "$new_ver" ]; then
+                echo "::error::$name changed but version is still $new_ver — bump $manifest"
+                fail=1
+              fi
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1

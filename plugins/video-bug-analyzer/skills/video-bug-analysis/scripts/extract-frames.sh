@@ -169,6 +169,10 @@ set -euo pipefail
 
 ORIG_ARGS=("$@")   # remember the invocation for the end-of-run feedback link
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.json
+# ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
+# (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
+# this in sync with plugin.json, so the feedback link never reports version=unknown.
+VBA_VERSION="1.0.3"
 
 VIDEO=""
 START=""
@@ -194,7 +198,8 @@ DRY_RUN=""    # --dry-run prints the exact ffmpeg commands instead of running th
 DIFF=""       # --diff emits frame-difference images (motion highlight)
 LABEL=""      # --label burns the source timestamp onto each frame (best-effort)
 LIST_SCENES="" # --list-scenes prints detected scene-cut timestamps, then exits
-LABEL_VF=""   # computed drawtext filter segment (empty unless --label works on this build)
+LABEL_OK=""   # ADDED (1.0.3): set when the --label drawtext probe succeeds
+LABEL_FONT="" # ADDED (1.0.3): font file resolved for --label burn-in; segments built by label_seg
 CROP=""       # --crop W:H:X:Y (ffmpeg geometry) -> crop a region, then scale = zoom
 CROP_VF=""    # computed crop filter segment (empty unless --crop given)
 BLACKDETECT="" # --blackdetect finds blacked-out spans, then exits
@@ -227,12 +232,17 @@ to_seconds() {
 
 # read this plugin's version from plugin.json (for --version and the feedback link).
 _plugin_version() {
+  # CHANGED (1.0.3, issues #51/#52/#53): prefer the adjacent plugin.json, but fall back to the
+  # embedded VBA_VERSION (not "unknown") so a standalone copy still reports its version.
   local pj="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/.claude-plugin/plugin.json"
-  [[ -f "$pj" ]] || { echo "unknown"; return 0; }
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version","unknown"))' "$pj" 2>/dev/null || echo unknown
+  if [[ -f "$pj" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+      python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("version","'"$VBA_VERSION"'"))' "$pj" 2>/dev/null || echo "$VBA_VERSION"
+    else
+      grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$pj" | head -n1 | sed 's/.*"\([^"]*\)"$/\1/' || echo "$VBA_VERSION"
+    fi
   else
-    grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$pj" | head -n1 | sed 's/.*"\([^"]*\)"$/\1/' || echo unknown
+    echo "$VBA_VERSION"
   fi
 }
 
@@ -327,7 +337,7 @@ _find_font() {
 # actually work on this ffmpeg build. If anything's off (no drawtext, no font, bad syntax),
 # LABEL_VF stays empty and extraction proceeds unlabeled — the label never breaks a run.
 build_label_vf() {
-  LABEL_VF=""
+  LABEL_OK=""; LABEL_FONT=""
   [[ -n "$LABEL" && -z "$DRY_RUN" ]] || return 0
   command -v ffmpeg >/dev/null 2>&1 || return 0
   local font filt
@@ -336,10 +346,19 @@ build_label_vf() {
   filt="drawtext=fontfile=${font}:text='%{pts\\:hms}':x=10:y=10:fontsize=20:fontcolor=yellow:box=1:boxcolor=black@0.5"
   if ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=black:s=64x64:d=0.1" \
        -vf "$filt" -frames:v 1 -f null - >/dev/null 2>&1; then
-    LABEL_VF=",$filt"
+    LABEL_OK=1; LABEL_FONT="$font"   # label segments are built on demand by label_seg <offset>
   else
     echo "Note: --label isn't supported by this ffmpeg/font; skipping timestamp burn-in." >&2
   fi
+}
+
+# label_seg <offset-seconds> — echo a drawtext segment that burns ABSOLUTE source time, by adding
+# <offset> (the clip seek point) to the frame pts (issues #51/#52/#53). Empty if --label is off or
+# unsupported, so it's safe to splice into any -vf chain.
+label_seg() {
+  [[ -n "${LABEL_OK:-}" ]] || return 0
+  local off="${1:-0}"
+  printf '%s' ",drawtext=fontfile=${LABEL_FONT}:text='%{pts\\:hms\\:${off}}':x=10:y=10:fontsize=20:fontcolor=yellow:box=1:boxcolor=black@0.5"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -1098,6 +1117,8 @@ fi
 
 # prepare the optional --label timestamp-burn-in segment (probed; empty if unsupported).
 build_label_vf
+# ADDED (1.0.3): offset for absolute-time labels in --start-seeked modes (dense/scene/diff/contact).
+LBL_OFF="$(to_seconds "${START:-0}")"
 
 # --compare-videos a,b — ONE stacked contact sheet, a row per clip on a
 # NORMALIZED phase axis (N columns spread across each clip's own duration), so two clips of
@@ -1117,7 +1138,8 @@ run_compare_videos() {
   local fa fb
   fa="$(awk -v c="$cols" -v d="${da:-0}" 'BEGIN{ printf "%.6f", (d>0)?c/d:c }')"
   fb="$(awk -v c="$cols" -v d="${db:-0}" 'BEGIN{ printf "%.6f", (d>0)?c/d:c }')"
-  local fc="[0:v]fps=${fa},scale=${TILEW}:-1${LABEL_VF},tile=${cols}x1[a];[1:v]fps=${fb},scale=${TILEW}:-1${LABEL_VF},tile=${cols}x1[b];[a][b]vstack=inputs=2"
+  local _lbl; _lbl="$(label_seg 0)"   # CHANGED (1.0.3): each clip starts at t=0; absolute = pts
+  local fc="[0:v]fps=${fa},scale=${TILEW}:-1${_lbl},tile=${cols}x1[a];[1:v]fps=${fb},scale=${TILEW}:-1${_lbl},tile=${cols}x1[b];[a][b]vstack=inputs=2"
   if [[ -n "$DRY_RUN" ]]; then
     printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error -i "$a" -i "$b" -filter_complex "$fc" -frames:v 1 "${OUT}/compare.png"
     printf '\n'
@@ -1230,6 +1252,11 @@ if [[ -n "$TIMESTAMPS" ]]; then
   # Timestamp mode: for each moment, a dense burst over a +/-window plus a before/after
   # strip (first & last burst frame side by side) — ideal for showing a transient.
   set_vfr_flag
+  # ADDED (1.0.3, issue #53): a window narrower than one frame interval extracts 0 frames —
+  # warn instead of silently producing nothing.
+  if [[ -z "$DRY_RUN" ]] && awk -v w="$WINDOW" -v f="$FPS" 'BEGIN{ exit !((2*w*f) < 1) }'; then
+    echo "Warning: --window ${WINDOW}s @ ${FPS}fps spans <1 frame per burst — likely 0 frames; raise --window or --fps." >&2
+  fi
   IFS=',' read -r -a _ts <<<"$TIMESTAMPS"
   i=0
   for t in "${_ts[@]}"; do
@@ -1242,7 +1269,7 @@ if [[ -n "$TIMESTAMPS" ]]; then
     echo "Timestamp $t -> burst [$bstart,$bend] @${FPS}fps -> $OUT/ts${idx}_*" >&2
     run_ff -hide_banner -loglevel error \
       -ss "$bstart" -to "$bend" -i "$VIDEO" "${VFR[@]}" \
-      -vf "fps=${FPS},${CROP_VF}scale=${FRAMEW}:-1${LABEL_VF}" \
+      -vf "fps=${FPS},${CROP_VF}scale=${FRAMEW}:-1$(label_seg "$bstart")" \
       "$OUT/ts${idx}_%03d.png"
     # Before/after strip from the first and last frame of the burst. (Skipped in --dry-run,
     # since it depends on the frames the burst above would have written.)
@@ -1264,7 +1291,7 @@ elif [[ -n "$CONTACT" ]]; then
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "${SELECT},${CROP_VF}scale=${TILEW}:-1${LABEL_VF},tile=${COLS}x${ROWS}" \
+    -vf "${SELECT},${CROP_VF}scale=${TILEW}:-1$(label_seg "$LBL_OFF"),tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
 elif [[ -n "$DIFF" ]]; then
   # frame-difference mode — each frame is |this − previous| (tblend), so motion lights
@@ -1273,21 +1300,21 @@ elif [[ -n "$DIFF" ]]; then
   echo "Frame-diff mode (fps=$FPS) -> $OUT (bright = changed pixels between frames)" >&2
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "fps=${FPS},${CROP_VF}tblend=all_mode=difference,scale='min(${MAXW},iw)':-1${LABEL_VF}" \
+    -vf "fps=${FPS},${CROP_VF}tblend=all_mode=difference,scale='min(${MAXW},iw)':-1$(label_seg "$LBL_OFF")" \
     "$OUT/diff_%04d.png"
 elif [[ -n "$SCENE" ]]; then
   echo "Scene-change mode (threshold=$SCENE) -> $OUT" >&2
   # cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
-    -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1${LABEL_VF}" \
+    -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1$(label_seg "$LBL_OFF")" \
     "$OUT/scene_%04d.png"
 else
   echo "Dense mode (fps=$FPS) -> $OUT" >&2
   # cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
     "${PRE_ARGS[@]}" -i "$VIDEO" \
-    -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1${LABEL_VF}" \
+    -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1$(label_seg "$LBL_OFF")" \
     "$OUT/frame_%04d.png"
 fi
 

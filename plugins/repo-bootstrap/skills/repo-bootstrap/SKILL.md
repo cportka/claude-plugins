@@ -19,8 +19,12 @@ Local-CLI-only use doesn't need this: `/plugin marketplace add cportka/claude-pl
 2. **Run** the script:
    ```
    ${CLAUDE_PLUGIN_ROOT}/skills/repo-bootstrap/scripts/bootstrap-repo.sh \
-     --plugin <name> [--plugin <name> ...] [--ci] [--dir <repo-root>]
+     --plugin <name> [--plugin <name> ...] [--ci] [--dir <repo-root>] [--dry-run] [--auto-update]
    ```
+   `--dry-run` previews without writing. `--auto-update` also sets `"autoUpdate": true` on the
+   marketplace entry — but note that for third-party marketplaces it currently refreshes the
+   catalog without re-installing plugin code (anthropics/claude-code#61854); tell the user the
+   reliable way to get a published fix is `claude plugin update <name>@<marketplace>`.
    It merges into any existing `.claude/settings.json` (never clobbers other keys), is
    idempotent, and won't overwrite a CI workflow without `--force`. If the existing settings
    file is invalid JSON it stops rather than risk losing data.

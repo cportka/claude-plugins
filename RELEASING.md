@@ -15,6 +15,17 @@ there's no MCP tool for repo settings / external submissions) — they're for a 
    for the marketplace) clean for every plugin.
 5. Open the PR, let CI (`.github/workflows/validate.yml`) go green, squash-merge to `main`.
 
+### Versioning model (the single source of truth)
+
+Each plugin's `.claude-plugin/plugin.json` `version` **is** the source of truth. A plugin's
+version equals **the marketplace release in which its files last changed** — so versions can differ
+across plugins (e.g. `video-bug-analyzer` 1.0.3 while a long-untouched plugin stays 1.0.0), and a
+plugin's version may "skip" releases it wasn't part of. `marketplace.json` entries deliberately
+carry **no** version (the catalog inherits it from each `plugin.json`), and the single
+`CHANGELOG.md` is keyed by the marketplace release, noting per-plugin bumps inside each entry.
+Two CI guards keep this honest: **version-bump-guard** (a changed plugin must bump its version) and
+the test-suite check that every `plugin.json` version has a matching `## [x.y.z]` CHANGELOG heading.
+
 ## 2. Tag the release **(manual)**
 
 Tags are cut **only** for real releases (not per-RC). After the release PR is merged to `main`:

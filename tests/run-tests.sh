@@ -235,6 +235,26 @@ if [[ -n "$_hdr_ver" ]] && grep -qF "## [$_hdr_ver]" CHANGELOG.md; then
 else
   fail "no CHANGELOG '## [$_hdr_ver]' section for the README version"
 fi
+# P0-2: every plugin.json version must have a matching '## [version]' CHANGELOG heading, so the
+# tag-driven release notes are never empty for a shipped plugin version.
+for pj in plugins/*/.claude-plugin/plugin.json; do
+  pv="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$pj")"
+  pn="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$pj")"
+  if grep -qF "## [$pv]" CHANGELOG.md; then
+    pass "CHANGELOG documents $pn $pv"
+  else
+    fail "no CHANGELOG '## [$pv]' heading for $pn (every plugin version needs release notes)"
+  fi
+done
+# extract-frames.sh embeds VBA_VERSION as a standalone fallback (issues #51/#52/#53); it must
+# stay in lockstep with the plugin's plugin.json so the feedback link never misreports the version.
+_vba_pj="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"
+_vba_emb="$(sed -n 's/^VBA_VERSION="\([^"]*\)".*/\1/p' "$SCRIPT" | head -n1)"
+if [[ -n "$_vba_emb" && "$_vba_emb" == "$_vba_pj" ]]; then
+  pass "extract-frames.sh embedded VBA_VERSION ($_vba_emb) matches plugin.json"
+else
+  fail "VBA_VERSION '$_vba_emb' != plugin.json '$_vba_pj' (update the constant in extract-frames.sh)"
+fi
 
 # --- 4d. GitHub Pages landing page ----------------------------------------------------
 section "GitHub Pages site"

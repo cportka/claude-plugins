@@ -5,6 +5,45 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.0.3] - 2026-06-24
+
+Acting on the round-2 dogfood feedback (#46, #48, #49, #51, #52, #53) and a release-hygiene
+review. `video-bug-analyzer` → 1.0.3, `repo-bootstrap` → 1.0.3 (`app-website-evaluator` unchanged
+at 1.0.1). A plugin's version is the marketplace release in which it last changed (see RELEASING).
+
+### Fixed (video-bug-analyzer → 1.0.3)
+- **`--label` now burns ABSOLUTE source time**, not burst-relative — timestamp bursts add the
+  burst start (and `--start`-seeked dense/scene/diff/contact add `--start`) to the drawtext pts, so
+  a label reads `00:01:18` instead of `00:00:01.5`. Raised in #51/#52/#53.
+- **Feedback link no longer reports `version=unknown`** when the script runs standalone (fetched
+  raw, no repo tree): an embedded `VBA_VERSION` is the fallback, kept in lockstep with `plugin.json`
+  by a test. (#51/#52/#53)
+- **A narrow `--timestamps` window now warns** ("--window 0.1s @ 2fps spans <1 frame … raise
+  --window or --fps") instead of silently extracting 0 frames. (#53)
+
+### Added (repo-bootstrap → 1.0.3)
+- **`--auto-update`** sets `"autoUpdate": true` on the marketplace entry (verified shape against the
+  settings schema), merging without clobbering existing keys. Documented with the #61854 caveat
+  that, for third-party marketplaces, it currently refreshes the catalog but may not re-install
+  plugin code — `claude plugin update` remains the reliable path.
+- **Hardened `locate_marketplace()`**: walks upward (bounded) to find `marketplace.json` instead of
+  a brittle fixed `../../../../../`, so resolution works from the installed-plugin cache layout too.
+
+### Added (repo / release hygiene)
+- **CI `version-bump-guard`**: a plugin whose files change must bump its `plugin.json` version, so
+  fixes can't ship invisibly (P0-1).
+- **CHANGELOG consistency check**: every `plugin.json` version must have a `## [x.y.z]` heading, so
+  tag-driven release notes are never empty (P0-2).
+- A **PR template** with a release checklist; an **Updating** section in the README (per-plugin
+  `claude plugin update`, the auto-update toggle + #61854 caveat, kill switches); and a documented
+  **versioning model** in RELEASING.md.
+
+### Docs (web-session / discoverability, #51/#52)
+- README documents the explicit `Skill(skill="video-bug-analyzer:video-bug-analysis")` invocation
+  and a **standalone / not-installed** path (fetch `extract-frames.sh` raw and run it) — the
+  enabled-but-not-loaded behavior on Claude Code web is a platform limitation, not something the
+  plugin can fix from inside a session.
+
 ## [1.0.2] - 2026-06-22
 
 Release tooling and submission prep — no plugin code changed (`video-bug-analyzer` 1.0.0,
@@ -619,6 +658,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.0.3]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.3
 [1.0.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.2
 [1.0.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.1
 [1.0.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.0

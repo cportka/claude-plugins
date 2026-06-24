@@ -23,6 +23,11 @@
 #   --dir <path>               Target repo root. Default: current directory.
 #   --force                    Overwrite the CI workflow if it already exists.
 #   --dry-run                  Print the resulting settings.json and planned actions; write nothing.
+#   --auto-update              Also set "autoUpdate": true on the marketplace entry so Claude Code
+#                              refreshes the catalog on startup. CAVEAT: as of mid-2026 this is
+#                              reported to refresh catalog metadata but NOT re-install plugin code
+#                              for third-party marketplaces (anthropics/claude-code#61854) — the
+#                              reliable way to get a published fix is `claude plugin update <name>`.
 #   -h, --help                 Show this help.
 #
 # Examples:
@@ -40,6 +45,7 @@ DIR="."
 FORCE=""
 LIST=""   # --list flag
 DRY_RUN=""   # --dry-run previews without writing
+AUTO_UPDATE=""   # ADDED (1.0.3): --auto-update sets "autoUpdate": true on the marketplace entry
 
 # resolve where this script lives, so we can find the marketplace manifest when the
 # script is run from a checkout of the marketplace repo.
@@ -54,9 +60,17 @@ locate_marketplace() {
   local c
   for c in \
     "${VBA_MARKETPLACE_JSON:-}" \
-    "$DIR/.claude-plugin/marketplace.json" \
-    "$SCRIPT_DIR/../../../../../.claude-plugin/marketplace.json"; do
+    "$DIR/.claude-plugin/marketplace.json"; do
     [[ -n "$c" && -f "$c" ]] && { printf '%s\n' "$c"; return 0; }
+  done
+  # CHANGED (1.0.3, P2-1): walk upward from this script (bounded) instead of a brittle fixed
+  # "../../../../../" — the depth differs between a repo checkout and the installed-plugin cache
+  # (.../cache/<marketplace>/<plugin>/<version>/...). Find the nearest enclosing marketplace.json.
+  local d="$SCRIPT_DIR" i
+  for ((i = 0; i < 8; i++)); do
+    [[ -f "$d/.claude-plugin/marketplace.json" ]] && { printf '%s\n' "$d/.claude-plugin/marketplace.json"; return 0; }
+    d="$(dirname "$d")"
+    [[ "$d" == "/" ]] && break
   done
   return 1
 }
@@ -85,6 +99,7 @@ while [[ $# -gt 0 ]]; do
     --dir)   DIR="${2:-}"; shift 2 ;;
     --force) FORCE="1"; shift ;;
     --dry-run) DRY_RUN="1"; shift ;;   # ADDED (1.0.0)
+    --auto-update) AUTO_UPDATE="1"; shift ;;   # ADDED (1.0.3): set autoUpdate on the marketplace
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
@@ -131,7 +146,7 @@ SETTINGS="$SETTINGS_DIR/settings.json"
 # any keys that are already there. python3 does the JSON read/merge/write safely.
 # under --dry-run, print the merged result instead of writing it.
 SETTINGS="$SETTINGS" MARKET_NAME="$MARKET_NAME" MARKET_REPO="$MARKET_REPO" \
-DRY_RUN="$DRY_RUN" \
+DRY_RUN="$DRY_RUN" AUTO_UPDATE="$AUTO_UPDATE" \
 PLUGINS_CSV="$(IFS=,; echo "${PLUGINS[*]:-}")" \
 python3 <<'PY'
 import json, os
@@ -140,6 +155,7 @@ settings = os.environ["SETTINGS"]
 name = os.environ["MARKET_NAME"]
 repo = os.environ["MARKET_REPO"]
 dry = bool(os.environ.get("DRY_RUN"))
+auto_update = bool(os.environ.get("AUTO_UPDATE"))
 plugins = [p for p in os.environ.get("PLUGINS_CSV", "").split(",") if p]
 
 data = {}
@@ -153,7 +169,11 @@ if os.path.exists(settings):
             )
 
 markets = data.setdefault("extraKnownMarketplaces", {})
-markets[name] = {"source": {"source": "github", "repo": repo}}
+# Merge into any existing entry so other keys (incl. a user-set autoUpdate) survive (P1-1).
+entry = markets.setdefault(name, {})
+entry["source"] = {"source": "github", "repo": repo}
+if auto_update:                      # only set when --auto-update is passed; never clobber otherwise
+    entry["autoUpdate"] = True
 
 enabled = data.setdefault("enabledPlugins", {})
 for p in plugins:

@@ -7,7 +7,11 @@ body:
     attributes:
       value: |
         Thanks for the feedback! The more concrete the detail, the faster it turns into a fix.
-        For ffmpeg problems, please paste the `ffmpeg: ...` line the extractor prints at start.
+        For ffmpeg problems (video-bug-analyzer), please paste the `ffmpeg: ...` line the
+        extractor prints at start.
+  # NOTE: the options below (minus "other / not sure") must match the plugins in
+  # .claude-plugin/marketplace.json — a test in tests/run-tests.sh enforces this, so adding a
+  # plugin without updating this list fails CI. Keep them in marketplace order.
   - type: dropdown
     id: plugin
     attributes:
@@ -15,6 +19,8 @@ body:
       options:
         - video-bug-analyzer
         - repo-bootstrap
+        - app-website-evaluator
+        - tab-chord-formatter
         - other / not sure
     validations:
       required: true

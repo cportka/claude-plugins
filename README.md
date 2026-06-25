@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 1.0.3 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+> **Version:** 1.1.0 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -14,6 +14,7 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 | [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.0.3 | Analyze a screen recording — extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips) and reason over them, plus analysis modes: black-screen detection, ROI OCR, feature measurement, palettes, cross-clip diff/compare, cadence, motion & saturation timelines. |
 | [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.0.3 | Onboard a repo to this marketplace — safely merge `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run` and a one-paste `/plugin` CLI fallback. |
 | [`app-website-evaluator`](./plugins/app-website-evaluator) | 1.0.1 | Evaluate an app/website — SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth (communities to join/submit to, PR wins) — tailored to the site's type and community. |
+| [`tab-chord-formatter`](./plugins/tab-chord-formatter) | 1.0.0 | Format a messy guitar tab/chord sheet into a clean, standard, readable layout — standardized `[Section]` labels, chords aligned over the right lyrics, a tidy metadata header (Title/Artist/Capo/Key/Tuning), and well-formed 6-line ASCII tab blocks. |
 
 ## Add a plugin
 
@@ -81,6 +82,20 @@ E=plugins/app-website-evaluator/skills/app-evaluation/scripts/evaluate-site.sh
 "$E" --url https://example.com     # live: crawlability, SEO, social, security headers, …
 "$E" --dir ./dist                  # a local build (no network)
 ```
+
+**tab-chord-formatter** — paste or link a messy guitar tab / chord sheet and ask Claude to clean
+it up; it runs the `tab-formatting` skill (normalize → re-align chords → output standard plain
+text). Or run the deterministic normalizer directly:
+
+```
+F=plugins/tab-chord-formatter/skills/tab-formatting/scripts/format-tab.py
+"$F" messy-tab.txt        # decode HTML/entities, standardize [Section]s, tidy whitespace
+cat messy-tab.txt | "$F"  # or from stdin
+```
+
+The script does only the safe mechanical cleanup (it never touches a line's internal alignment);
+the skill does the judgment — re-aligning chords over the right syllables and inferring structure.
+Needs `python3`.
 
 **repo-bootstrap** — see [Add a plugin](#add-a-plugin). Flags: `--plugin` (repeatable),
 `--marketplace-name`, `--marketplace-repo`, `--ci`, `--dir`, `--force`, `--list`, `--dry-run`,

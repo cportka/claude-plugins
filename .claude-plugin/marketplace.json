@@ -27,6 +27,13 @@
       "description": "Evaluate an app or website — SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth (communities to join/submit to, PR wins) — tailored to the site's type and community.",
       "category": "analysis",
       "tags": ["seo", "audit", "website", "growth", "performance", "accessibility"]
+    },
+    {
+      "name": "tab-chord-formatter",
+      "source": "./plugins/tab-chord-formatter",
+      "description": "Format a messy guitar tab or chord sheet into a clean, standard, readable layout. Standardizes [Section] labels, aligns chords over the right lyric syllables, tidies a metadata header (Title/Artist/Capo/Key/Tuning) and 6-line ASCII tab blocks — a deterministic script does the cleanup, the skill applies judgment to re-align and infer structure.",
+      "category": "music",
+      "tags": ["tab", "chords", "guitar", "music", "lyrics", "formatter"]
     }
   ]
 }

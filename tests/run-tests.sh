@@ -220,6 +220,47 @@ for tmpl in .github/ISSUE_TEMPLATE/*.yml; do
 done
 [[ $it_found -eq 1 ]] || skip "no issue form templates"
 
+# The Plugin-feedback form's `plugin` dropdown must list every marketplace plugin (plus the
+# "other / not sure" escape) — so the form can't silently fall behind a newly added plugin.
+# Parsed without a YAML lib (keeps zero deps, like the checks above): pull the `id: plugin`
+# dropdown's `options:` items and compare the set to marketplace.json's plugin names.
+_FEEDBACK_FORM=".github/ISSUE_TEMPLATE/plugin-feedback.yml"
+if [[ -s "$_FEEDBACK_FORM" ]]; then
+  if python3 - "$_FEEDBACK_FORM" "$MP" <<'PY'
+import json, re, sys
+form, mp = sys.argv[1], sys.argv[2]
+plugins = {p["name"] for p in json.load(open(mp))["plugins"]}
+opts, in_plugin, in_opts = [], False, False
+for ln in open(form).read().splitlines():
+    s = ln.strip()
+    if re.match(r"^id:\s*plugin\b", s):
+        in_plugin = True
+        continue
+    if in_plugin:
+        if not in_opts:
+            if s.startswith("options:"):
+                in_opts = True
+            continue
+        m = re.match(r"^-\s+(.*\S)\s*$", s)
+        if m:
+            opts.append(m.group(1).strip())
+        elif s:               # a non-list line (e.g. validations:) ends the options block
+            break
+assert opts, "no `plugin` dropdown options found in the feedback form"
+ESCAPE = {"other / not sure"}
+listed = set(opts) - ESCAPE
+assert ESCAPE <= set(opts), "feedback form is missing the 'other / not sure' escape option"
+assert listed == plugins, (
+    f"feedback form plugin dropdown {sorted(listed)} != marketplace plugins {sorted(plugins)} "
+    "— update .github/ISSUE_TEMPLATE/plugin-feedback.yml")
+PY
+  then
+    pass "feedback form plugin dropdown is in sync with marketplace.json"
+  else
+    fail "feedback form plugin dropdown out of sync with marketplace.json (see error above)"
+  fi
+fi
+
 # --- 4c2. release automation ----------------------------------------------------------
 section "release automation"
 RW=".github/workflows/release.yml"
@@ -1024,6 +1065,64 @@ if [[ "$(CLAUDE_PLUGIN_ROOT=plugins/video-bug-analyzer bash "$EXTRACT" --version
   pass "--version reports $_ver_json"
 else
   fail "--version did not report the plugin.json version"
+fi
+
+# --- tab-chord-formatter: format-tab.py -----------------------------------------------
+# format-tab.py is python, so the bash -n / shellcheck sections (which glob *.sh) skip it;
+# give it its own behavioral section. It does the deterministic cleanup only — section-label
+# standardization, HTML-entity decode, blank-line collapse — and must NEVER touch a line's
+# internal alignment (that spacing is the chord/lyric/tab columns) and must be idempotent.
+section "tab-chord-formatter format-tab.py"
+FMT="plugins/tab-chord-formatter/skills/tab-formatting/scripts/format-tab.py"
+if [[ ! -f "$FMT" ]]; then
+  fail "format-tab.py not found: $FMT"
+elif ! command -v python3 >/dev/null 2>&1; then
+  skip "python3 not installed (format-tab.py)"
+else
+  if [[ -x "$FMT" ]]; then pass "format-tab.py is executable"; else fail "format-tab.py not executable (chmod +x)"; fi
+  # --help exits 0.
+  if python3 "$FMT" --help >/dev/null 2>&1; then
+    pass "format-tab.py --help exits 0"
+  else
+    fail "format-tab.py --help did not exit 0"
+  fi
+  # Messy input: CRLF, "VERSE 1:" / "[intro]" / "chorus:" labels, HTML entities, an
+  # internally-aligned chord/lyric pair, extra blank lines.
+  _ftmp="$(mktemp -d)"
+  printf 'VERSE 1:\r\nG          C\r\nWell I met &amp; saw you\r\n\r\n\r\n[intro]\r\nchorus:\r\nLa la &#39;hey&#39;\r\n\r\n\r\n' >"$_ftmp/in.txt"
+  _out="$(python3 "$FMT" "$_ftmp/in.txt")"
+  # Section labels standardized to [Title Case].
+  if grep -qx '\[Verse 1\]' <<<"$_out" && grep -qx '\[Intro\]' <<<"$_out" && grep -qx '\[Chorus\]' <<<"$_out"; then
+    pass "format-tab.py standardizes section labels (VERSE 1/[intro]/chorus: -> [Verse 1]/[Intro]/[Chorus])"
+  else
+    fail "format-tab.py did not standardize section labels"
+  fi
+  # HTML entities decoded.
+  if grep -qF "Well I met & saw you" <<<"$_out" && grep -qF "La la 'hey'" <<<"$_out"; then
+    pass "format-tab.py decodes HTML entities"
+  else
+    fail "format-tab.py did not decode HTML entities"
+  fi
+  # Internal alignment preserved exactly (the chord line's 10 spaces before C).
+  if grep -qxF 'G          C' <<<"$_out"; then
+    pass "format-tab.py preserves a line's internal alignment"
+  else
+    fail "format-tab.py mangled internal alignment"
+  fi
+  # No run of two blank lines remains.
+  if grep -Pzq '\n\n\n' <<<"$_out"; then
+    fail "format-tab.py left a run of blank lines"
+  else
+    pass "format-tab.py collapses runs of blank lines"
+  fi
+  # Idempotent: formatting the output again changes nothing.
+  printf '%s\n' "$_out" >"$_ftmp/o1.txt"
+  if diff -q <(python3 "$FMT" "$_ftmp/o1.txt") "$_ftmp/o1.txt" >/dev/null 2>&1; then
+    pass "format-tab.py is idempotent (format twice == once)"
+  else
+    fail "format-tab.py is not idempotent"
+  fi
+  rm -rf "$_ftmp"
 fi
 
 # --- Summary --------------------------------------------------------------------------

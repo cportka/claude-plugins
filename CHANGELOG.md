@@ -5,6 +5,39 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.1.1] - 2026-06-25
+
+Extends `repo-bootstrap` to install the **Portka standard setup**, so a repo (and your machine)
+starts already knowing how we work — no re-explaining the process each session. `repo-bootstrap`
+→ 1.1.1 (other plugins unchanged: `video-bug-analyzer` 1.0.3, `app-website-evaluator` 1.0.1,
+`tab-chord-formatter` 1.0.0). A plugin's version is the marketplace release in which it last
+changed (see RELEASING).
+
+### Added (repo-bootstrap → 1.1.1)
+- **`--portka-standard`** installs the standard setup in one run:
+  - a **workflow `CLAUDE.md`** (a managed block, idempotent) encoding the Portka process — update
+    `main` first, branch for every change, tests + CI then a PR, merge on green, and hand back a
+    short PR link the user deletes as confirmation;
+  - a **permissions allowlist** for the git/`gh` commands that workflow needs, merged into
+    `settings.json` without clobbering existing keys (so the back-and-forth isn't gated on
+    re-approving the same tools);
+  - a repo **`VERSION` / `CHANGELOG.md` / `README.md`** version triplet on **SemVer**
+    (`MAJOR.MINOR.PATCH`), kept in sync by a **basic `tests/run-tests.sh`** that *enforces* valid
+    SemVer + that the three agree (and runs any `tests/cases/*.sh`), plus **CI** on every push/PR.
+- **`--scope user|project|both`** (default `both`) chooses where the workflow `CLAUDE.md` +
+  permissions land: `~/.claude` (your machine), committed `./.claude` (web sessions + team), or
+  both. The version/sync scaffold is always written to the repo, and existing
+  `VERSION`/`CHANGELOG`/`README` are never clobbered (the test runner is overwritten only with
+  `--force`).
+- **`--home <path>`** overrides the home dir for user-scope writes (keeps the test suite off your
+  real `~/.claude`).
+
+### Added (tests)
+- New `repo-bootstrap --portka-standard` coverage: project + user scaffolding, permissions merged
+  into both settings while the marketplace/plugins survive, **the scaffolded suite passes on a
+  fresh repo and fails once the version sync is broken** (proving enforcement), managed-block
+  idempotency, and `--dry-run` writing nothing.
+
 ## [1.1.0] - 2026-06-25
 
 A new plugin joins the marketplace, so this is a MINOR bump (`video-bug-analyzer`,
@@ -688,6 +721,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.1.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.1
 [1.1.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.0
 [1.0.3]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.3
 [1.0.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.2

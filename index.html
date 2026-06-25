@@ -119,7 +119,9 @@
         <p>
           Onboard a repo to this marketplace: writes or merges <code>.claude/settings.json</code>
           (and optional CI) so a web session loads the plugins on start. Idempotent and
-          non-clobbering.
+          non-clobbering. With <code>--portka-standard</code>, also installs a workflow
+          <code>CLAUDE.md</code>, a git/gh permissions allowlist, and an enforced
+          SemVer VERSION/CHANGELOG/README sync with a basic test suite.
         </p>
         <p class="links"><a href="https://github.com/cportka/claude-plugins/tree/main/plugins/repo-bootstrap">Details &rarr;</a></p>
       </div>

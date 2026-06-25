@@ -5,6 +5,50 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.1.2] - 2026-06-25
+
+Bundles the feedback that arrived right after 1.1.1: makes `--portka-standard` safe on a mature
+repo (#59) and surfaces FPS-stutter analysis in `video-bug-analyzer` (#56). `repo-bootstrap` →
+1.1.2, `video-bug-analyzer` → 1.1.2 (`app-website-evaluator` 1.0.1, `tab-chord-formatter` 1.0.0
+unchanged). Also closes #55 — its release-hygiene recommendations all shipped back in 1.0.3.
+
+### Fixed (repo-bootstrap → 1.1.2, #59)
+- **`--portka-standard` no longer regresses a mature repo.** It now **binds the version sync to the
+  repo's existing source of truth** — `package.json` / `pyproject.toml` / `Cargo.toml` / a bare
+  `VERSION` / a README `**Version:**` line — instead of always seeding `VERSION=0.1.0`. On a repo
+  whose `package.json` is `0.22.x`, the old scaffold seeded a contradictory `VERSION` and shipped a
+  **red** `run-tests.sh` (it grepped for a `## [0.1.0]` / `**Version:** 0.1.0` that didn't exist);
+  the scaffolded runner now reads the native version and checks the README line **only when one
+  exists**.
+- **The scaffolded CI no longer collides with existing CI.** It is written as a specifically-named
+  `portka-standard.yml` and is **skipped when the repo already has workflows** (with a note to wire
+  the suite into your CI) unless `--force`.
+
+### Added (repo-bootstrap → 1.1.2, #59)
+- **`--print-only`** prints the `.claude/settings.json` (and, with `--portka-standard`, the
+  `CLAUDE.md` workflow block) to stdout for you to **create by hand** — a human-authored write isn't
+  subject to Claude Code's auto-mode permission classifier, which can refuse an *agent*-written
+  `.claude/settings.json` in a web session (the exact denial #59 reported). The skill now documents
+  asking for approval and falling back to `--print-only`.
+
+### Added (video-bug-analyzer → 1.1.2, #56)
+- **`--stutter` / `--fps-drops`** (aliases for `--cadence`) make the stutter / dropped-frame timeline
+  discoverable by the name people reach for, and the mode now also reports the **longest freeze
+  gaps** (sustained frozen spans, e.g. `@1.4s frozen for 633 ms`) via `freezedetect` — quantifying
+  the "multi-hundred-ms gaps" of an FPS stall, alongside the existing effective-fps-per-window.
+  (#56 was filed from `1.0.0-rc.6`, before `--cadence` shipped; this closes the discoverability +
+  freeze-gap gap.)
+
+### Closed
+- **#55** (release-hygiene recommendations) — every item shipped in 1.0.3: `version-bump-guard` and
+  the CHANGELOG-consistency check (P0), `--auto-update` + the README **Updating** section (P1),
+  hardened `locate_marketplace()` and the PR template (P2).
+
+### Repo
+- Dogfood: this repo now carries a committed `.claude/CLAUDE.md` (the Portka workflow) written by
+  `repo-bootstrap --portka-standard`. New tests cover native-version binding, the mature-repo
+  no-clobber path, `--print-only`, CI-collision skipping, and the `--stutter` freeze-gap timeline.
+
 ## [1.1.1] - 2026-06-25
 
 Extends `repo-bootstrap` to install the **Portka standard setup**, so a repo (and your machine)
@@ -721,6 +765,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.1.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.2
 [1.1.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.1
 [1.1.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.0
 [1.0.3]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.3

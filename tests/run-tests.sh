@@ -653,6 +653,33 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a cadence test clip (--cadence)"
     fi
+    # --stutter (alias for --cadence) + freeze gaps: a 1s FROZEN span should be reported as a freeze
+    # gap, and the alias must still emit the cadence CSV (issue #56). Needs python3 + freezedetect.
+    if ! command -v python3 >/dev/null 2>&1; then
+      skip "python3 not installed (--stutter e2e)"
+    elif ffmpeg -hide_banner -loglevel error \
+         -f lavfi -i "testsrc=size=160x120:rate=20:duration=1" \
+         -f lavfi -i "color=c=blue:size=160x120:rate=20:duration=1" \
+         -f lavfi -i "testsrc=size=160x120:rate=20:duration=1" \
+         -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1[v]" -map "[v]" "$tmp/stall.mp4" -y 2>/dev/null; then
+      _st="$(bash "$SCRIPT" --video "$tmp/stall.mp4" --stutter 2>"$tmp/st.err" || true)"
+      if [[ "$(head -n1 <<<"$_st")" == "t,unique_frames,fps" ]] && grep -qi 'frozen for' "$tmp/st.err"; then
+        pass "--stutter alias works and reports a freeze gap on a frozen span"
+      else
+        fail "--stutter did not report a freeze gap (err: $(grep -i 'freeze\|frozen' "$tmp/st.err" | head -1))"
+      fi
+      # a continuously-changing clip should report no sustained freeze gaps.
+      if ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=size=160x120:rate=20:duration=2" "$tmp/cont.mp4" -y 2>/dev/null; then
+        bash "$SCRIPT" --video "$tmp/cont.mp4" --stutter 2>"$tmp/st2.err" >/dev/null || true
+        if grep -qi 'No sustained freeze gaps' "$tmp/st2.err"; then
+          pass "--stutter reports no freeze gaps on a continuous clip"
+        else
+          fail "--stutter freeze-gap negative case not as expected"
+        fi
+      fi
+    else
+      skip "could not build a stall test clip (--stutter)"
+    fi
     # --motion: a static segment then a moving one should read ~0 motion early and a clear spike
     # later (issue #39). Build gray(1s)+testsrc(1s). Needs python3.
     if ! command -v python3 >/dev/null 2>&1; then
@@ -864,7 +891,7 @@ PY
   fi
   # Repo sync scaffold present (version triplet + enforcing suite + CI).
   if [[ -f "$ps/VERSION" && -f "$ps/CHANGELOG.md" && -f "$ps/README.md" \
-        && -x "$ps/tests/run-tests.sh" && -f "$ps/.github/workflows/validate.yml" ]]; then
+        && -x "$ps/tests/run-tests.sh" && -f "$ps/.github/workflows/portka-standard.yml" ]]; then
     pass "portka-standard scaffolds VERSION + CHANGELOG + README + tests + CI"
   else
     fail "portka-standard did not scaffold the full version/sync + CI set"
@@ -898,6 +925,46 @@ PY
     fail "portka-standard --dry-run wrote files"
   fi
   rm -rf "$ps" "$ph" "$pd" "$phd"
+else
+  fail "bootstrap script not found: $BOOTSTRAP"
+fi
+
+# --- 11a3. repo-bootstrap #59: native version binding, CI collision, --print-only ------
+section "repo-bootstrap #59 (native version / collision / print-only)"
+if [[ -f "$BOOTSTRAP" ]]; then
+  # A mature repo: package.json 0.22.0, a README with NO **Version:** line, and existing CI.
+  mr="$(mktemp -d)"; mrh="$(mktemp -d)"
+  printf '{\n  "name": "x",\n  "version": "0.22.0"\n}\n' > "$mr/package.json"
+  printf '# x\n\nA mature app. No version line here.\n' > "$mr/README.md"
+  printf '# Changelog\n\n## [0.22.0]\n- stuff\n' > "$mr/CHANGELOG.md"
+  mkdir -p "$mr/.github/workflows"; printf 'name: ci\non: [push]\n' > "$mr/.github/workflows/ci.yml"
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$mr" --home "$mrh" >/dev/null 2>&1
+  # Must NOT seed a conflicting VERSION, and must NOT add a colliding workflow.
+  if [[ ! -f "$mr/VERSION" && ! -f "$mr/.github/workflows/portka-standard.yml" ]]; then
+    pass "portka-standard binds to package.json (no VERSION seed) and skips colliding CI"
+  else
+    fail "portka-standard seeded VERSION or added a colliding workflow on a mature repo"
+  fi
+  # The scaffolded suite must be GREEN on the mature repo (this was the #59 'ships red' regression).
+  if [[ -x "$mr/tests/run-tests.sh" ]] && bash "$mr/tests/run-tests.sh" >/dev/null 2>&1; then
+    pass "scaffolded suite is green on a mature repo (binds to native 0.22.0)"
+  else
+    fail "scaffolded suite is red on a mature repo (#59 regression)"
+  fi
+  rm -rf "$mr" "$mrh"
+
+  # --print-only writes nothing and prints both the settings JSON and the CLAUDE block.
+  po="$(mktemp -d)"; poh="$(mktemp -d)"
+  _po="$(bash "$BOOTSTRAP" --plugin video-bug-analyzer --portka-standard --print-only --dir "$po" --home "$poh" 2>/dev/null || true)"
+  if grep -q 'extraKnownMarketplaces' <<<"$_po" \
+     && grep -q 'Bash(git push' <<<"$_po" \
+     && grep -q 'BEGIN portka-standard' <<<"$_po" \
+     && [[ "$(find "$po" "$poh" -type f | wc -l)" -eq 0 ]]; then
+    pass "--print-only emits settings + CLAUDE block and writes nothing"
+  else
+    fail "--print-only did not emit expected content / wrote files"
+  fi
+  rm -rf "$po" "$poh"
 else
   fail "bootstrap script not found: $BOOTSTRAP"
 fi
@@ -1102,6 +1169,13 @@ if grep -q 'mpdecimate' <<<"$_cad_dry" && grep -q 'showinfo' <<<"$_cad_dry"; the
   pass "--cadence --dry-run prints the mpdecimate command"
 else
   fail "--cadence --dry-run did not print mpdecimate"
+fi
+# --stutter alias resolves to cadence and adds the freezedetect freeze-gap pass (issue #56).
+_stut_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --stutter --dry-run 2>/dev/null || true)"
+if grep -q 'mpdecimate' <<<"$_stut_dry" && grep -q 'freezedetect' <<<"$_stut_dry"; then
+  pass "--stutter --dry-run resolves to cadence + freezedetect"
+else
+  fail "--stutter --dry-run did not print mpdecimate + freezedetect"
 fi
 # --motion --dry-run prints the tblend+signalstats command (issue #39).
 _mot_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --motion --fps 12 --dry-run 2>/dev/null || true)"

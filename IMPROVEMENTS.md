@@ -9,14 +9,17 @@ form and are triaged into the items below.
 
 **Strengths**
 - Repeatable, bug-tuned frame extraction (dense / scene-change / contact-sheet) plus a deep set
-  of analysis modes (blackdetect, OCR, measure, probe, palette, ab/compare, cadence, motion,
-  saturation) — most emit a CSV/report and exit, so they compose.
+  of analysis modes (blackdetect, OCR, measure, probe, palette, ab/compare, cadence/stutter,
+  motion, saturation) — most emit a CSV/report and exit, so they compose.
+- `--stutter`/`--fps-drops` (1.1.2) quantifies FPS stalls: effective-fps-per-window **and** the
+  longest freeze gaps (freezedetect), so a "feels choppy" report becomes timestamps + durations.
 - Contact-sheet reads a whole span in one image (big token saver); the skill states confidence
   and caveats instead of bluffing; ffmpeg is handled (SessionStart hook + on-first-use fallback).
 
 **Weaknesses / cons**
 - Blind between samples: fast flickers / one-frame glitches can be missed.
-- No true timing: race / ordering / duration bugs are poorly served by frames.
+- Timing is partly served now (`--stutter` localizes stalls/freeze gaps), but true race / ordering
+  bugs still need logs or a repro, not frames.
 - Off-screen state (console / network / memory) is invisible — `--ocr-roi` + the state-vs-render
   steer are the in-tool half; the rest needs logs / a repro.
 - Scene-change is heuristic (threshold per clip); many PNGs cost tokens if the window/fps isn't tight.
@@ -54,12 +57,17 @@ form and are triaged into the items below.
   CLI fallback for when the settings write is permission-gated.
 - `--portka-standard` scaffolds the whole standard setup in one run: a workflow `CLAUDE.md`
   (managed block, idempotent), a git/`gh` permissions allowlist merged into `settings.json`, and an
-  enforced `VERSION`/`CHANGELOG`/`README` sync with a basic `tests/run-tests.sh` + CI.
+  enforced SemVer sync that **binds to the repo's native version** (`package.json` / `pyproject.toml`
+  / `Cargo.toml` / `VERSION` / README) with a basic `tests/run-tests.sh` + a collision-aware CI.
+- `--print-only` emits the `settings.json` (+ `CLAUDE.md`) for a human paste when the auto-mode
+  classifier refuses an agent write (#59) — the only reliable path to a committed file in some
+  web sessions.
 
 **Weaknesses / ideas (not yet built)**
 - Requires `python3` (no pure-bash/`jq` fallback yet).
-- The scaffolded sync assumes a top-level `VERSION` file; could also detect/target a
-  `package.json` / `pyproject.toml` version, and offer a vanilla (non-Portka) settings profile.
+- Could emit the version-sync check into the repo's **native test runner** (vitest / pytest /
+  cargo test) instead of a standalone `tests/run-tests.sh`, and offer a vanilla (non-Portka)
+  settings profile.
 
 ## app-website-evaluator
 

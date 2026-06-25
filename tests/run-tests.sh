@@ -1026,6 +1026,64 @@ else
   fail "--version did not report the plugin.json version"
 fi
 
+# --- tab-chord-formatter: format-tab.py -----------------------------------------------
+# format-tab.py is python, so the bash -n / shellcheck sections (which glob *.sh) skip it;
+# give it its own behavioral section. It does the deterministic cleanup only — section-label
+# standardization, HTML-entity decode, blank-line collapse — and must NEVER touch a line's
+# internal alignment (that spacing is the chord/lyric/tab columns) and must be idempotent.
+section "tab-chord-formatter format-tab.py"
+FMT="plugins/tab-chord-formatter/skills/tab-formatting/scripts/format-tab.py"
+if [[ ! -f "$FMT" ]]; then
+  fail "format-tab.py not found: $FMT"
+elif ! command -v python3 >/dev/null 2>&1; then
+  skip "python3 not installed (format-tab.py)"
+else
+  if [[ -x "$FMT" ]]; then pass "format-tab.py is executable"; else fail "format-tab.py not executable (chmod +x)"; fi
+  # --help exits 0.
+  if python3 "$FMT" --help >/dev/null 2>&1; then
+    pass "format-tab.py --help exits 0"
+  else
+    fail "format-tab.py --help did not exit 0"
+  fi
+  # Messy input: CRLF, "VERSE 1:" / "[intro]" / "chorus:" labels, HTML entities, an
+  # internally-aligned chord/lyric pair, extra blank lines.
+  _ftmp="$(mktemp -d)"
+  printf 'VERSE 1:\r\nG          C\r\nWell I met &amp; saw you\r\n\r\n\r\n[intro]\r\nchorus:\r\nLa la &#39;hey&#39;\r\n\r\n\r\n' >"$_ftmp/in.txt"
+  _out="$(python3 "$FMT" "$_ftmp/in.txt")"
+  # Section labels standardized to [Title Case].
+  if grep -qx '\[Verse 1\]' <<<"$_out" && grep -qx '\[Intro\]' <<<"$_out" && grep -qx '\[Chorus\]' <<<"$_out"; then
+    pass "format-tab.py standardizes section labels (VERSE 1/[intro]/chorus: -> [Verse 1]/[Intro]/[Chorus])"
+  else
+    fail "format-tab.py did not standardize section labels"
+  fi
+  # HTML entities decoded.
+  if grep -qF "Well I met & saw you" <<<"$_out" && grep -qF "La la 'hey'" <<<"$_out"; then
+    pass "format-tab.py decodes HTML entities"
+  else
+    fail "format-tab.py did not decode HTML entities"
+  fi
+  # Internal alignment preserved exactly (the chord line's 10 spaces before C).
+  if grep -qxF 'G          C' <<<"$_out"; then
+    pass "format-tab.py preserves a line's internal alignment"
+  else
+    fail "format-tab.py mangled internal alignment"
+  fi
+  # No run of two blank lines remains.
+  if grep -Pzq '\n\n\n' <<<"$_out"; then
+    fail "format-tab.py left a run of blank lines"
+  else
+    pass "format-tab.py collapses runs of blank lines"
+  fi
+  # Idempotent: formatting the output again changes nothing.
+  printf '%s\n' "$_out" >"$_ftmp/o1.txt"
+  if diff -q <(python3 "$FMT" "$_ftmp/o1.txt") "$_ftmp/o1.txt" >/dev/null 2>&1; then
+    pass "format-tab.py is idempotent (format twice == once)"
+  else
+    fail "format-tab.py is not idempotent"
+  fi
+  rm -rf "$_ftmp"
+fi
+
 # --- Summary --------------------------------------------------------------------------
 printf '\n\033[1mSummary:\033[0m %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 if [[ $FAIL -gt 0 ]]; then

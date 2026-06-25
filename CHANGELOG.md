@@ -5,6 +5,28 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.1.0] - 2026-06-25
+
+A new plugin joins the marketplace, so this is a MINOR bump (`video-bug-analyzer`,
+`repo-bootstrap`, `app-website-evaluator` are unchanged; a plugin's version is the marketplace
+release in which it last changed — see RELEASING).
+
+### Added (tab-chord-formatter → 1.0.0, new plugin)
+- A new **`tab-formatting`** skill that turns a messy guitar tab or chord sheet — copied from a
+  web page, a forum, or an email, with broken alignment, HTML entities, and inconsistent labels —
+  into a clean, standard, readable layout: a metadata header (Title / Artist / Capo / Key /
+  Tuning), `[Section]` labels, chords aligned over the right lyric syllables, and well-formed
+  6-line ASCII tab blocks.
+- The split that makes it reliable: a bundled **`format-tab.py`** does only the deterministic,
+  idempotent cleanup (strip HTML tags + decode entities, CRLF→LF, tabs→spaces, trim trailing
+  whitespace **without ever touching a line's internal alignment**, standardize section labels,
+  collapse blank runs); the skill applies the judgment the script can't — re-aligning chords over
+  lyrics, lifting inline `[G]` chords onto a chord line, inferring/numbering sections, and
+  standardizing chord spelling. The canonical format spec lives in the skill's `reference.md`.
+- Tests: a dedicated `format-tab.py` section — section normalization (`VERSE 1` → `[Verse 1]`,
+  `[intro]`/`chorus:` → `[Intro]`/`[Chorus]`), HTML-entity decode, **internal-alignment
+  preservation**, blank-line collapse, idempotency (format twice == once), and `--help` exits 0.
+
 ## [1.0.3] - 2026-06-24
 
 Acting on the round-2 dogfood feedback (#46, #48, #49, #51, #52, #53) and a release-hygiene
@@ -658,6 +680,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.1.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.0
 [1.0.3]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.3
 [1.0.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.2
 [1.0.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.0.1

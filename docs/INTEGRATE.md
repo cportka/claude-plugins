@@ -16,6 +16,11 @@ It also prints a **one-paste CLI fallback** (`/plugin marketplace add …` + `/p
 in case Claude Code's permission classifier blocks the committed-settings path (it can flag
 enabling a third-party plugin until you approve it).
 
+Add **`--portka-standard`** to also install the Portka standard setup — a workflow `CLAUDE.md`
+(branch per change, tests + CI, merge on green), a git/`gh` permissions allowlist, and an enforced
+SemVer `VERSION`/`CHANGELOG`/`README` sync with a basic `tests/run-tests.sh` — across `--scope`
+`user`|`project`|`both` (default `both`). Commit the project files so they apply in web sessions.
+
 **Option B — by hand.** Create `.claude/settings.json` in the repo root:
 
 ```json

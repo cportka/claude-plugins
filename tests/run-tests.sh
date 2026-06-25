@@ -824,6 +824,84 @@ else
   fail "bootstrap script not found: $BOOTSTRAP"
 fi
 
+# --- 11a2. repo-bootstrap --portka-standard -------------------------------------------
+section "repo-bootstrap --portka-standard"
+if [[ -f "$BOOTSTRAP" ]]; then
+  ps="$(mktemp -d)"   # target repo
+  ph="$(mktemp -d)"   # fake HOME for user-scope writes (keeps tests off the real ~/.claude)
+  bash "$BOOTSTRAP" --plugin video-bug-analyzer --portka-standard --dir "$ps" --home "$ph" >/dev/null 2>&1
+  # Project-scope workflow memory carries the managed block + the workflow heading.
+  if [[ -f "$ps/.claude/CLAUDE.md" ]] \
+     && grep -q 'BEGIN portka-standard' "$ps/.claude/CLAUDE.md" \
+     && grep -q 'Portka standard workflow' "$ps/.claude/CLAUDE.md"; then
+    pass "portka-standard writes the workflow CLAUDE.md (project)"
+  else
+    fail "portka-standard did not write a project CLAUDE.md with the workflow block"
+  fi
+  # User scope lands under the fake HOME, never the real one.
+  if [[ -f "$ph/.claude/CLAUDE.md" ]] && grep -q 'BEGIN portka-standard' "$ph/.claude/CLAUDE.md"; then
+    pass "portka-standard writes the user-scope CLAUDE.md under --home"
+  else
+    fail "portka-standard did not write the user-scope CLAUDE.md"
+  fi
+  # Permissions merge into BOTH settings; the marketplace + plugins survive in the project one.
+  if python3 - "$ps/.claude/settings.json" "$ph/.claude/settings.json" <<'PY'
+import json, sys
+proj = json.load(open(sys.argv[1]))
+home = json.load(open(sys.argv[2]))
+assert proj["extraKnownMarketplaces"]["portka-tools"]["source"]["repo"] == "cportka/claude-plugins"
+assert proj["enabledPlugins"]["video-bug-analyzer@portka-tools"] is True
+for d in (proj, home):
+    allow = d["permissions"]["allow"]
+    assert any(r.startswith("Bash(git push") for r in allow), allow
+    assert any(r.startswith("Bash(git checkout") for r in allow), allow
+    assert any(r.startswith("Bash(gh pr") for r in allow), allow
+PY
+  then
+    pass "portka-standard merges git/gh permissions into project + user settings (marketplace kept)"
+  else
+    fail "portka-standard permissions/marketplace merge not as expected"
+  fi
+  # Repo sync scaffold present (version triplet + enforcing suite + CI).
+  if [[ -f "$ps/VERSION" && -f "$ps/CHANGELOG.md" && -f "$ps/README.md" \
+        && -x "$ps/tests/run-tests.sh" && -f "$ps/.github/workflows/validate.yml" ]]; then
+    pass "portka-standard scaffolds VERSION + CHANGELOG + README + tests + CI"
+  else
+    fail "portka-standard did not scaffold the full version/sync + CI set"
+  fi
+  # The scaffolded suite PASSES on its own fresh seed (the triplet is internally consistent)...
+  if bash "$ps/tests/run-tests.sh" >/dev/null 2>&1; then
+    pass "scaffolded run-tests.sh passes on the fresh repo (version sync green)"
+  else
+    fail "scaffolded run-tests.sh failed on a fresh scaffold"
+  fi
+  # ...and FAILS once the version sync is broken (proves it actually enforces).
+  echo "9.9.9" > "$ps/VERSION"
+  if bash "$ps/tests/run-tests.sh" >/dev/null 2>&1; then
+    fail "scaffolded suite passed despite VERSION/CHANGELOG drift (not enforcing)"
+  else
+    pass "scaffolded suite enforces the sync (fails on VERSION/CHANGELOG drift)"
+  fi
+  # Idempotent: a second run leaves exactly one managed block.
+  bash "$BOOTSTRAP" --plugin video-bug-analyzer --portka-standard --dir "$ps" --home "$ph" >/dev/null 2>&1
+  if [[ "$(grep -c 'BEGIN portka-standard' "$ps/.claude/CLAUDE.md")" -eq 1 ]]; then
+    pass "portka-standard is idempotent (one managed block after re-run)"
+  else
+    fail "portka-standard duplicated the managed block on re-run"
+  fi
+  # --dry-run writes nothing, in the repo or under --home.
+  pd="$(mktemp -d)"; phd="$(mktemp -d)"
+  bash "$BOOTSTRAP" --plugin video-bug-analyzer --portka-standard --dir "$pd" --home "$phd" --dry-run >/dev/null 2>&1
+  if [[ "$(find "$pd" "$phd" -type f | wc -l)" -eq 0 ]]; then
+    pass "portka-standard --dry-run writes nothing"
+  else
+    fail "portka-standard --dry-run wrote files"
+  fi
+  rm -rf "$ps" "$ph" "$pd" "$phd"
+else
+  fail "bootstrap script not found: $BOOTSTRAP"
+fi
+
 # --- 11b. app-website-evaluator end-to-end --------------------------------------------
 section "app-website-evaluator end-to-end"
 EVAL="plugins/app-website-evaluator/skills/app-evaluation/scripts/evaluate-site.sh"

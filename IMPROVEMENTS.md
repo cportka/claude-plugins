@@ -52,11 +52,14 @@ form and are triaged into the items below.
 - Non-clobbering, idempotent JSON merge; refuses to touch invalid settings; `--list` and
   `--dry-run`; one command wires up web-session plugin loading + optional CI; prints a `/plugin`
   CLI fallback for when the settings write is permission-gated.
+- `--portka-standard` scaffolds the whole standard setup in one run: a workflow `CLAUDE.md`
+  (managed block, idempotent), a git/`gh` permissions allowlist merged into `settings.json`, and an
+  enforced `VERSION`/`CHANGELOG`/`README` sync with a basic `tests/run-tests.sh` + CI.
 
 **Weaknesses / ideas (not yet built)**
 - Requires `python3` (no pure-bash/`jq` fallback yet).
-- Generated CI is intentionally minimal (runs `tests/run-tests.sh` if present).
-- Could optionally scaffold a `CLAUDE.md` and a `tests/run-tests.sh` starter.
+- The scaffolded sync assumes a top-level `VERSION` file; could also detect/target a
+  `package.json` / `pyproject.toml` version, and offer a vanilla (non-Portka) settings profile.
 
 ## app-website-evaluator
 

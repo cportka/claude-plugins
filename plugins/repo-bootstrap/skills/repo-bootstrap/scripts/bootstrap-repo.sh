@@ -31,13 +31,19 @@
 #   --portka-standard          Also install the Portka standard setup: a workflow CLAUDE.md (update
 #                              main first, branch per change, tests+CI then a PR, merge on green), a
 #                              permissions allowlist for the git/gh commands it needs, and — for the
-#                              repo — a VERSION / CHANGELOG.md / README version line kept in sync, a
-#                              basic tests/run-tests.sh that enforces that sync, and CI to run it.
+#                              repo — an enforced SemVer version sync that BINDS to the repo's
+#                              existing version (package.json / pyproject.toml / Cargo.toml / VERSION
+#                              / README **Version:**), seeding a bare VERSION 0.1.0 only on a
+#                              greenfield repo, plus a basic tests/run-tests.sh and CI to run it.
 #   --scope <user|project|both>  Where --portka-standard writes the CLAUDE.md + permissions:
 #                              user = ~/.claude (your machine), project = ./.claude (committed; web
-#                              sessions + team), both = default. The VERSION/CHANGELOG/tests scaffold
-#                              is always written to the repo (existing files are never clobbered).
+#                              sessions + team), both = default. The version/sync scaffold is always
+#                              written to the repo (existing files are never clobbered).
 #   --home <path>              Home dir for user-scope writes (default: $HOME). Mainly for testing.
+#   --print-only               Write nothing; print .claude/settings.json (and, with
+#                              --portka-standard, the CLAUDE.md workflow block) to stdout for you to
+#                              create by hand. A human-authored write isn't subject to Claude Code's
+#                              auto-mode permission classifier the way an agent write can be (#59).
 #   -h, --help                 Show this help.
 #
 # Examples:
@@ -60,6 +66,7 @@ AUTO_UPDATE=""   # ADDED (1.0.3): --auto-update sets "autoUpdate": true on the m
 PORTKA_STANDARD=""        # ADDED (1.1.1): install the Portka standard setup (workflow + sync scaffold)
 SCOPE=""                  # ADDED (1.1.1): user|project|both for --portka-standard (default: both)
 HOME_DIR="${HOME:-}"      # ADDED (1.1.1): home dir for user-scope writes; overridable with --home
+PRINT_ONLY=""             # ADDED (1.1.2, #59): print settings/CLAUDE.md to stdout for manual creation
 
 # resolve where this script lives, so we can find the marketplace manifest when the
 # script is run from a checkout of the marketplace repo.
@@ -103,6 +110,53 @@ except Exception:
 PY
 }
 
+# Detect a repo's version source of truth, echoing "<source>\t<version>" for the first one found
+# (package.json, pyproject.toml, Cargo.toml, a bare VERSION, or a README **Version:** line), or
+# nothing. Lets --portka-standard bind the sync check to an existing version instead of seeding a
+# conflicting bare VERSION on a mature repo (#59).
+detect_version() {
+  TARGET="$1" python3 <<'PY'
+import json, os, re
+d = os.environ["TARGET"]
+def emit(src, ver):
+    ver = (ver or "").strip()
+    if ver:
+        print(f"{src}\t{ver}")
+        raise SystemExit(0)
+p = os.path.join(d, "package.json")
+if os.path.isfile(p):
+    try:
+        emit("package.json", json.load(open(p)).get("version"))
+    except Exception:
+        pass
+for fn in ("pyproject.toml", "Cargo.toml"):
+    p = os.path.join(d, fn)
+    if os.path.isfile(p):
+        try:
+            txt = open(p, encoding="utf-8", errors="ignore").read()
+        except Exception:
+            txt = ""
+        m = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', txt)
+        if m:
+            emit(fn, m.group(1))
+p = os.path.join(d, "VERSION")
+if os.path.isfile(p):
+    try:
+        emit("VERSION", open(p).read())
+    except Exception:
+        pass
+p = os.path.join(d, "README.md")
+if os.path.isfile(p):
+    try:
+        txt = open(p, encoding="utf-8", errors="ignore").read()
+    except Exception:
+        txt = ""
+    m = re.search(r'(?m)^\s*>?\s*\*\*Version:\*\*\s*([0-9][^\s|]*)', txt)
+    if m:
+        emit("README.md", m.group(1).rstrip(".,;·"))
+PY
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --plugin) PLUGINS+=("${2:-}"); shift 2 ;;
@@ -117,19 +171,66 @@ while [[ $# -gt 0 ]]; do
     --portka-standard) PORTKA_STANDARD="1"; shift ;;   # ADDED (1.1.1)
     --scope) SCOPE="${2:-}"; shift 2 ;;                # ADDED (1.1.1)
     --home) HOME_DIR="${2:-}"; shift 2 ;;              # ADDED (1.1.1)
+    --print-only) PRINT_ONLY="1"; shift ;;            # ADDED (1.1.2, #59)
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
 done
 
-# --portka-standard implies CI (so the scaffolded suite actually runs) and defaults its scope.
+# --portka-standard defaults its scope. (CI for the standard is written by the standard block under
+# a specific name with collision detection — #59 — not via the generic --ci path.)
 if [[ -n "$PORTKA_STANDARD" ]]; then
-  ADD_CI="1"
   SCOPE="${SCOPE:-both}"
   case "$SCOPE" in
     user|project|both) ;;
     *) echo "Error: --scope must be user|project|both (got '$SCOPE')." >&2; exit 2 ;;
   esac
+fi
+
+# --print-only and --dry-run are both no-write modes.
+NO_WRITE=""
+[[ -n "$DRY_RUN" || -n "$PRINT_ONLY" ]] && NO_WRITE="1"
+
+# Portka standard: the git/gh permissions allowlist + the workflow text, defined once so that both
+# --print-only (manual mode) and the writing path below emit the same content. ADDED (1.1.2).
+STD_PERMS_JSON='["Bash(git status:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git pull:*)","Bash(git fetch:*)","Bash(git branch:*)","Bash(git add:*)","Bash(git commit:*)","Bash(git push:*)","Bash(git merge:*)","Bash(git rebase:*)","Bash(git diff:*)","Bash(git log:*)","Bash(gh pr:*)","Bash(gh run:*)","Bash(gh workflow:*)"]'
+BEGIN_MARK="<!-- BEGIN portka-standard (managed by repo-bootstrap — edit between the markers, or re-run to refresh) -->"
+END_MARK="<!-- END portka-standard -->"
+STD_CLAUDE_BLOCK=""
+if [[ -n "$PORTKA_STANDARD" ]]; then
+  read -r -d '' STD_CLAUDE_BLOCK <<'MD' || true
+# Portka standard workflow
+
+Standing conventions for how Claude Code works here. Follow them for every change, without being
+asked, so our back-and-forth stays on the code — not on process.
+
+For each change you make:
+
+1. **Update `main` first.** Begin by switching to `main` and pulling the latest. A previous
+   change's branch being gone is the user's confirmation that they saw it (see step 5).
+2. **Branch for everything.** Every fix, update, or change goes on a new branch — never commit to
+   `main` directly.
+3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
+   request. If the repo has no CI yet, add a basic workflow that runs the test suite.
+4. **Green, then merge.** Wait until every check passes, then merge the PR automatically. Never
+   merge on red.
+5. **Hand back a short PR link.** Give the user a short link to the merged PR as confirmation. They
+   delete the branch when satisfied — which you pick up next time you update `main` (step 1).
+
+## Versioning — SemVer (enforced)
+
+Versions follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH` — **MAJOR** for
+breaking changes, **MINOR** for backward-compatible features, **PATCH** for backward-compatible
+fixes. Keep one source of truth and the other places in agreement, and bump the right part:
+
+- the **version source of truth** — your project manifest (`package.json` / `pyproject.toml` /
+  `Cargo.toml`), or a bare `VERSION` file if the repo has no manifest.
+- `CHANGELOG.md` — a section for each released version (Keep a Changelog).
+- `README.md` — a `**Version:**` line, if you keep one, that matches.
+
+`tests/run-tests.sh` checks the version is valid SemVer and that these agree; CI runs it on every
+push/PR, so they can't drift.
+MD
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -167,7 +268,58 @@ fi
 
 SETTINGS_DIR="$DIR/.claude"
 SETTINGS="$SETTINGS_DIR/settings.json"
-[[ -n "$DRY_RUN" ]] || mkdir -p "$SETTINGS_DIR"   # no writes in --dry-run
+
+# --print-only: emit the file(s) for the user to create by hand (a human write isn't gated by
+# Claude Code's auto-mode classifier the way an agent write can be — #59), then exit without writing.
+if [[ -n "$PRINT_ONLY" ]]; then
+  echo "# Portka manual setup — create the file(s) below by hand (nothing was written)."
+  echo ""
+  echo "===== .claude/settings.json ====="
+  SETTINGS="$SETTINGS" MARKET_NAME="$MARKET_NAME" MARKET_REPO="$MARKET_REPO" \
+  AUTO_UPDATE="$AUTO_UPDATE" PLUGINS_CSV="$(IFS=,; echo "${PLUGINS[*]:-}")" \
+  PERMS="$([[ -n "$PORTKA_STANDARD" ]] && printf '%s' "$STD_PERMS_JSON" || printf '[]')" \
+  python3 <<'PY'
+import json, os
+settings = os.environ["SETTINGS"]
+name = os.environ["MARKET_NAME"]
+repo = os.environ["MARKET_REPO"]
+plugins = [p for p in os.environ.get("PLUGINS_CSV", "").split(",") if p]
+auto = bool(os.environ.get("AUTO_UPDATE"))
+perms = json.loads(os.environ.get("PERMS", "[]"))
+data = {}
+if os.path.exists(settings):
+    try:
+        data = json.load(open(settings))
+    except json.JSONDecodeError:
+        data = {}
+entry = data.setdefault("extraKnownMarketplaces", {}).setdefault(name, {})
+entry["source"] = {"source": "github", "repo": repo}
+if auto:
+    entry["autoUpdate"] = True
+enabled = data.setdefault("enabledPlugins", {})
+for p in plugins:
+    enabled[f"{p}@{name}"] = True
+if perms:
+    allow = data.setdefault("permissions", {}).setdefault("allow", [])
+    for r in perms:
+        if r not in allow:
+            allow.append(r)
+print(json.dumps(data, indent=2))
+PY
+  if [[ -n "$PORTKA_STANDARD" ]]; then
+    echo ""
+    echo "===== .claude/CLAUDE.md (append this block) ====="
+    printf '%s\n%s\n%s\n' "$BEGIN_MARK" "$STD_CLAUDE_BLOCK" "$END_MARK"
+  fi
+  echo ""
+  echo "Create the file(s) above by hand (or have the user paste them) and commit them — a"
+  echo "human-authored write isn't subject to the auto-mode classifier that can refuse an"
+  echo "agent-written .claude/settings.json. The version/sync scaffold is not classifier-gated;"
+  echo "re-run without --print-only to write it."
+  exit 0
+fi
+
+[[ -n "$NO_WRITE" ]] || mkdir -p "$SETTINGS_DIR"   # no writes in --dry-run / --print-only
 
 # Merge the marketplace + enabled plugins into .claude/settings.json without clobbering
 # any keys that are already there. python3 does the JSON read/merge/write safely.
@@ -251,8 +403,9 @@ fi
 
 # ----------------------------------------------------------------------------------------
 # Portka standard setup (--portka-standard): a workflow CLAUDE.md + a git/gh permissions
-# allowlist (user and/or project scope), plus a repo VERSION / CHANGELOG / README version
-# triplet kept in sync by a basic, enforcing tests/run-tests.sh. ADDED (1.1.1).
+# allowlist (user and/or project scope), plus an enforced SemVer version sync bound to the repo's
+# existing version source (a manifest, or a bare VERSION on a greenfield repo). ADDED (1.1.1);
+# native-version binding + collision-aware CI in 1.1.2 (#59).
 # ----------------------------------------------------------------------------------------
 if [[ -n "$PORTKA_STANDARD" ]]; then
   WANT_USER=""; WANT_PROJECT=""
@@ -262,47 +415,8 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
     both) WANT_USER="1"; WANT_PROJECT="1" ;;
   esac
 
-  # Pre-approve the git/gh commands the workflow runs, so the back-and-forth stays on the code
-  # rather than re-approving the same tools every session.
-  STD_PERMS_JSON='["Bash(git status:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git pull:*)","Bash(git fetch:*)","Bash(git branch:*)","Bash(git add:*)","Bash(git commit:*)","Bash(git push:*)","Bash(git merge:*)","Bash(git rebase:*)","Bash(git diff:*)","Bash(git log:*)","Bash(gh pr:*)","Bash(gh run:*)","Bash(gh workflow:*)"]'
-
-  # The standard workflow, written as a managed block into CLAUDE.md (the memory Claude loads
-  # every session). Re-running replaces only the content between the markers.
-  read -r -d '' STD_CLAUDE_BLOCK <<'MD' || true
-# Portka standard workflow
-
-Standing conventions for how Claude Code works here. Follow them for every change, without being
-asked, so our back-and-forth stays on the code — not on process.
-
-For each change you make:
-
-1. **Update `main` first.** Begin by switching to `main` and pulling the latest. A previous
-   change's branch being gone is the user's confirmation that they saw it (see step 5).
-2. **Branch for everything.** Every fix, update, or change goes on a new branch — never commit to
-   `main` directly.
-3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
-   request. If the repo has no CI yet, add a basic workflow that runs the test suite.
-4. **Green, then merge.** Wait until every check passes, then merge the PR automatically. Never
-   merge on red.
-5. **Hand back a short PR link.** Give the user a short link to the merged PR as confirmation. They
-   delete the branch when satisfied — which you pick up next time you update `main` (step 1).
-
-## Versioning — SemVer (enforced)
-
-Versions follow [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH` — **MAJOR** for
-breaking changes, **MINOR** for backward-compatible features, **PATCH** for backward-compatible
-fixes. One source of truth, three places kept in agreement, and every change bumps the right part:
-
-- `VERSION` — the source of truth (a SemVer string).
-- `CHANGELOG.md` — a `## [VERSION]` section (Keep a Changelog) for each released version.
-- `README.md` — a `**Version:** VERSION` line that matches.
-
-`tests/run-tests.sh` checks `VERSION` is valid SemVer and that all three agree; CI runs it on every
-push/PR, so they can't drift.
-MD
-
-  BEGIN_MARK="<!-- BEGIN portka-standard (managed by repo-bootstrap — edit between the markers, or re-run to refresh) -->"
-  END_MARK="<!-- END portka-standard -->"
+  # STD_PERMS_JSON, STD_CLAUDE_BLOCK, BEGIN_MARK and END_MARK are defined once near the top (so
+  # --print-only can reuse the same content); this block just writes them.
 
   # write/refresh the managed CLAUDE.md block at a path (idempotent, dry-run aware).
   write_claude_md() {
@@ -401,49 +515,57 @@ PY
     merge_perms "$DIR/.claude/settings.json"
   fi
 
-  # Repo scaffold: the VERSION / CHANGELOG / README version triplet + a basic enforcing test
-  # suite. Always written to the repo (the sync is a property of the repo, not a scope). Existing
+  # Repo scaffold: bind the version sync to the repo's existing source of truth (#59) — a project
+  # manifest if present, else a bare VERSION — and enforce it with a basic test runner. Always
+  # written to the repo (the sync is a property of the repo, not a scope). Existing
   # VERSION/CHANGELOG/README are never clobbered; the test runner only with --force.
-  INIT_VERSION="0.1.0"
   TODAY="$(date +%F)"
   REPO_NAME="$(python3 -c 'import os,sys; print(os.path.basename(os.path.abspath(sys.argv[1])))' "$DIR")"
-
-  seed_if_absent "$DIR/VERSION" "version source of truth" <<EOF
-$INIT_VERSION
+  _ver_line="$(detect_version "$DIR")"          # "<src>\t<ver>" or empty
+  if [[ -n "$_ver_line" ]]; then
+    NATIVE_SRC="$(printf '%s' "$_ver_line" | cut -f1)"
+    SYNC_VER="$(printf '%s' "$_ver_line" | cut -f2-)"
+    echo "Detected version $SYNC_VER from $NATIVE_SRC — binding the sync check to it (not seeding VERSION)."
+  else
+    SYNC_VER="0.1.0"                             # greenfield: seed a bare VERSION as the source of truth
+    seed_if_absent "$DIR/VERSION" "version source of truth" <<EOF
+$SYNC_VER
 EOF
+  fi
 
   seed_if_absent "$DIR/CHANGELOG.md" "Keep a Changelog history" <<EOF
 # Changelog
 
 All notable changes to this project are documented here. The format follows Keep a Changelog
 (https://keepachangelog.com) and the project uses Semantic Versioning (https://semver.org).
-Every change bumps VERSION and adds an entry below.
+Every change bumps the version and adds an entry below.
 
-## [$INIT_VERSION] - $TODAY
+## [$SYNC_VER] - $TODAY
 
 ### Added
-- Initial scaffold via repo-bootstrap (Portka standard): branch-per-change workflow,
-  version/CHANGELOG/README sync, a basic test suite, and CI.
+- Initial scaffold via repo-bootstrap (Portka standard): branch-per-change workflow, an enforced
+  SemVer version sync, a basic test suite, and CI.
 EOF
 
   seed_if_absent "$DIR/README.md" "README with a synced version line" <<EOF
 # $REPO_NAME
 
-> **Version:** $INIT_VERSION
+> **Version:** $SYNC_VER
 
 ## Development
 
 This repo follows the Portka standard workflow (see .claude/CLAUDE.md): every change goes on a
-branch, updates tests + CI, and merges on green. The version follows SemVer, lives in VERSION, and
-stays in sync with CHANGELOG.md and the line above — enforced by:
+branch, updates tests + CI, and merges on green. The version follows SemVer and stays in sync with
+CHANGELOG.md and the line above — enforced by:
 
     bash tests/run-tests.sh
 EOF
 
-  # The basic, zero-dependency test runner that enforces the three-way version sync.
+  # A basic, dependency-light test runner that binds to the repo's version source (manifest /
+  # VERSION / README) and checks SemVer + CHANGELOG/README agreement.
   RUNTESTS_PATH="$DIR/tests/run-tests.sh"
-  if [[ -n "$DRY_RUN" ]]; then
-    echo "[dry-run] would write $RUNTESTS_PATH (version/CHANGELOG/README sync suite)"
+  if [[ -n "$NO_WRITE" ]]; then
+    echo "[dry-run] would write $RUNTESTS_PATH (version-sync suite)"
   elif [[ -f "$RUNTESTS_PATH" && -z "$FORCE" ]]; then
     echo "test runner already exists (use --force to overwrite): $RUNTESTS_PATH" >&2
   else
@@ -452,8 +574,9 @@ EOF
 #!/usr/bin/env bash
 #
 # run-tests.sh — basic suite scaffolded by repo-bootstrap (Portka standard).
-# Enforces the VERSION / CHANGELOG.md / README.md version sync, then runs any tests/cases/*.sh.
-# Exit 0 if nothing FAILed, 1 otherwise.
+# Binds to the repo's version source of truth (package.json / pyproject.toml / Cargo.toml /
+# VERSION / README **Version:**), checks it is SemVer and that CHANGELOG.md and the README
+# version line agree, then runs any tests/cases/*.sh. Exit 0 if nothing FAILed, 1 otherwise.
 #
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -463,38 +586,66 @@ PASS=0; FAIL=0
 pass() { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
-# 1) VERSION exists and is SemVer.
-VER=""
-if [[ -f VERSION ]]; then
-  VER="$(tr -d '[:space:]' < VERSION)"
-  if [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.]+)?$ ]]; then
-    pass "VERSION is SemVer ($VER)"
-  else
-    fail "VERSION '$VER' is not SemVer"
+# Find the version source of truth, preferring a project manifest over a bare VERSION / README.
+detect_version() {
+  local v=""
+  if [[ -f package.json ]]; then
+    if command -v node >/dev/null 2>&1; then
+      v="$(node -e 'try{process.stdout.write(String(require("./package.json").version||""))}catch(e){}' 2>/dev/null)"
+    elif command -v python3 >/dev/null 2>&1; then
+      v="$(python3 -c 'import json;print(json.load(open("package.json")).get("version") or "")' 2>/dev/null)"
+    else
+      v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -1)"
+    fi
+    if [[ -n "$v" ]]; then printf 'package.json\t%s\n' "$v"; return; fi
   fi
+  local f
+  for f in pyproject.toml Cargo.toml; do
+    if [[ -f "$f" ]]; then
+      v="$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)"
+      if [[ -n "$v" ]]; then printf '%s\t%s\n' "$f" "$v"; return; fi
+    fi
+  done
+  if [[ -f VERSION ]]; then
+    v="$(tr -d '[:space:]' < VERSION)"
+    if [[ -n "$v" ]]; then printf 'VERSION\t%s\n' "$v"; return; fi
+  fi
+  if [[ -f README.md ]]; then
+    v="$(sed -n 's/.*\*\*Version:\*\*[[:space:]]*\([0-9][^ |]*\).*/\1/p' README.md | head -1)"
+    if [[ -n "$v" ]]; then printf 'README.md\t%s\n' "$v"; return; fi
+  fi
+}
+
+SRC_VER="$(detect_version)"
+SRC="$(printf '%s' "$SRC_VER" | cut -f1)"
+VER="$(printf '%s' "$SRC_VER" | cut -f2-)"
+
+if [[ -z "$SRC_VER" ]]; then
+  fail "no version source found (package.json / pyproject.toml / Cargo.toml / VERSION / README **Version:**)"
 else
-  fail "VERSION file is missing"
-fi
-
-# 2) CHANGELOG.md has a section for VERSION.
-if [[ -n "$VER" ]]; then
-  if grep -qF "## [$VER]" CHANGELOG.md 2>/dev/null; then
-    pass "CHANGELOG.md has a '## [$VER]' section"
+  if [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.]+)?$ ]]; then
+    pass "version is SemVer ($VER from $SRC)"
   else
-    fail "CHANGELOG.md is missing a '## [$VER]' heading"
+    fail "version '$VER' (from $SRC) is not SemVer"
+  fi
+  if [[ -f CHANGELOG.md ]]; then
+    if grep -qF "$VER" CHANGELOG.md; then
+      pass "CHANGELOG.md references $VER"
+    else
+      fail "CHANGELOG.md has no entry for $VER"
+    fi
+  fi
+  # Cross-check the README version line only when one exists (don't force the convention on repos
+  # that track their version elsewhere — requiring it is what made the old scaffold ship red, #59).
+  if [[ -f README.md ]] && grep -q '\*\*Version:\*\*' README.md; then
+    if grep -qF "**Version:** $VER" README.md; then
+      pass "README **Version:** line matches ($VER)"
+    else
+      fail "README **Version:** line disagrees with $SRC ($VER)"
+    fi
   fi
 fi
 
-# 3) README.md's version line matches VERSION.
-if [[ -n "$VER" && -f README.md ]]; then
-  if grep -qF "**Version:** $VER" README.md; then
-    pass "README.md version line matches ($VER)"
-  else
-    fail "README.md is missing a matching '**Version:** $VER' line"
-  fi
-fi
-
-# 4) Project test cases (optional): every tests/cases/*.sh must exit 0.
 shopt -s nullglob
 for t in tests/cases/*.sh; do
   if bash "$t"; then pass "case: $t"; else fail "case: $t"; fi
@@ -506,6 +657,43 @@ echo "Summary: $PASS passed, $FAIL failed"
 RUNTESTS
     chmod +x "$RUNTESTS_PATH"
     echo "Wrote $RUNTESTS_PATH"
+  fi
+
+  # CI for the standard: a specifically-named workflow that runs the suite. Skip when the repo
+  # already has CI so we don't collide with / duplicate it, unless --force (#59 minor).
+  WF_STD="$DIR/.github/workflows/portka-standard.yml"
+  shopt -s nullglob
+  _existing_wf=("$DIR"/.github/workflows/*.yml "$DIR"/.github/workflows/*.yaml)
+  shopt -u nullglob
+  if [[ -n "$NO_WRITE" ]]; then
+    echo "[dry-run] would write $WF_STD (runs tests/run-tests.sh), unless existing CI is detected"
+  elif [[ ${#_existing_wf[@]} -gt 0 && -z "$FORCE" ]]; then
+    echo "existing CI detected (${#_existing_wf[@]} workflow(s)); not adding portka-standard.yml — make sure your CI runs 'bash tests/run-tests.sh' (use --force to add it anyway)." >&2
+  elif [[ -f "$WF_STD" && -z "$FORCE" ]]; then
+    echo "CI workflow already exists (use --force to overwrite): $WF_STD" >&2
+  else
+    mkdir -p "$DIR/.github/workflows"
+    cat > "$WF_STD" <<'YAML'
+name: portka-standard
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: |
+          if [ -f tests/run-tests.sh ]; then
+            bash tests/run-tests.sh
+          else
+            echo "No tests/run-tests.sh found; nothing to validate."
+          fi
+YAML
+    echo "Wrote $WF_STD"
   fi
 fi
 

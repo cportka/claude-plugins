@@ -20,7 +20,7 @@
 #   extract-frames.sh --video <path> --probe                         # capture geometry/orientation
 #   extract-frames.sh --video <path> --palette [--colors <n>]        # dominant colours (hex)
 #   extract-frames.sh --video <a> --ab <b> [--fps <n>]               # A/B divergence over time
-#   extract-frames.sh --video <path> --cadence [--window <sec>]      # stutter / frame-cadence timeline
+#   extract-frames.sh --video <path> --stutter [--window <sec>]      # stutter: dropped frames + freeze gaps
 #   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
 #   extract-frames.sh --video <path> --saturation [--fps <n>]        # colour-saturation timeline
 #   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
@@ -115,13 +115,14 @@
 #                       moments. Both are sampled at --fps and scaled to the primary's size, so
 #                       it answers "these intros differ most at 0.20-0.28s". --start/--end align
 #                       the window on both. The cross-browser-bug tool. (Uses ffmpeg ssim.)
-#   --cadence           Stutter timeline: report the nominal frame rate vs the real average
-#                       (dropped/duplicated frames = choppiness), then a per-window count of
-#                       UNIQUE frames so you see WHEN it stutters. Prints t,unique_frames,fps and
-#                       headlines the choppiest windows. --window sets the bin (default 0.5s);
-#                       honors --start/--end. Measures UNIQUE-content cadence, so a deliberately
-#                       static scene also reads low (nothing new). (ffmpeg mpdecimate + ffprobe;
-#                       needs python3.)
+#   --cadence           Stutter timeline (aliases: --stutter, --fps-drops): report the nominal
+#                       frame rate vs the real average (dropped/duplicated frames = choppiness),
+#                       then a per-window count of UNIQUE frames so you see WHEN it stutters. Prints
+#                       t,unique_frames,fps and headlines the choppiest windows; also lists the
+#                       longest FREEZE GAPS (sustained frozen spans, e.g. "@1.4s frozen for 633 ms")
+#                       — the multi-hundred-ms stalls. --window sets the bin (default 0.5s); honors
+#                       --start/--end. Measures UNIQUE-content cadence, so a deliberately static
+#                       scene also reads low. (ffmpeg mpdecimate + freezedetect + ffprobe; python3.)
 #   --motion            Motion timeline: print t,motion (mean inter-frame pixel delta, 0..255)
 #                       per sampled frame, so "is it moving / where does motion concentrate?"
 #                       becomes a number. Quantifies --diff. Sample rate from --fps; honors
@@ -172,7 +173,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.0.3"
+VBA_VERSION="1.1.2"
 
 VIDEO=""
 START=""
@@ -398,6 +399,7 @@ while [[ $# -gt 0 ]]; do
     --colors) COLORS="${2:-}"; shift 2 ;;             # number of palette colours
     --ab) AB="${2:-}"; shift 2 ;;                      # A/B divergence vs <other>
     --cadence) CADENCE=1; shift ;;                    # frame-cadence timeline
+    --stutter|--fps-drops) CADENCE=1; shift ;;       # ADDED (1.1.2, #56): aliases for --cadence
     --motion) MOTION=1; shift ;;                      # inter-frame motion timeline
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
     --intro) INTRO=1; shift ;;                        # first-seconds load preset
@@ -906,6 +908,7 @@ run_cadence() {
     printf '\n'
     echo "# + ffprobe r_frame_rate/avg_frame_rate; bucket unique-frame pts_time into --window bins"
     echo "# -> CSV t,unique_frames,fps; headline nominal-vs-effective + choppiest windows"
+    echo "# + ffmpeg -vf freezedetect=d=0.1 -> longest frozen spans (freeze gaps, #56)"
     return 0
   fi
   if ! command -v python3 >/dev/null 2>&1; then
@@ -960,6 +963,21 @@ if nominal>0 and eff>0 and eff < 0.85*nominal:
 else:
     e.write("Cadence looks steady (effective near nominal).\n")
 PY
+  # Freeze-gap pass (issue #56): freezedetect flags sustained frozen spans — the "multi-hundred-ms
+  # gaps" of a stutter — as start+duration, complementing the windowed effective-fps above.
+  local fd; fd="$(ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "freezedetect=d=0.1" -an -f null - 2>&1 || true)"
+  local gaps; gaps="$(printf '%s\n' "$fd" | awk -v base="$base" '
+    /freeze_start:/    { s=$NF }
+    /freeze_duration:/ { if (s!="") { printf "%.3f\t%.3f\n", s+base, $NF; s="" } }
+  ' | sort -t"$(printf '\t')" -k2 -nr)"
+  if [[ -n "$gaps" ]]; then
+    echo "Freeze gaps (frame unchanged >= 0.1s; longest first):" >&2
+    printf '%s\n' "$gaps" | head -3 | while IFS="$(printf '\t')" read -r gs gd; do
+      awk -v s="$gs" -v d="$gd" 'BEGIN{ printf "  @%.2fs frozen for %d ms\n", s, d*1000 }' >&2
+    done
+  else
+    echo "No sustained freeze gaps (>= 0.1s) detected." >&2
+  fi
   rm -f "$tf"
 }
 

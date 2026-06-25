@@ -14,7 +14,9 @@ plugins/repo-bootstrap/skills/repo-bootstrap/scripts/bootstrap-repo.sh --plugin 
 
 It also prints a **one-paste CLI fallback** (`/plugin marketplace add …` + `/plugin install …`)
 in case Claude Code's permission classifier blocks the committed-settings path (it can flag
-enabling a third-party plugin until you approve it).
+enabling a third-party plugin until you approve it). In a web session where the classifier refuses
+the write outright, run with **`--print-only`** and create `.claude/settings.json` by hand from the
+printed output — a human-authored write isn't classifier-gated.
 
 Add **`--portka-standard`** to also install the Portka standard setup — a workflow `CLAUDE.md`
 (branch per change, tests + CI, merge on green), a git/`gh` permissions allowlist, and an enforced

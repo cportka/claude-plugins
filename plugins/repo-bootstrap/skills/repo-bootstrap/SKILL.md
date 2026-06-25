@@ -21,7 +21,7 @@ Local-CLI-only use doesn't need this: `/plugin marketplace add cportka/claude-pl
    ```
    ${CLAUDE_PLUGIN_ROOT}/skills/repo-bootstrap/scripts/bootstrap-repo.sh \
      --plugin <name> [--plugin <name> ...] [--ci] [--dir <repo-root>] [--dry-run] [--auto-update] \
-     [--portka-standard] [--scope user|project|both]
+     [--portka-standard] [--scope user|project|both] [--print-only]
    ```
    `--dry-run` previews without writing. `--auto-update` also sets `"autoUpdate": true` on the
    marketplace entry — but note that for third-party marketplaces it currently refreshes the
@@ -54,9 +54,12 @@ re-explaining process. It writes (all idempotent, never clobbering):
   green, and hand back a short PR link the user deletes as confirmation.
 - A **permissions allowlist** for the git/`gh` commands that workflow runs, merged into
   `settings.json` (so the loop isn't gated on re-approving the same tools).
-- For the repo: a **`VERSION` / `CHANGELOG.md` / `README.md`** version triplet on **SemVer**
-  (`MAJOR.MINOR.PATCH`), kept in sync by a basic **`tests/run-tests.sh`** that *enforces* valid
-  SemVer + agreement, and **CI** to run it.
+- For the repo: an enforced **SemVer** (`MAJOR.MINOR.PATCH`) version sync that **binds to the repo's
+  existing version source** — `package.json` / `pyproject.toml` / `Cargo.toml` / a bare `VERSION` /
+  a README `**Version:**` line — and only seeds a `VERSION` 0.1.0 on a truly greenfield repo. A basic
+  **`tests/run-tests.sh`** *enforces* valid SemVer + that `CHANGELOG.md` and the README line agree
+  (the README line is checked only if one exists), plus a specifically-named **`portka-standard.yml`**
+  CI (skipped if the repo already has CI, to avoid collisions).
 
 `--scope` controls where the `CLAUDE.md` + permissions go — `user` (`~/.claude`, your machine),
 `project` (committed `./.claude`, for web sessions + team), or `both` (default). The
@@ -64,3 +67,16 @@ version/sync scaffold always lands in the repo; existing `VERSION`/`CHANGELOG`/`
 overwritten (and the test runner only with `--force`). Use `--dry-run` to preview, and `--home` to
 point user-scope writes somewhere other than `$HOME` (mainly for tests). Commit the project files so
 they apply in fresh web sessions.
+
+## When the `.claude/settings.json` write is blocked (`--print-only`)
+
+In a **web session under auto mode**, Claude Code's permission classifier can **refuse** an
+agent-written `.claude/settings.json` (it flags adding a marketplace + enabling plugins + a
+permissions allowlist as untrusted self-modification). That's the very file this skill exists to
+write. When that happens:
+
+1. **Ask the user to approve** the write explicitly, rather than silently eating the denial.
+2. If still blocked, run with **`--print-only`**: it prints the exact `.claude/settings.json` (and,
+   with `--portka-standard`, the `CLAUDE.md` workflow block) to stdout. Have the **user create/paste
+   the file by hand** — a human-authored write isn't classifier-gated — then commit it. The
+   version/sync scaffold isn't classifier-gated, so re-run without `--print-only` to write it.

@@ -10,14 +10,14 @@
     {
       "name": "video-bug-analyzer",
       "source": "./plugins/video-bug-analyzer",
-      "description": "Diagnose UI and rendering bugs from a screen recording. Give Claude a video and roughly when the bug happens; the plugin extracts frames — an overview contact sheet, scene-cut detection, or per-timestamp zoom with before/after strips — then reasons over them to pinpoint the defect. Strong on persistent visual bugs, honest about flicker, timing, and off-screen state. Requires ffmpeg (auto-installs where the sandbox allows).",
+      "description": "Diagnose UI and rendering bugs from a screen recording. Give Claude a video and roughly when the bug happens; the plugin extracts frames — an overview contact sheet, scene-cut detection, or per-timestamp zoom with before/after strips — then reasons over them to pinpoint the defect. Also quantifies FPS stutter / dropped frames and freeze gaps (--stutter). Strong on persistent visual bugs, honest about flicker, timing, and off-screen state. Requires ffmpeg (auto-installs where the sandbox allows).",
       "category": "debugging",
-      "tags": ["video", "screen-recording", "debugging", "bug"]
+      "tags": ["video", "screen-recording", "debugging", "bug", "stutter", "fps"]
     },
     {
       "name": "repo-bootstrap",
       "source": "./plugins/repo-bootstrap",
-      "description": "Set up a repo to use portka-tools plugins (writes .claude/settings.json + optional CI), and optionally install the Portka standard setup: a workflow CLAUDE.md, a git/gh permissions allowlist, and an enforced SemVer VERSION/CHANGELOG/README sync with a basic test suite.",
+      "description": "Set up a repo to use portka-tools plugins (writes .claude/settings.json + optional CI; --print-only for a classifier-safe manual mode), and optionally install the Portka standard setup: a workflow CLAUDE.md, a git/gh permissions allowlist, and an enforced SemVer version sync that binds to the repo's existing version (package.json / pyproject.toml / Cargo.toml / VERSION / README) with a basic test suite.",
       "category": "workflow",
       "tags": ["bootstrap", "scaffold", "setup", "marketplace"]
     },

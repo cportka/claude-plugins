@@ -27,6 +27,14 @@ release in which it last changed — see RELEASING).
   `[intro]`/`chorus:` → `[Intro]`/`[Chorus]`), HTML-entity decode, **internal-alignment
   preservation**, blank-line collapse, idempotency (format twice == once), and `--help` exits 0.
 
+### Added (repo / feedback hygiene)
+- **Feedback form is now current and self-enforcing.** The **Plugin feedback** issue form's
+  plugin dropdown gained `app-website-evaluator` and `tab-chord-formatter` (it had fallen behind),
+  and a new CI test asserts the dropdown options (minus the "other / not sure" escape) **exactly
+  match the plugins in `marketplace.json`** — so adding a plugin without updating the form now
+  fails CI instead of silently drifting. Parsed without a YAML dependency, consistent with the
+  other form checks.
+
 ## [1.0.3] - 2026-06-24
 
 Acting on the round-2 dogfood feedback (#46, #48, #49, #51, #52, #53) and a release-hygiene

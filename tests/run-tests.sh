@@ -220,6 +220,47 @@ for tmpl in .github/ISSUE_TEMPLATE/*.yml; do
 done
 [[ $it_found -eq 1 ]] || skip "no issue form templates"
 
+# The Plugin-feedback form's `plugin` dropdown must list every marketplace plugin (plus the
+# "other / not sure" escape) — so the form can't silently fall behind a newly added plugin.
+# Parsed without a YAML lib (keeps zero deps, like the checks above): pull the `id: plugin`
+# dropdown's `options:` items and compare the set to marketplace.json's plugin names.
+_FEEDBACK_FORM=".github/ISSUE_TEMPLATE/plugin-feedback.yml"
+if [[ -s "$_FEEDBACK_FORM" ]]; then
+  if python3 - "$_FEEDBACK_FORM" "$MP" <<'PY'
+import json, re, sys
+form, mp = sys.argv[1], sys.argv[2]
+plugins = {p["name"] for p in json.load(open(mp))["plugins"]}
+opts, in_plugin, in_opts = [], False, False
+for ln in open(form).read().splitlines():
+    s = ln.strip()
+    if re.match(r"^id:\s*plugin\b", s):
+        in_plugin = True
+        continue
+    if in_plugin:
+        if not in_opts:
+            if s.startswith("options:"):
+                in_opts = True
+            continue
+        m = re.match(r"^-\s+(.*\S)\s*$", s)
+        if m:
+            opts.append(m.group(1).strip())
+        elif s:               # a non-list line (e.g. validations:) ends the options block
+            break
+assert opts, "no `plugin` dropdown options found in the feedback form"
+ESCAPE = {"other / not sure"}
+listed = set(opts) - ESCAPE
+assert ESCAPE <= set(opts), "feedback form is missing the 'other / not sure' escape option"
+assert listed == plugins, (
+    f"feedback form plugin dropdown {sorted(listed)} != marketplace plugins {sorted(plugins)} "
+    "— update .github/ISSUE_TEMPLATE/plugin-feedback.yml")
+PY
+  then
+    pass "feedback form plugin dropdown is in sync with marketplace.json"
+  else
+    fail "feedback form plugin dropdown out of sync with marketplace.json (see error above)"
+  fi
+fi
+
 # --- 4c2. release automation ----------------------------------------------------------
 section "release automation"
 RW=".github/workflows/release.yml"

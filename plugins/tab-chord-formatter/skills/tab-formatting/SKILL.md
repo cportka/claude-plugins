@@ -1,6 +1,6 @@
 ---
 name: tab-formatting
-description: Format a guitar tab or chord sheet into a clean, standard, readable layout and output the text. Use when the user pastes or links a song's chords/tab (chords over lyrics, a 6-line ASCII tablature, or a Capo/Key/Tuning header) — often messy, copied from a web page or email with broken spacing — and asks to clean it up, standardize, reformat, align the chords, or "make this tab readable." Produces plain text — a metadata header, section labels, chords aligned over the lyrics, and tidy tab blocks.
+description: Format a guitar tab or chord sheet into a clean, standard, readable layout and output the text, OR render a printable PDF songbook. Use when the user pastes or links a song's chords/tab (chords over lyrics, a 6-line ASCII tablature, or a Capo/Key/Tuning header) — often messy, copied from a web page or email with broken spacing — and asks to clean it up, standardize, reformat, align the chords, "make this tab readable," or print/PDF a songbook (one or many songs, a target number of songs per page). Two modes: screen (plain text) and print (a consistent monospace PDF, default one song per page).
 ---
 
 # Tab / Chord Formatter
@@ -62,3 +62,27 @@ the uncertainty briefly below the tab rather than silently guessing.
 
 See `reference.md` for the canonical format spec: the metadata header, section vocabulary,
 chord-over-lyric alignment rules, ASCII-tab conventions, and chord-naming standards.
+
+## Print mode — a PDF songbook
+
+`format-tab.py` has two modes. **Screen** (the default, above) emits clean plain text. **Print**
+renders a **PDF** (or print-ready HTML) in a single consistent monospace font + size — the usual
+fix for a songbook assembled from mixed sources — paginated by song.
+
+```
+# one song per page (default), Courier New 10pt:
+${CLAUDE_PLUGIN_ROOT}/skills/tab-formatting/scripts/format-tab.py --print --pdf songbook.pdf book.txt
+# pack two songs per page; shrink the font for wide ASCII-tab blocks:
+… --print --pdf songbook.pdf --songs-per-page 2 --size 9 book.txt
+# no Chromium? emit print-ready HTML and print it from a browser:
+… --print --html songbook.html book.txt
+```
+
+- **Input can be many songs.** Songs are split on a title line (`Artist – Title`, un-indented,
+  preceded by a blank line) or an explicit form-feed; a single tab with no such title is one song.
+- **`--songs-per-page N`** (default 1), **`--font`** (default `Courier New`), **`--size`** pt
+  (default 10). `--dedent` is **on by default** (strips each song's common leading indentation so
+  the left margin is consistent and wide lines don't overflow); `--no-dedent` keeps the source.
+- PDF needs Chromium/Chrome (auto-detected on `PATH` or a Playwright browsers dir). For best
+  results, clean each song's alignment (steps 1–2) **before** rendering — the PDF is a faithful
+  monospace snapshot, so the chord-over-lyric alignment must already be right in the text.

@@ -5,6 +5,50 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.2.0] - 2026-06-26
+
+A feature wave — one high-impact addition per plugin, so all four bump to 1.2.0 (the marketplace
+release): a printable PDF songbook (`tab-chord-formatter`), a standardized scorecard
+(`app-website-evaluator`), a from-scratch frame-pacing mode (`video-bug-analyzer`), and native
+version-sync tests (`repo-bootstrap`). MINOR, since each is a backward-compatible new capability.
+
+### Added (tab-chord-formatter → 1.2.0)
+- **Print mode → PDF songbook.** `format-tab.py` now has two modes: **screen** (the existing plain
+  text) and **print**, which renders a clean, **single-font/size monospace PDF** (Courier New 10pt
+  by default) via headless Chromium — `--print --pdf out.pdf`. Handles a **multi-song songbook**
+  (split on `Artist – Title` lines or form-feeds), with **`--songs-per-page N`** (default 1 song per
+  page), `--font`, `--size`, and `--dedent` (on by default — strips each song's common leading
+  indentation so the margin is consistent and wide lines don't overflow). `--html` emits
+  print-ready HTML for environments without Chromium.
+
+### Added (app-website-evaluator → 1.2.0)
+- **Standardized scorecard.** Every check is PASS (1.0) / WARN (0.5) / FAIL (0.0); each **dimension
+  scores 0–100 with a letter grade** (A ≥90 … F <60), and the report ends with a **weight-averaged
+  overall** grade — a repeatable answer to "how good is my site?". **`--json`** emits the same
+  scorecard machine-readably (stdout; the human report → stderr). The SKILL/reference now define the
+  rubric and a consistent report order (classification → scorecard → top fixes → by dimension →
+  growth → strengths).
+
+### Added (video-bug-analyzer → 1.2.0)
+- **`--pacing` — a from-scratch timing mode.** Where `--cadence`/`--stutter` count unique *content*
+  (mpdecimate), `--pacing` reads the actual per-frame **presentation timestamps** (ffprobe) and
+  reports the interval between displayed frames — so **uneven timing / jank / VFR / a long-frame
+  hitch is caught even when every frame's content differs**. Emits `t,interval_ms` and headlines the
+  median/p95/max interval plus the worst hitches.
+
+### Added (repo-bootstrap → 1.2.0)
+- **Native version-sync test.** When `--portka-standard` detects a **`package.json`** or
+  **`pyproject.toml`**, it now also emits the version↔CHANGELOG sync check **in the repo's own test
+  runner** — `tests/version-sync.test.mjs` (`node --test`) or `tests/test_version_sync.py`
+  (`pytest`/`unittest`) — so `npm test` / `pytest` enforces it, not only the standalone bash runner
+  (the #59 reporter's recommendation). Cargo support and "fully replace the bash runner" stay on the
+  roadmap.
+
+### Tests
+- New per-plugin coverage: tab-chord print/HTML/PDF + songs-per-page + dedent; the evaluator's
+  scorecard (complete > bare) + `--json` validity; `--pacing` dry-run + e2e; and the native
+  node:test / unittest version-sync emission (both run and pass). Suite: 126 passed.
+
 ## [1.1.2] - 2026-06-25
 
 Bundles the feedback that arrived right after 1.1.1: makes `--portka-standard` safe on a mature
@@ -765,6 +809,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.2.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.2.0
 [1.1.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.2
 [1.1.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.1
 [1.1.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.0

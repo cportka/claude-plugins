@@ -59,7 +59,10 @@ re-explaining process. It writes (all idempotent, never clobbering):
   a README `**Version:**` line — and only seeds a `VERSION` 0.1.0 on a truly greenfield repo. A basic
   **`tests/run-tests.sh`** *enforces* valid SemVer + that `CHANGELOG.md` and the README line agree
   (the README line is checked only if one exists), plus a specifically-named **`portka-standard.yml`**
-  CI (skipped if the repo already has CI, to avoid collisions).
+  CI (skipped if the repo already has CI, to avoid collisions). For a **`package.json`** or
+  **`pyproject.toml`** repo it also drops a **native version-sync test** (`tests/version-sync.test.mjs`
+  for `node --test`, or `tests/test_version_sync.py` for `pytest`/`unittest`) so the repo's own test
+  command enforces the sync too.
 
 `--scope` controls where the `CLAUDE.md` + permissions go — `user` (`~/.claude`, your machine),
 `project` (committed `./.claude`, for web sessions + team), or `both` (default). The

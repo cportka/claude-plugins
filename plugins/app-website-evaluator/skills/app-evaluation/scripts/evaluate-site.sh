@@ -17,7 +17,12 @@
 #   --url <url>    Evaluate a live site (fetches the page, headers, robots.txt, sitemap, llms.txt).
 #   --dir <path>   Evaluate a local directory (an index.html / built site, or a repo).
 #   --dry-run      Print the requests/files that would be checked, without doing network I/O.
+#   --json         Emit a machine-readable JSON scorecard on stdout (human report -> stderr).
 #   -h, --help     Show this help.
+#
+# Scoring: every check is PASS (1.0), WARN (0.5), or FAIL (0.0); INFO is not scored. Each dimension
+# scores 0-100 = 100*(pass + 0.5*warn)/(scored checks), with a letter grade (A>=90, B>=80, C>=70,
+# D>=60, F<60). The overall is the weight-averaged dimension score. It's still advisory, not a gate.
 #
 # Exit: 0 always (this is an advisory report, not a gate); findings are in the output.
 #
@@ -26,6 +31,7 @@ set -uo pipefail
 URL=""
 DIR=""
 DRY_RUN=""
+JSON=""
 
 usage() { awk 'NR==1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
@@ -34,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --url) URL="${2:-}"; shift 2 ;;
     --dir) DIR="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --json) JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
@@ -48,13 +55,44 @@ if [[ -n "$URL" && -n "$DIR" ]]; then
   exit 2
 fi
 
-# --- output helpers (markers, plus a tally) -------------------------------------------
-P=0; W=0; F=0
-sec()  { printf '\n\033[1m%s\033[0m\n' "$1"; }
-ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; P=$((P + 1)); }
-warn() { printf '  \033[33mWARN\033[0m  %s\n' "$1"; W=$((W + 1)); }
-bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; F=$((F + 1)); }
-info() { printf '  \033[36mINFO\033[0m  %s\n' "$1"; }
+# --- output helpers + per-dimension scoring -------------------------------------------
+# Each check is PASS (1.0) / WARN (0.5) / FAIL (0.0); INFO is unscored. sec() opens a dimension;
+# ok/warn/bad/info tally it. With --json the human report goes to stderr so stdout is pure JSON.
+P=0; W=0; F=0                                  # global tally (kept for the summary line)
+declare -a SEC_NAME SEC_P SEC_W SEC_F          # per-dimension tallies, parallel arrays
+CUR=-1
+RFD=1; [[ -n "$JSON" ]] && RFD=2               # report file descriptor (stderr under --json)
+REC=""; [[ -n "$JSON" ]] && REC="$(mktemp)"    # per-check records for the JSON output
+
+_rec() { [[ -n "$REC" ]] && printf '%s\t%s\t%s\n' "$CUR" "$1" "$2" >>"$REC"; return 0; }
+say()  { printf '%s\n' "$1" >&"$RFD"; }
+sec()  { SEC_NAME+=("$1"); SEC_P+=(0); SEC_W+=(0); SEC_F+=(0); CUR=$(( ${#SEC_NAME[@]} - 1 ))
+         printf '\n\033[1m%s\033[0m\n' "$1" >&"$RFD"; }
+ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1" >&"$RFD"; P=$((P+1)); [[ $CUR -ge 0 ]] && SEC_P[CUR]=$(( SEC_P[CUR] + 1 )); _rec pass "$1"; }
+warn() { printf '  \033[33mWARN\033[0m  %s\n' "$1" >&"$RFD"; W=$((W+1)); [[ $CUR -ge 0 ]] && SEC_W[CUR]=$(( SEC_W[CUR] + 1 )); _rec warn "$1"; }
+bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1" >&"$RFD"; F=$((F+1)); [[ $CUR -ge 0 ]] && SEC_F[CUR]=$(( SEC_F[CUR] + 1 )); _rec fail "$1"; }
+info() { printf '  \033[36mINFO\033[0m  %s\n' "$1" >&"$RFD"; _rec info "$1"; }
+
+# weight per dimension (sums to 100); grade band for a 0-100 score.
+weight_for() {
+  case "$1" in
+    "Crawlability / indexing")  echo 15 ;;
+    "SEO")                      echo 20 ;;
+    "Social / sharing")         echo 12 ;;
+    "Brand assets / standards") echo 13 ;;
+    "AI-readiness")             echo 10 ;;
+    "Security / hygiene")       echo 18 ;;
+    "Performance / load (hints)") echo 12 ;;
+    *)                          echo 10 ;;
+  esac
+}
+grade_for() {
+  if   [[ "$1" -ge 90 ]]; then echo A
+  elif [[ "$1" -ge 80 ]]; then echo B
+  elif [[ "$1" -ge 70 ]]; then echo C
+  elif [[ "$1" -ge 60 ]]; then echo D
+  else echo F; fi
+}
 
 # Case-insensitive "does the page HTML contain this regex?"  (best-effort; $HTML is the page)
 html_has() { grep -qiE "$1" <<<"$HTML"; }
@@ -134,7 +172,7 @@ else
   }
 fi
 
-echo "App / website evaluation — $ROOT_DESC"
+say "App / website evaluation — $ROOT_DESC"
 if [[ -n "$URL" ]]; then info "URL mode (live fetch)"; else info "directory mode (local files)"; fi
 
 # --- Crawlability / indexing ----------------------------------------------------------
@@ -244,7 +282,80 @@ else
   info "performance hints skipped (no HTML)"
 fi
 
-# --- Summary --------------------------------------------------------------------------
-printf '\n\033[1mChecklist:\033[0m %d pass, %d warn, %d fail. This is evidence, not a grade —\n' "$P" "$W" "$F"
-echo "weight it by the site's type/community and turn it into a prioritized report (see reference.md)."
+# --- Scorecard ------------------------------------------------------------------------
+# Per-dimension score = 100*(pass + 0.5*warn)/(scored checks); overall = weighted average.
+printf '\n\033[1mScorecard\033[0m\n' >&"$RFD"
+printf '  %-27s %6s  %5s  %s\n' "dimension" "weight" "score" "grade" >&"$RFD"
+declare -a OUT_SCORE OUT_GRADE OUT_WEIGHT
+tot_w=0; tot_ws=0
+for i in "${!SEC_NAME[@]}"; do
+  sp=${SEC_P[i]}; sw=${SEC_W[i]}; sf=${SEC_F[i]}
+  scored=$(( sp + sw + sf ))
+  wt=$(weight_for "${SEC_NAME[i]}")
+  OUT_WEIGHT+=("$wt")
+  if [[ "$scored" -gt 0 ]]; then
+    den=$(( 2 * scored ))
+    score=$(( (200 * sp + 100 * sw + den / 2) / den ))   # rounded 100*(p+0.5w)/scored
+    g=$(grade_for "$score")
+    printf '  %-27s %5s%%  %4s    %s\n' "${SEC_NAME[i]}" "$wt" "$score" "$g" >&"$RFD"
+    tot_w=$(( tot_w + wt )); tot_ws=$(( tot_ws + score * wt ))
+    OUT_SCORE+=("$score"); OUT_GRADE+=("$g")
+  else
+    printf '  %-27s %5s%%  %4s    %s\n' "${SEC_NAME[i]}" "$wt" "n/a" "-" >&"$RFD"
+    OUT_SCORE+=("null"); OUT_GRADE+=("-")
+  fi
+done
+if [[ "$tot_w" -gt 0 ]]; then overall=$(( (tot_ws + tot_w / 2) / tot_w )); else overall=0; fi
+ograde=$(grade_for "$overall")
+printf '  %s\n' "-------------------------------------------------" >&"$RFD"
+printf '  %-27s %6s  %4s    \033[1m%s\033[0m\n' "Overall (weighted)" "" "$overall" "$ograde" >&"$RFD"
+printf '\n\033[1mChecklist:\033[0m %d pass, %d warn, %d fail — overall %d/100 (%s). Weight by the\n' "$P" "$W" "$F" "$overall" "$ograde" >&"$RFD"
+printf 'site type/community, then turn the dimension grades into a prioritized report (reference.md).\n' >&"$RFD"
+
+# --- JSON (machine-readable) ----------------------------------------------------------
+if [[ -n "$JSON" ]]; then
+  REC="$REC" GP="$P" GW="$W" GF="$F" OVERALL="$overall" OGRADE="$ograde" \
+  TARGET="$ROOT_DESC" MODE="$([[ -n "$URL" ]] && echo url || echo dir)" \
+  NAMES="$(printf '%s\n' "${SEC_NAME[@]:-}")" \
+  SCORES="$(printf '%s\n' "${OUT_SCORE[@]:-}")" \
+  GRADES="$(printf '%s\n' "${OUT_GRADE[@]:-}")" \
+  WEIGHTS="$(printf '%s\n' "${OUT_WEIGHT[@]:-}")" \
+  python3 <<'PY' 2>/dev/null || echo '{"error":"--json needs python3"}'
+import json, os
+def lines(k):
+    v = os.environ.get(k, "")
+    return v.split("\n")[:-1] if v.endswith("\n") else ([x for x in v.split("\n") if x != ""] if v else [])
+names = [n for n in os.environ.get("NAMES","").split("\n") if n != ""]
+scores = os.environ.get("SCORES","").split("\n")
+grades = os.environ.get("GRADES","").split("\n")
+weights = os.environ.get("WEIGHTS","").split("\n")
+# per-section checks from the records file (section_index \t status \t message)
+checks = {}
+rec = os.environ.get("REC","")
+if rec and os.path.exists(rec):
+    for ln in open(rec):
+        parts = ln.rstrip("\n").split("\t", 2)
+        if len(parts) == 3:
+            checks.setdefault(parts[0], []).append({"status": parts[1], "message": parts[2]})
+dims = []
+for idx, name in enumerate(names):
+    sc = scores[idx] if idx < len(scores) else "null"
+    dims.append({
+        "name": name,
+        "weight": int(weights[idx]) if idx < len(weights) and weights[idx] else None,
+        "score": (None if sc == "null" else int(sc)),
+        "grade": grades[idx] if idx < len(grades) else "-",
+        "checks": checks.get(str(idx), []),
+    })
+obj = {
+    "target": os.environ.get("TARGET",""),
+    "mode": os.environ.get("MODE",""),
+    "overall": {"score": int(os.environ.get("OVERALL","0")), "grade": os.environ.get("OGRADE","")},
+    "tally": {"pass": int(os.environ.get("GP","0")), "warn": int(os.environ.get("GW","0")), "fail": int(os.environ.get("GF","0"))},
+    "dimensions": dims,
+}
+print(json.dumps(obj, indent=2))
+PY
+  [[ -n "$REC" ]] && rm -f "$REC"
+fi
 exit 0

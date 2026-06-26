@@ -21,6 +21,7 @@
 #   extract-frames.sh --video <path> --palette [--colors <n>]        # dominant colours (hex)
 #   extract-frames.sh --video <a> --ab <b> [--fps <n>]               # A/B divergence over time
 #   extract-frames.sh --video <path> --stutter [--window <sec>]      # stutter: dropped frames + freeze gaps
+#   extract-frames.sh --video <path> --pacing                        # frame-timestamp (jitter) timeline
 #   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
 #   extract-frames.sh --video <path> --saturation [--fps <n>]        # colour-saturation timeline
 #   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
@@ -123,6 +124,11 @@
 #                       — the multi-hundred-ms stalls. --window sets the bin (default 0.5s); honors
 #                       --start/--end. Measures UNIQUE-content cadence, so a deliberately static
 #                       scene also reads low. (ffmpeg mpdecimate + freezedetect + ffprobe; python3.)
+#   --pacing            Frame-PACING timeline (a from-scratch counterpart to --cadence): read the
+#                       actual per-frame presentation timestamps and print t,interval_ms — the time
+#                       between consecutive DISPLAYED frames. Catches uneven timing / jank / VFR / a
+#                       long-frame hitch even when every frame's CONTENT differs (which --cadence
+#                       can't see). Headlines median/p95/max + the worst hitches. (ffprobe; python3.)
 #   --motion            Motion timeline: print t,motion (mean inter-frame pixel delta, 0..255)
 #                       per sampled frame, so "is it moving / where does motion concentrate?"
 #                       becomes a number. Quantifies --diff. Sample rate from --fps; honors
@@ -173,7 +179,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.1.2"
+VBA_VERSION="1.2.0"
 
 VIDEO=""
 START=""
@@ -220,6 +226,7 @@ MOTION=""      # --motion prints a mean inter-frame pixel-delta timeline, exits
 CMP_VIDEOS=""  # --compare-videos a,b -> one stacked phase-aligned contact sheet
 INTRO=""       # --intro = load/splash preset (first ~2s, dense contact + labels)
 SATURATION=""  # --saturation prints a per-frame colour-saturation timeline, exits
+PACING=""      # --pacing prints a per-frame timestamp-interval (jitter) timeline, exits (1.2.0)
 FPS_SET=""     # track whether --fps was passed (so presets don't override it)
 
 usage() {
@@ -404,6 +411,7 @@ while [[ $# -gt 0 ]]; do
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
     --intro) INTRO=1; shift ;;                        # first-seconds load preset
     --saturation) SATURATION=1; shift ;;             # colour-saturation timeline
+    --pacing) PACING=1; shift ;;                      # ADDED (1.2.0): frame-pacing/jitter timeline
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -981,6 +989,68 @@ PY
   rm -f "$tf"
 }
 
+# frame-PACING timeline (1.2.0) — a from-scratch mode distinct from --cadence. --cadence counts
+# UNIQUE CONTENT (mpdecimate); --pacing reads the actual per-frame presentation TIMESTAMPS (ffprobe)
+# and reports the interval between consecutive displayed frames. So a clip that updates every frame
+# but with UNEVEN timing — jank/jitter, a long-frame hitch, variable-frame-rate — is caught where
+# unique-content cadence looks fine. Emits t,interval_ms and headlines median/p95/max + worst hitches.
+run_pacing() {
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffprobe'; printf ' %q' -v error -select_streams v:0 -show_entries frame=best_effort_timestamp_time -of csv=p=0 "$VIDEO"
+    printf '\n'
+    echo "# -> per-frame presentation timestamps; diff consecutive -> t,interval_ms"
+    echo "# -> headline median/p95/max interval + the worst long-frame hitches (uneven pacing)"
+    return 0
+  fi
+  if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "Error: --pacing needs ffprobe (ships with ffmpeg). Install ffmpeg and re-run." >&2
+    exit 2
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --pacing needs python3 to compute interval stats. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local tf; tf="$(mktemp)"
+  ffprobe -v error -select_streams v:0 -show_entries frame=best_effort_timestamp_time \
+    -of csv=p=0 "$VIDEO" 2>/dev/null > "$tf" || true
+  python3 - "$tf" <<'PY'
+import sys
+ts = []
+for line in open(sys.argv[1]):
+    line = line.strip()
+    try:
+        ts.append(float(line))
+    except ValueError:
+        pass
+ts.sort()
+e = sys.stderr
+print("t,interval_ms")
+if len(ts) < 2:
+    e.write("Pacing: too few timestamped frames to measure (need >= 2).\n")
+    raise SystemExit(0)
+intervals = [(ts[i], (ts[i] - ts[i - 1]) * 1000.0) for i in range(1, len(ts))]
+for t, d in intervals:
+    print("%.3f,%.1f" % (t, d))
+vals = sorted(d for _, d in intervals)
+n = len(vals)
+median = vals[n // 2]
+p95 = vals[min(n - 1, int(n * 0.95))]
+mx = max(intervals, key=lambda x: x[1])
+fps = 1000.0 / median if median > 0 else 0.0
+thr = max(1.75 * median, median + 8.0)   # a "hitch" = clearly longer than the typical frame time
+hitches = [(t, d) for t, d in intervals if d > thr]
+e.write("Pacing: median %.1f ms/frame (~%.1f fps); p95 %.1f ms; max %.1f ms @ %.2fs; "
+        "%d hitch(es) > %.0f ms.\n" % (median, fps, p95, mx[1], mx[0], len(hitches), thr))
+if hitches:
+    e.write("Worst hitches (a frame held far longer than its neighbours -> visible stutter):\n")
+    for t, d in sorted(hitches, key=lambda x: -x[1])[:5]:
+        e.write("  @%.2fs: %.0f ms (%.1fx the median frame time)\n" % (t, d, d / median if median else 0))
+else:
+    e.write("Frame pacing is even (no frame held much longer than the median).\n")
+PY
+  rm -f "$tf"
+}
+
 # motion timeline — the mean inter-frame pixel delta over time, so "feels too
 # long / choppy / is the dust even moving?" becomes a number and you can see WHERE motion
 # concentrates. tblend=difference gives |this - previous|; signalstats' YAVG is that frame's
@@ -1252,6 +1322,13 @@ fi
 # --saturation is an analysis mode — print a colour-saturation timeline and exit.
 if [[ -n "$SATURATION" ]]; then
   run_saturation
+  feedback_hint
+  exit 0
+fi
+
+# --pacing is an analysis mode — print a frame-pacing (timestamp-jitter) timeline and exit.
+if [[ -n "$PACING" ]]; then
+  run_pacing
   feedback_hint
   exit 0
 fi

@@ -1,0 +1,6 @@
+# Python bytecode (e.g. from running format-tab.py)
+__pycache__/
+*.pyc
+
+# Local Claude Code overrides (project settings are committed; local ones are not)
+.claude/settings.local.json

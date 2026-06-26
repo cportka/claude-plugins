@@ -88,17 +88,33 @@ a referral/share loop; getting listed in the obvious directories for the categor
 adjacent tools; lightweight retargeting only once the funnel converts. Spend where the audience
 already is, not everywhere.
 
-## Scoring rubric — prioritize by impact × effort
+## Scoring system — the standardized scorecard
 
-Rank every recommendation:
+`evaluate-site.sh` produces a consistent, comparable scorecard so "how good is my site?" has a
+repeatable answer. Each check is **PASS (1.0) / WARN (0.5) / FAIL (0.0)**; **INFO** is not scored.
+
+- **Dimension score** = `100 × (pass + 0.5·warn) / (scored checks)`, as a **letter grade**:
+  **A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, F < 60**. A dimension with no scored checks shows `n/a`.
+- **Overall** = the **weight-averaged** dimension score. Default weights (sum 100):
+  SEO 20 · Security/hygiene 18 · Crawlability 15 · Brand assets 13 · Social 12 · Performance 12 ·
+  AI-readiness 10. (`--url` mode also scores Security/Performance; `--dir` mode shows them `n/a`.)
+- **`--json`** emits the same scorecard machine-readably (overall + per-dimension score/grade +
+  every check) for diffing runs or wiring into CI.
+
+The grade is the **shape at a glance**; the *report* is still judgment. Re-grade a dimension only
+with evidence the heuristic was wrong (e.g. a JS-rendered SPA hid content from the fetch), and say
+so. Weight the grades by the target's **type and community** — a C on Social may not matter for an
+internal API, while a C on Security is urgent for a store.
+
+### Then prioritize fixes by impact × effort
+
 - **Impact:** how much it moves the primary goal (signups/sales/stars/reads/installs).
 - **Effort:** rough time/complexity to ship.
 
 Lead with **high-impact / low-effort** (the meta description, `og:image`, `robots.txt`+sitemap,
-HTTPS/headers, a tagline) — these are minutes of work for outsized SEO/share/trust gains. Then
-high-impact / higher-effort (perf overhaul, SSR for a SPA, a content/SEO program). Note but
-de-prioritize low-impact items. Give each a one-line "why it matters **for this type**." A short
-overall grade per dimension (strong/adequate/weak/missing) helps the user see the shape at a glance.
+HTTPS/headers, a tagline) — minutes of work for outsized SEO/share/trust gains. Then high-impact /
+higher-effort (perf overhaul, SSR for a SPA, a content/SEO program). Note but de-prioritize
+low-impact items. Give each a one-line "why it matters **for this type**."
 
 ## Limits & honesty
 A URL scan is a black box: it can't see server config, the codebase, analytics, or conversion

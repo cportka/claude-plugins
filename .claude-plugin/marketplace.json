@@ -10,30 +10,30 @@
     {
       "name": "video-bug-analyzer",
       "source": "./plugins/video-bug-analyzer",
-      "description": "Diagnose UI and rendering bugs from a screen recording. Give Claude a video and roughly when the bug happens; the plugin extracts frames — an overview contact sheet, scene-cut detection, or per-timestamp zoom with before/after strips — then reasons over them to pinpoint the defect. Also quantifies FPS stutter / dropped frames and freeze gaps (--stutter). Strong on persistent visual bugs, honest about flicker, timing, and off-screen state. Requires ffmpeg (auto-installs where the sandbox allows).",
+      "description": "Diagnose UI and rendering bugs from a screen recording. Give Claude a video and roughly when the bug happens; the plugin extracts frames — an overview contact sheet, scene-cut detection, or per-timestamp zoom with before/after strips — then reasons over them to pinpoint the defect. Also quantifies FPS stutter / dropped frames and freeze gaps (--stutter) and frame-pacing jitter from the real presentation timestamps (--pacing). Strong on persistent visual bugs, honest about flicker, timing, and off-screen state. Requires ffmpeg (auto-installs where the sandbox allows).",
       "category": "debugging",
-      "tags": ["video", "screen-recording", "debugging", "bug", "stutter", "fps"]
+      "tags": ["video", "screen-recording", "debugging", "bug", "stutter", "fps", "pacing"]
     },
     {
       "name": "repo-bootstrap",
       "source": "./plugins/repo-bootstrap",
-      "description": "Set up a repo to use portka-tools plugins (writes .claude/settings.json + optional CI; --print-only for a classifier-safe manual mode), and optionally install the Portka standard setup: a workflow CLAUDE.md, a git/gh permissions allowlist, and an enforced SemVer version sync that binds to the repo's existing version (package.json / pyproject.toml / Cargo.toml / VERSION / README) with a basic test suite.",
+      "description": "Set up a repo to use portka-tools plugins (writes .claude/settings.json + optional CI; --print-only for a classifier-safe manual mode), and optionally install the Portka standard setup: a workflow CLAUDE.md, a git/gh permissions allowlist, and an enforced SemVer version sync bound to the repo's existing version (package.json / pyproject.toml / Cargo.toml / VERSION / README) with a basic test suite — plus a native version-sync test (node:test / unittest) for JS/Python repos.",
       "category": "workflow",
       "tags": ["bootstrap", "scaffold", "setup", "marketplace"]
     },
     {
       "name": "app-website-evaluator",
       "source": "./plugins/app-website-evaluator",
-      "description": "Evaluate an app or website — SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth (communities to join/submit to, PR wins) — tailored to the site's type and community.",
+      "description": "Evaluate an app or website with a standardized scorecard — each dimension 0-100 + letter grade, a weight-averaged overall, and optional --json. Covers SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth (communities to join/submit to, PR wins) — tailored to the site's type and community.",
       "category": "analysis",
-      "tags": ["seo", "audit", "website", "growth", "performance", "accessibility"]
+      "tags": ["seo", "audit", "website", "growth", "performance", "accessibility", "scorecard"]
     },
     {
       "name": "tab-chord-formatter",
       "source": "./plugins/tab-chord-formatter",
-      "description": "Format a messy guitar tab or chord sheet into a clean, standard, readable layout. Standardizes [Section] labels, aligns chords over the right lyric syllables, tidies a metadata header (Title/Artist/Capo/Key/Tuning) and 6-line ASCII tab blocks — a deterministic script does the cleanup, the skill applies judgment to re-align and infer structure.",
+      "description": "Format a messy guitar tab or chord sheet into a clean, readable layout for screen, or render a consistent monospace PDF songbook (one or many songs, a target songs-per-page) via headless Chromium. Standardizes [Section] labels, aligns chords over the right lyric syllables, tidies a metadata header (Title/Artist/Capo/Key/Tuning) and 6-line ASCII tab blocks — a deterministic script does the cleanup and rendering, the skill applies judgment to re-align and infer structure.",
       "category": "music",
-      "tags": ["tab", "chords", "guitar", "music", "lyrics", "formatter"]
+      "tags": ["tab", "chords", "guitar", "music", "lyrics", "formatter", "pdf", "songbook"]
     }
   ]
 }

@@ -680,6 +680,18 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a stall test clip (--stutter)"
     fi
+    # --pacing: read per-frame timestamps -> interval timeline (1.2.0; ffprobe + python3). A normal
+    # 10fps CFR clip yields the t,interval_ms header and a "Pacing: median ~100 ms" headline.
+    if command -v ffprobe >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+      _pace="$(bash "$SCRIPT" --video "$clip" --pacing 2>"$tmp/pace.err" || true)"
+      if [[ "$(head -n1 <<<"$_pace")" == "t,interval_ms" ]] && grep -q 'Pacing: median' "$tmp/pace.err"; then
+        pass "--pacing emits a t,interval_ms timeline + median/p95/max headline"
+      else
+        fail "--pacing timeline not as expected"
+      fi
+    else
+      skip "ffprobe/python3 not available (--pacing e2e)"
+    fi
     # --motion: a static segment then a moving one should read ~0 motion early and a clear spike
     # later (issue #39). Build gray(1s)+testsrc(1s). Needs python3.
     if ! command -v python3 >/dev/null 2>&1; then
@@ -951,7 +963,33 @@ if [[ -f "$BOOTSTRAP" ]]; then
   else
     fail "scaffolded suite is red on a mature repo (#59 regression)"
   fi
+  # Native version-sync test (1.2.0): a package.json repo also gets a node:test that passes.
+  if [[ -f "$mr/tests/version-sync.test.mjs" ]]; then
+    pass "portka-standard emits a native node:test version-sync test for a package.json repo"
+    if command -v node >/dev/null 2>&1; then
+      if ( cd "$mr" && node --test >/dev/null 2>&1 ); then
+        pass "scaffolded node:test version-sync passes (package.json 0.22.0 <-> CHANGELOG)"
+      else
+        fail "scaffolded node:test version-sync failed"
+      fi
+    else
+      skip "node not installed (native node:test)"
+    fi
+  else
+    fail "portka-standard did not emit the native node:test for a package.json repo"
+  fi
   rm -rf "$mr" "$mrh"
+  # A pyproject repo gets a unittest version-sync test that passes (python3 always present here).
+  pyr="$(mktemp -d)"; pyh="$(mktemp -d)"
+  printf '[project]\nname = "x"\nversion = "2.3.4"\n' > "$pyr/pyproject.toml"
+  printf '# Changelog\n\n## [2.3.4]\n- x\n' > "$pyr/CHANGELOG.md"
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$pyr" --home "$pyh" >/dev/null 2>&1
+  if [[ -f "$pyr/tests/test_version_sync.py" ]] && ( cd "$pyr" && python3 -m unittest discover -s tests >/dev/null 2>&1 ); then
+    pass "portka-standard emits a passing unittest version-sync for a pyproject repo"
+  else
+    fail "portka-standard pyproject native test missing or failing"
+  fi
+  rm -rf "$pyr" "$pyh"
 
   # --print-only writes nothing and prints both the settings JSON and the CLAUDE block.
   po="$(mktemp -d)"; poh="$(mktemp -d)"
@@ -1005,6 +1043,33 @@ H
     pass "evaluate-site.sh --dir flags a bare site's gaps"
   else
     fail "evaluate-site.sh --dir didn't flag the bare site"
+  fi
+  # Scoring (1.2.0): a Scorecard with a weighted overall that rates a complete site ABOVE a bare
+  # one. (Compare numeric scores — robust to the ANSI colour codes around the grade letter.)
+  _ovscore() { bash "$EVAL" --dir "$1" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' \
+                 | grep 'Overall (weighted)' | grep -oE '[0-9]+' | head -1; }
+  _gs="$(bash "$EVAL" --dir "$ev/good" 2>/dev/null || true)"
+  _good_sc="$(_ovscore "$ev/good")"; _bad_sc="$(_ovscore "$ev/bad")"
+  if grep -q 'Scorecard' <<<"$_gs" && [[ -n "$_good_sc" && -n "$_bad_sc" && "$_good_sc" -gt "$_bad_sc" ]]; then
+    pass "evaluate-site.sh scorecard rates a complete site above a bare one ($_good_sc > $_bad_sc)"
+  else
+    fail "evaluate-site.sh scorecard not discriminating (good=$_good_sc bad=$_bad_sc)"
+  fi
+  # --json: pure-JSON stdout with overall.score + per-dimension grades (needs python3).
+  if command -v python3 >/dev/null 2>&1; then
+    if bash "$EVAL" --dir "$ev/good" --json 2>/dev/null | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+assert isinstance(d["overall"]["score"],int) and d["overall"]["grade"]
+assert d["dimensions"] and all("score" in x and "grade" in x for x in d["dimensions"])
+assert d["tally"]["fail"]==0
+' 2>/dev/null; then
+      pass "evaluate-site.sh --json emits a valid machine-readable scorecard"
+    else
+      fail "evaluate-site.sh --json output is not valid/complete"
+    fi
+  else
+    skip "python3 not installed (evaluate-site.sh --json)"
   fi
   rm -rf "$ev"
 else
@@ -1177,6 +1242,13 @@ if grep -q 'mpdecimate' <<<"$_stut_dry" && grep -q 'freezedetect' <<<"$_stut_dry
 else
   fail "--stutter --dry-run did not print mpdecimate + freezedetect"
 fi
+# --pacing --dry-run prints the ffprobe frame-timestamp command (1.2.0).
+_pace_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --pacing --dry-run 2>/dev/null || true)"
+if grep -q 'ffprobe' <<<"$_pace_dry" && grep -q 'best_effort_timestamp_time' <<<"$_pace_dry" && grep -q 't,interval_ms' <<<"$_pace_dry"; then
+  pass "--pacing --dry-run prints the ffprobe frame-timestamp command"
+else
+  fail "--pacing --dry-run did not print the ffprobe command"
+fi
 # --motion --dry-run prints the tblend+signalstats command (issue #39).
 _mot_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --motion --fps 12 --dry-run 2>/dev/null || true)"
 if grep -q 'tblend=all_mode=difference' <<<"$_mot_dry" && grep -q 'signalstats' <<<"$_mot_dry"; then
@@ -1273,6 +1345,51 @@ else
     pass "format-tab.py is idempotent (format twice == once)"
   else
     fail "format-tab.py is not idempotent"
+  fi
+  # --- print mode (1.2.0): songbook split, monospace HTML, songs-per-page, dedent, PDF ---
+  {
+    printf 'Artist A \xe2\x80\x93 Song One\n\nC       G\nla la la\n\n'
+    printf 'Artist B \xe2\x80\x93 Song Two\n\n        Am  F\n        indented lyric line\n\n'
+    printf 'Artist C \xe2\x80\x93 Song Three\n\nG\nthree\n\n'
+    printf 'Artist D \xe2\x80\x93 Song Four\n\nD\nfour\n'
+  } > "$_ftmp/book.txt"
+  python3 "$FMT" --print --html "$_ftmp/p1.html" "$_ftmp/book.txt" 2>/dev/null
+  python3 "$FMT" --print --html "$_ftmp/p2.html" --songs-per-page 2 "$_ftmp/book.txt" 2>/dev/null
+  if [[ -f "$_ftmp/p1.html" ]] \
+     && [[ "$(grep -c 'class="song"' "$_ftmp/p1.html")" -eq 4 ]] \
+     && grep -q 'white-space: pre' "$_ftmp/p1.html" && grep -qi 'Courier New' "$_ftmp/p1.html"; then
+    pass "format-tab.py --print --html renders the songbook in a monospace layout"
+  else
+    fail "format-tab.py --print --html did not render 4 songs / monospace"
+  fi
+  _p1="$(grep -c 'class="page"' "$_ftmp/p1.html")"; _p2="$(grep -c 'class="page"' "$_ftmp/p2.html")"
+  if [[ "$_p1" -eq 4 && "$_p2" -eq 2 ]]; then
+    pass "format-tab.py --songs-per-page paginates (4 songs: 1/page=4 pages, 2/page=2)"
+  else
+    fail "format-tab.py --songs-per-page wrong (1/page=$_p1, 2/page=$_p2)"
+  fi
+  if grep -q '^indented lyric line' "$_ftmp/p1.html"; then
+    pass "format-tab.py --print dedents each song (default on)"
+  else
+    fail "format-tab.py --print did not dedent the indented song"
+  fi
+  # PDF e2e — run ONLY against a known-good headless Chromium from a Playwright browsers dir.
+  # We deliberately do NOT use any chrome on $PATH: a generic CI runner's browser may not be
+  # headless-capable and could hang. `timeout` is a hard backstop on top of the script's own.
+  if python3 - <<'PY'
+import os, glob, sys
+b = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
+sys.exit(0 if (b and glob.glob(os.path.join(b, "chromium-*/chrome-linux/chrome"))) else 1)
+PY
+  then
+    if timeout 130 python3 "$FMT" --print --pdf "$_ftmp/book.pdf" "$_ftmp/book.txt" 2>/dev/null \
+       && [[ -s "$_ftmp/book.pdf" ]] && head -c4 "$_ftmp/book.pdf" | grep -q 'PDF'; then
+      pass "format-tab.py --print --pdf produces a valid PDF"
+    else
+      fail "format-tab.py --print --pdf did not produce a valid PDF"
+    fi
+  else
+    skip "no Playwright Chromium (format-tab.py --pdf e2e)"
   fi
   rm -rf "$_ftmp"
 fi

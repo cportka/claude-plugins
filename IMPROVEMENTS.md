@@ -74,7 +74,6 @@ form and are triaged into the items below.
 - The native version-sync test covers JS + Python; **Cargo** (and other ecosystems) still get only
   the bash runner. And it's emitted *alongside* `tests/run-tests.sh` — could **replace** the
   standalone runner (and rewire CI to the native command) when a manifest is present, per #59.
-- Could offer a vanilla (non-Portka) settings profile.
 
 ## app-website-evaluator
 

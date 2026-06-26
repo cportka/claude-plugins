@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 1.1.2 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+> **Version:** 1.2.0 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -11,10 +11,10 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 
 | Plugin | Version | What it does |
 | :-- | :-- | :-- |
-| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.1.2 | Analyze a screen recording — extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips) and reason over them, plus analysis modes: black-screen detection, ROI OCR, feature measurement, palettes, cross-clip diff/compare, stutter / dropped-frame + freeze gaps (`--stutter`), motion & saturation timelines. |
-| [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.1.2 | Onboard a repo to this marketplace — safely merge `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run`/`--print-only` and a one-paste `/plugin` CLI fallback. With `--portka-standard`, also install the Portka standard: a workflow `CLAUDE.md`, a git/`gh` permissions allowlist, and an enforced SemVer version sync that binds to the repo's existing version (manifest / `VERSION` / `README`) + basic test suite. |
-| [`app-website-evaluator`](./plugins/app-website-evaluator) | 1.0.1 | Evaluate an app/website — SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth (communities to join/submit to, PR wins) — tailored to the site's type and community. |
-| [`tab-chord-formatter`](./plugins/tab-chord-formatter) | 1.0.0 | Format a messy guitar tab/chord sheet into a clean, standard, readable layout — standardized `[Section]` labels, chords aligned over the right lyrics, a tidy metadata header (Title/Artist/Capo/Key/Tuning), and well-formed 6-line ASCII tab blocks. |
+| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.2.0 | Analyze a screen recording — extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips) and reason over them, plus analysis modes: black-screen detection, ROI OCR, feature measurement, palettes, cross-clip diff/compare, stutter / dropped-frame + freeze gaps (`--stutter`), frame-pacing jitter (`--pacing`), motion & saturation timelines. |
+| [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.2.0 | Onboard a repo to this marketplace — safely merge `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run`/`--print-only` and a one-paste `/plugin` CLI fallback. With `--portka-standard`, also install the Portka standard: a workflow `CLAUDE.md`, a git/`gh` permissions allowlist, and an enforced SemVer version sync bound to the repo's existing version + a basic test suite (and a native `node:test`/`unittest` version-sync test for JS/Python repos). |
+| [`app-website-evaluator`](./plugins/app-website-evaluator) | 1.2.0 | Evaluate an app/website with a standardized scorecard — each dimension 0–100 + letter grade, a weighted overall, and optional `--json`. Covers SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth (communities to join/submit to, PR wins) — tailored to the site's type and community. |
+| [`tab-chord-formatter`](./plugins/tab-chord-formatter) | 1.2.0 | Format a messy guitar tab/chord sheet into a clean, readable layout for screen, or render a consistent monospace **PDF songbook** (one or many songs, a target songs-per-page) — standardized `[Section]` labels, chords aligned over the right lyrics, a tidy metadata header, and well-formed 6-line ASCII tab blocks. |
 
 ## Add a plugin
 

@@ -10,9 +10,12 @@ form and are triaged into the items below.
 **Strengths**
 - Repeatable, bug-tuned frame extraction (dense / scene-change / contact-sheet) plus a deep set
   of analysis modes (blackdetect, OCR, measure, probe, palette, ab/compare, cadence/stutter,
-  motion, saturation) — most emit a CSV/report and exit, so they compose.
+  pacing, motion, saturation) — most emit a CSV/report and exit, so they compose.
 - `--stutter`/`--fps-drops` (1.1.2) quantifies FPS stalls: effective-fps-per-window **and** the
   longest freeze gaps (freezedetect), so a "feels choppy" report becomes timestamps + durations.
+- `--pacing` (1.2.0) reads the real per-frame presentation timestamps (ffprobe) for a frame-pacing
+  /jitter timeline — catches uneven timing even when every frame's content differs (which the
+  content-based `--cadence`/`--stutter` can't), with median/p95/max + worst-hitch timestamps.
 - Contact-sheet reads a whole span in one image (big token saver); the skill states confidence
   and caveats instead of bluffing; ffmpeg is handled (SessionStart hook + on-first-use fallback).
 
@@ -62,12 +65,16 @@ form and are triaged into the items below.
 - `--print-only` emits the `settings.json` (+ `CLAUDE.md`) for a human paste when the auto-mode
   classifier refuses an agent write (#59) — the only reliable path to a committed file in some
   web sessions.
+- `--portka-standard` also emits a **native version-sync test** (1.2.0) in the repo's own runner —
+  `node:test` for a `package.json` repo, `unittest` for a `pyproject.toml` repo — so `npm test` /
+  `pytest` enforces the version↔CHANGELOG sync, not just the standalone bash runner.
 
 **Weaknesses / ideas (not yet built)**
 - Requires `python3` (no pure-bash/`jq` fallback yet).
-- Could emit the version-sync check into the repo's **native test runner** (vitest / pytest /
-  cargo test) instead of a standalone `tests/run-tests.sh`, and offer a vanilla (non-Portka)
-  settings profile.
+- The native version-sync test covers JS + Python; **Cargo** (and other ecosystems) still get only
+  the bash runner. And it's emitted *alongside* `tests/run-tests.sh` — could **replace** the
+  standalone runner (and rewire CI to the native command) when a manifest is present, per #59.
+- Could offer a vanilla (non-Portka) settings profile.
 
 ## app-website-evaluator
 
@@ -76,13 +83,33 @@ form and are triaged into the items below.
   its own advice — against what's best for *that* kind of site and community.
 - `evaluate-site.sh` gives a concrete evidence base from a live URL **or** a local build (offline),
   spanning crawlability, SEO, social, assets, AI-readiness (`llms.txt`), security headers, perf.
+- **Standardized scorecard** (1.2.0): each dimension 0–100 + letter grade, a weight-averaged overall,
+  and `--json` — a repeatable, comparable answer (and a CI-wireable artifact), not a loose checklist.
 
 **Weaknesses / ideas (not yet built)**
 - HTML checks are grep-heuristic (best-effort), not a DOM parse; a JS-rendered SPA can hide content
   from a simple fetch — note it and prefer the built/SSR output or repo.
 - No real Core Web Vitals / Lighthouse run (points the user there); could integrate if a headless
-  browser is available. No automated link-check or a11y contrast scan yet.
-- Could emit a machine-readable JSON report and a letter grade per dimension.
+  browser is available (Chromium now ships for the tab PDF — reuse it). No automated link-check or
+  a11y contrast scan yet. Dimension **weights are fixed**; could auto-tune them by site type.
+
+## tab-chord-formatter
+
+**Strengths**
+- Clean split of concerns: a deterministic script does the safe cleanup (HTML/entity decode,
+  whitespace, section labels) and never touches a line's internal alignment; the skill does the
+  judgment (re-aligning chords over syllables, inferring sections).
+- **Print mode → PDF** (1.2.0): a consistent single-font/size monospace songbook via headless
+  Chromium, multi-song aware, `--songs-per-page` (default 1), `--dedent` to normalize ragged
+  margins; `--html` for a Chromium-free path.
+
+**Weaknesses / ideas (not yet built)**
+- Song splitting is a heuristic (`Artist – Title` un-indented + blank-preceded, or a form-feed); an
+  explicit per-song separator or a front-matter header would be more robust for odd songbooks.
+- Wide ASCII-tab blocks can overflow the page at the default size — today the lever is `--size`;
+  could **auto-fit** the font to the widest line, or offer landscape / a transpose-and-rewrap.
+- No structured export (ChordPro `.pro` / `.chordpro`, or an HTML view for the screen mode) yet;
+  no built-in transpose/capo math.
 
 ## Repo / tests
 

@@ -659,6 +659,81 @@ RUNTESTS
     echo "Wrote $RUNTESTS_PATH"
   fi
 
+  # Native version-sync test (1.2.0): when the repo has a JS/Python manifest, also emit the sync
+  # check in its OWN runner (node:test / unittest) so `npm test` / `pytest` enforces it — not just
+  # the standalone bash runner the #59 reporter wanted to avoid. (Cargo/others: see IMPROVEMENTS.)
+  case "${NATIVE_SRC:-}" in
+    package.json)
+      NT="$DIR/tests/version-sync.test.mjs"
+      if [[ -n "$NO_WRITE" ]]; then
+        echo "[dry-run] would write $NT (node:test version sync)"
+      elif [[ -e "$NT" ]]; then
+        echo "exists, leaving as-is: $NT" >&2
+      else
+        mkdir -p "$DIR/tests"
+        cat > "$NT" <<'MJS'
+// version-sync.test.mjs — assert package.json's version is valid SemVer and documented in
+// CHANGELOG.md. Scaffolded by repo-bootstrap (Portka standard); run with `node --test` (or vitest).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url))).version;
+
+test("version is valid SemVer", () => {
+  assert.match(version, /^\d+\.\d+\.\d+([-+][0-9A-Za-z.]+)?$/);
+});
+
+test("CHANGELOG.md documents the current version", () => {
+  const log = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+  assert.ok(log.includes(version), `CHANGELOG.md has no entry for ${version}`);
+});
+MJS
+        echo "Wrote $NT (node:test — run with 'node --test')"
+      fi
+      ;;
+    pyproject.toml)
+      NT="$DIR/tests/test_version_sync.py"
+      if [[ -n "$NO_WRITE" ]]; then
+        echo "[dry-run] would write $NT (unittest version sync)"
+      elif [[ -e "$NT" ]]; then
+        echo "exists, leaving as-is: $NT" >&2
+      else
+        mkdir -p "$DIR/tests"
+        cat > "$NT" <<'PYT'
+# test_version_sync.py — assert pyproject.toml's version is valid SemVer and documented in
+# CHANGELOG.md. Scaffolded by repo-bootstrap (Portka standard); run with `pytest` or `python -m unittest`.
+import re
+import pathlib
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def project_version():
+    txt = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', txt)
+    return m.group(1) if m else ""
+
+
+class VersionSync(unittest.TestCase):
+    def test_semver(self):
+        self.assertRegex(project_version(), r"^\d+\.\d+\.\d+([-+][0-9A-Za-z.]+)?$")
+
+    def test_changelog_has_version(self):
+        v = project_version()
+        self.assertTrue(v, "no version in pyproject.toml")
+        self.assertIn(v, (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
+
+
+if __name__ == "__main__":
+    unittest.main()
+PYT
+        echo "Wrote $NT (unittest — run with 'pytest' or 'python -m unittest')"
+      fi
+      ;;
+  esac
+
   # CI for the standard: a specifically-named workflow that runs the suite. Skip when the repo
   # already has CI so we don't collide with / duplicate it, unless --force (#59 minor).
   WF_STD="$DIR/.github/workflows/portka-standard.yml"

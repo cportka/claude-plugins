@@ -1,7 +1,7 @@
 {
   "name": "app-website-evaluator",
-  "version": "1.2.0",
-  "description": "Evaluate an app or website and produce a prioritized, evidence-backed report with a standardized scorecard: each dimension scored 0-100 with a letter grade and a weight-averaged overall (plus optional --json). Covers SEO and crawlability (robots.txt, sitemap, metadata, structured data), AI-readiness (llms.txt, semantic HTML, machine-readable data), social/sharing assets (Open Graph, Twitter cards, favicons, logo, tagline), security and standards best-practices, performance/load-time, and growth — which communities to join or submit to, and concrete PR/advertising wins — all tailored to the specific type of app/website and its community.",
+  "version": "1.3.0",
+  "description": "Evaluate an app or website and produce a prioritized, evidence-backed report with a standardized, coverage-honest scorecard: each dimension scored 0-100 with a letter grade and a weight-averaged overall that is starred when part of the weight could not be assessed (e.g. Security in dir mode), plus optional --json. AI-readiness parse-validates JSON-LD (an invalid block FAILs) and credits rich schema types (FAQPage/Review/Article/HowTo). Covers SEO and crawlability, AI-readiness, social/sharing assets, security and standards best-practices, performance/load-time, and growth — which communities to join or submit to, and concrete PR/advertising wins — all tailored to the specific type of app/website and its community.",
   "author": {
     "name": "Chris Portka"
   },

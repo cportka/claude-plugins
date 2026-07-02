@@ -16,6 +16,10 @@ form and are triaged into the items below.
 - `--pacing` (1.2.0) reads the real per-frame presentation timestamps (ffprobe) for a frame-pacing
   /jitter timeline — catches uneven timing even when every frame's content differs (which the
   content-based `--cadence`/`--stutter` can't), with median/p95/max + worst-hitch timestamps.
+- `--stack` (1.3.0, #62) is the ROI time-stack: crop a band (scrub bar / HUD / status row) and tile
+  the samples vertically so one image reads that region's evolution across the clip.
+- Output hygiene (1.3.0, #64): a run never overwrites a previous extraction — collisions redirect
+  into a mode+window subdir. `--check-update` (#62) spots a stale install vs the marketplace.
 - Contact-sheet reads a whole span in one image (big token saver); the skill states confidence
   and caveats instead of bluffing; ffmpeg is handled (SessionStart hook + on-first-use fallback).
 
@@ -84,6 +88,9 @@ form and are triaged into the items below.
   spanning crawlability, SEO, social, assets, AI-readiness (`llms.txt`), security headers, perf.
 - **Standardized scorecard** (1.2.0): each dimension 0–100 + letter grade, a weight-averaged overall,
   and `--json` — a repeatable, comparable answer (and a CI-wireable artifact), not a loose checklist.
+- **Coverage-honest overall** (1.3.0, #63): a partial-coverage grade is starred (`A*`) with the
+  unassessed weight named, so a dir-mode A can't overstate; AI-readiness **parse-validates JSON-LD**
+  (invalid → FAIL) and credits rich schema types (FAQPage/Review/Article/HowTo) — real AEO signals.
 
 **Weaknesses / ideas (not yet built)**
 - HTML checks are grep-heuristic (best-effort), not a DOM parse; a JS-rendered SPA can hide content
@@ -91,6 +98,8 @@ form and are triaged into the items below.
 - No real Core Web Vitals / Lighthouse run (points the user there); could integrate if a headless
   browser is available (Chromium now ships for the tab PDF — reuse it). No automated link-check or
   a11y contrast scan yet. Dimension **weights are fixed**; could auto-tune them by site type.
+- **Sitemap freshness** (#63's remaining ask): the sitemap check is presence-only; could parse
+  `<lastmod>` recency and reward a fresh sitemap as an AI-readiness/crawlability signal.
 
 ## tab-chord-formatter
 

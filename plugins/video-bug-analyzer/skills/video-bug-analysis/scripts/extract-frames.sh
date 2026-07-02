@@ -24,8 +24,10 @@
 #   extract-frames.sh --video <path> --pacing                        # frame-timestamp (jitter) timeline
 #   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
 #   extract-frames.sh --video <path> --saturation [--fps <n>]        # colour-saturation timeline
+#   extract-frames.sh --video <path> --stack --crop <W:H:X:Y>        # ROI time-stack (band over time)
 #   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
 #   extract-frames.sh --video <path> --intro                        # load/splash preset (first ~2s)
+#   extract-frames.sh --check-update                                 # installed vs marketplace version
 #
 # Options:
 #   --video <path>      Input video file (required).
@@ -61,7 +63,8 @@
 #                       tokens. Never upscales smaller clips. Default: 1280.
 #   --out <dir>         Output directory for PNG frames. Default: ./.frames/<video-name>
 #                       (per-video, so a second clip doesn't clobber the first); ./.frames
-#                       in --strip mode.
+#                       in --strip mode. If the dir already holds a previous run's PNGs, this
+#                       run goes into a mode+window subdir instead of overwriting (see #64).
 #   --dry-run           Print the exact ffmpeg command(s) this would run, without running
 #                       them (no ffmpeg needed). Lets a live agent that can't load the
 #                       plugin mid-session copy the commands and run them by hand.
@@ -137,6 +140,14 @@
 #                       0 grey .. ~180 vivid) per sampled frame, so "clownish/over-saturated vs
 #                       muted/elegant" is measurable and verifiable after a fix. Sample rate from
 #                       --fps; honors --start/--end. (ffmpeg signalstats; needs python3.)
+#   --stack             ROI time-stack: crop a fixed band (--crop, required — a scrub bar, HUD,
+#                       status row) and tile the samples VERTICALLY into stack_0001.png, so one
+#                       image reads that region's evolution top-to-bottom across the clip. Sample
+#                       rate from --fps; honors --start/--end and --label; spills into
+#                       stack_0002.png past 48 rows.
+#   --check-update      Compare this installed version against the marketplace's latest
+#                       (raw plugin.json on GitHub main) and print the update command if it
+#                       trails. Needs no --video; degrades gracefully offline. Exits 0.
 #   --compare-videos a,b  A/B comparison sheet: ONE image, a row per clip, each clip sampled
 #                       into <--cols> tiles spread across its OWN duration (normalized phase
 #                       axis), so two clips of different lengths line up by % through the
@@ -179,7 +190,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.2.0"
+VBA_VERSION="1.3.0"
 
 VIDEO=""
 START=""
@@ -227,6 +238,8 @@ CMP_VIDEOS=""  # --compare-videos a,b -> one stacked phase-aligned contact sheet
 INTRO=""       # --intro = load/splash preset (first ~2s, dense contact + labels)
 SATURATION=""  # --saturation prints a per-frame colour-saturation timeline, exits
 PACING=""      # --pacing prints a per-frame timestamp-interval (jitter) timeline, exits (1.2.0)
+STACK=""       # --stack tiles a cropped ROI vertically across time -> stack_*.png (1.3.0, #62)
+CHECK_UPDATE="" # --check-update compares installed vs marketplace version, exits (1.3.0, #62)
 FPS_SET=""     # track whether --fps was passed (so presets don't override it)
 
 usage() {
@@ -412,6 +425,8 @@ while [[ $# -gt 0 ]]; do
     --intro) INTRO=1; shift ;;                        # first-seconds load preset
     --saturation) SATURATION=1; shift ;;             # colour-saturation timeline
     --pacing) PACING=1; shift ;;                      # ADDED (1.2.0): frame-pacing/jitter timeline
+    --stack) STACK=1; shift ;;                        # ADDED (1.3.0, #62): ROI time-stack
+    --check-update) CHECK_UPDATE=1; shift ;;          # ADDED (1.3.0, #62): version check, exit
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -431,6 +446,42 @@ fi
 # --text preset bumps contact tiles to a code/transcript-legible width unless the
 # user set --tile-width explicitly.
 [[ -n "$TEXT" && -z "$TILEW_SET" ]] && TILEW="640"
+
+# --stack needs its ROI up front — fail before any ffmpeg install/probe work (1.3.0, #62).
+if [[ -n "$STACK" && -z "$CROP" ]]; then
+  echo "Error: --stack needs --crop W:H:X:Y (the region to track over time)." >&2
+  exit 2
+fi
+
+# --check-update: compare the installed version against the marketplace's main branch and
+# exit. Needs no --video; degrades gracefully offline (#62's "installed-vs-marketplace" ask —
+# a stale install is invisible otherwise, since installed copies are pinned by version).
+if [[ -n "$CHECK_UPDATE" ]]; then
+  _inst="$(_plugin_version)"
+  # URL overridable for tests / forks. `|| true` on each pipeline: under set -euo pipefail a
+  # failing curl (offline rc 6/7, timeout 28, 404->22) would otherwise kill the script BEFORE
+  # the graceful fallback ever ran (review finding on 1.3.0).
+  _mf_url="${VBA_UPDATE_URL:-https://raw.githubusercontent.com/cportka/claude-plugins/main/plugins/video-bug-analyzer/.claude-plugin/plugin.json}"
+  _remote=""
+  if command -v curl >/dev/null 2>&1; then
+    _remote="$(curl -fsSL --max-time 8 "$_mf_url" 2>/dev/null | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
+  elif command -v wget >/dev/null 2>&1; then
+    _remote="$(wget -qO- --timeout=8 "$_mf_url" 2>/dev/null | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
+  fi
+  if [[ -z "$_remote" ]]; then
+    echo "video-bug-analyzer $_inst installed; could not reach the marketplace to compare (offline or blocked)." >&2
+  elif [[ "$_remote" == "$_inst" ]]; then
+    echo "video-bug-analyzer $_inst is up to date with the marketplace."
+  elif [[ "$(printf '%s\n%s\n' "$_inst" "$_remote" | sort -V | head -n1)" == "$_inst" ]]; then
+    # installed sorts LOWER -> genuinely trailing
+    echo "video-bug-analyzer $_inst installed; marketplace has $_remote."
+    echo "Update with:  claude plugin update video-bug-analyzer@portka-tools  (then /reload-plugins or a new session)"
+  else
+    # installed sorts HIGHER (a dev checkout / pre-release) — don't advise a downgrade
+    echo "video-bug-analyzer $_inst installed; ahead of the marketplace ($_remote) — a dev or pre-release copy."
+  fi
+  exit 0
+fi
 
 # --video is required EXCEPT in --strip and --compare-videos modes (they name their
 # own inputs / operate on existing frames).
@@ -930,10 +981,11 @@ run_cadence() {
   local tf; tf="$(mktemp)"
   ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "mpdecimate,showinfo" -an -f null - 2>&1 \
     | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' > "$tf" || true
-  python3 - "${WINDOW}" "$base" "${rfr:-0}" "${afr:-0}" "${dur:-0}" "$tf" <<'PY'
+  python3 - "${WINDOW}" "$base" "${rfr:-0}" "${afr:-0}" "${dur:-0}" "$tf" "${START:+1}${END:+1}" <<'PY'
 import sys, math
 window=float(sys.argv[1]) or 0.5
 base=float(sys.argv[2])
+scoped=bool(sys.argv[7]) if len(sys.argv) > 7 else False   # --start/--end given? (1.3.0, #64)
 def fr(s):
     try:
         if '/' in s:
@@ -968,6 +1020,8 @@ if nominal>0 and eff>0 and eff < 0.85*nominal:
     e.write("Effective cadence is well below nominal -> dropped/duplicated frames (stutter). Choppiest windows:\n")
     for ws,cnt,fps in sorted(rows, key=lambda r:r[2])[:3]:
         e.write("  @%.2fs: %.1f fps (%d unique in %.2fs)\n" % (ws, fps, cnt, window))
+    if not scoped:   # whole-clip scan: pre-roll (typing, tab-switching) can top this list (#64)
+        e.write("(Whole clip scanned - pre-roll like URL-bar typing can rank here; re-run with --start/--end to scope to the suspect window.)\n")
 else:
     e.write("Cadence looks steady (effective near nominal).\n")
 PY
@@ -1155,6 +1209,39 @@ PY
   rm -f "$mfile"
 }
 
+# Never silently overwrite a previous run (#64): the default per-video dir plus sequential
+# names (contact_0001.png …) meant a second extraction over a different window clobbered the
+# first. If the target dir already holds PNGs, write this run into a mode+window-tagged
+# subdirectory (counter-suffixed if THAT collides too) and say so — earlier frames stay
+# untouched. Runs in --dry-run as well, so printed commands target the same dir a real run
+# would. Skipped for analysis modes (they write no PNGs — no junk dirs, no misleading note).
+# `find` (not a glob) so metacharacters in the video name can't bypass the check.
+_has_pngs() { [[ -d "$1" ]] && [[ -n "$(find "$1" -maxdepth 1 -name '*.png' -print -quit 2>/dev/null)" ]]; }
+_writes_pngs=1
+for _flag in "$BLACKDETECT" "$OCR_ROI" "$MEASURE" "$PROBE" "$PALETTE" "$AB" "$CADENCE" \
+             "$MOTION" "$SATURATION" "$PACING" "$LIST_SCENES"; do
+  [[ -n "$_flag" ]] && _writes_pngs=""
+done
+if [[ -n "$_writes_pngs" ]] && _has_pngs "$OUT"; then
+  _tag="dense"
+  [[ -n "$SCENE"      ]] && _tag="scene"
+  [[ -n "$CONTACT"    ]] && _tag="contact"
+  [[ -n "$DIFF"       ]] && _tag="diff"
+  [[ -n "$STACK"      ]] && _tag="stack"
+  [[ -n "$TIMESTAMPS" ]] && _tag="ts"
+  [[ -n "$STRIP"      ]] && _tag="strip"
+  [[ -n "$CMP_VIDEOS" ]] && _tag="compare"
+  _win="${START:-0}-${END:-end}"
+  _sub="${_tag}_$(printf '%s' "$_win" | tr ':/' '..')"
+  # a rerun with the SAME mode+window would land in the same subdir — bump a counter until free.
+  _n=2
+  while _has_pngs "$OUT/$_sub"; do
+    _sub="${_tag}_$(printf '%s' "$_win" | tr ':/' '..')_${_n}"
+    _n=$(( _n + 1 ))
+  done
+  echo "Note: $OUT already has frames from a previous run — writing into $OUT/$_sub/ instead (nothing overwritten)." >&2
+  OUT="$OUT/$_sub"
+fi
 [[ -n "$DRY_RUN" ]] || mkdir -p "$OUT"   # don't create dirs in --dry-run
 
 # --strip mode — stitch two EXISTING frames into a before/after strip (no --video).
@@ -1388,6 +1475,36 @@ elif [[ -n "$CONTACT" ]]; then
     "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
     -vf "${SELECT},${CROP_VF}scale=${TILEW}:-1$(label_seg "$LBL_OFF"),tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
+elif [[ -n "$STACK" ]]; then
+  # ROI time-stack (1.3.0, #62): crop a fixed band (a scrub bar, an HUD, a status row) and tile
+  # the samples VERTICALLY, so one image reads that region's evolution top-to-bottom across the
+  # clip — the "region-of-interest time-stack" view the scrub-bar dogfood built by hand.
+  if [[ -z "$CROP_VF" ]]; then
+    echo "Error: --stack needs --crop W:H:X:Y (the region to track over time)." >&2
+    exit 2
+  fi
+  set_vfr_flag
+  # rows = samples in the selected span (span * fps), clamped so one sheet stays readable;
+  # extra samples spill into stack_0002.png, ... exactly like contact sheets do.
+  _sspan=""
+  _sstart="$(to_seconds "${START:-0}")"
+  if [[ -n "$END" ]]; then
+    _sspan="$(awk -v e="$(to_seconds "$END")" -v s="$_sstart" 'BEGIN{ print e-s }')"
+  elif command -v ffprobe >/dev/null 2>&1; then
+    # `|| true`: an ffprobe failure (corrupt/empty file) must fall back, not kill the script
+    # under set -euo pipefail (it even killed --dry-run — review finding on 1.3.0).
+    _sdur="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    [[ -n "$_sdur" ]] && _sspan="$(awk -v d="$_sdur" -v s="$_sstart" 'BEGIN{ print d-s }')"
+  fi
+  _srows=48   # unknown-span fallback = the same per-sheet cap the docs state (was 24)
+  if [[ -n "$_sspan" ]]; then
+    _srows="$(awk -v sp="$_sspan" -v f="$FPS" 'BEGIN{ r=int(sp*f+0.999); if(r<1)r=1; if(r>48)r=48; print r }')"
+  fi
+  echo "ROI time-stack mode (fps=$FPS, crop=$CROP, 1x${_srows} per sheet) -> $OUT" >&2
+  run_ff -hide_banner -loglevel error \
+    "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
+    -vf "fps=${FPS},${CROP_VF}scale=${TILEW}:-1$(label_seg "$LBL_OFF"),tile=1x${_srows}" \
+    "$OUT/stack_%04d.png"
 elif [[ -n "$DIFF" ]]; then
   # frame-difference mode — each frame is |this − previous| (tblend), so motion lights
   # up. Scan consecutive diffs to see what moved and infer direction (issue #16).

@@ -5,6 +5,57 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.3.0] - 2026-07-02
+
+Triage of the round-4 dogfood feedback (#62, #63, #64). `video-bug-analyzer` → 1.3.0 and
+`app-website-evaluator` → 1.3.0 (`repo-bootstrap` and `tab-chord-formatter` unchanged at 1.2.0).
+MINOR: new capabilities, all backward-compatible.
+
+### Fixed (video-bug-analyzer → 1.3.0, #64)
+- **Runs no longer overwrite each other.** The per-video default dir plus sequential names
+  (`contact_0001.png` …) meant a second extraction over a different time window silently clobbered
+  the first (the reporter lost their 0–6s overview to a 4.4–6.4s burst). If the output dir already
+  holds PNGs, the new run is written into a **mode+window-tagged subdirectory** (e.g.
+  `dense_1-2/`, counter-suffixed `dense_1-2_2/` when the same mode+window repeats) with a note —
+  earlier frames stay untouched. Applies to explicit `--out` and the default dir alike; also under
+  `--dry-run` (so printed commands match a real run), glob-safe for bracketed video names
+  (`clip [1].mp4`), and skipped for analysis modes that write no PNGs.
+- **`--cadence`/`--stutter` now flags an unscoped scan**: when run without `--start`/`--end`, the
+  choppiest-windows summary notes that pre-roll (URL-bar typing, tab switching) can top the
+  ranking and suggests re-running scoped — exactly the false-positive the reporter hit.
+
+### Added (video-bug-analyzer → 1.3.0, #62)
+- **`--stack` — ROI time-stack.** Crop a fixed band (`--crop`, required — a scrub bar, HUD, status
+  row) and tile the samples **vertically** into `stack_0001.png`, so one image reads that region's
+  evolution top-to-bottom across the clip. This is the "region-of-interest time-stack" view the
+  scrub-bar dogfood assembled by hand and asked to have first-class. Honors `--start`/`--end`,
+  `--fps`, `--label`; spills past 48 rows.
+- **`--check-update`** compares the installed version against the marketplace's `main`
+  (`plugin.json` fetched raw) and prints the `claude plugin update` command when trailing —
+  closing #62's "installed rc.6, didn't know it was stale" gap. SemVer-aware (`sort -V`): a dev
+  copy that is *ahead* of the marketplace is reported as such, not told to downgrade. Degrades
+  gracefully offline (survives `set -euo pipefail` on a failed fetch); needs no `--video`. (#62's other friction — a freshly enabled plugin not surfacing mid-session —
+  is the documented platform constraint: plugins load at session start; see IMPROVEMENTS.md.)
+
+### Fixed (app-website-evaluator → 1.3.0, #63)
+- **The overall grade is now coverage-honest.** Dir mode can't assess Security (18% of weight), but
+  the headline read "overall 100/100 (A)" as if it had. A partial-coverage overall is now
+  **starred** — `overall 100/100 (A*)` — with `* computed over N% of weight; unscored: …` and a
+  dir-mode hint to run `--url` (or Lighthouse) for Security + live perf. `--json` gains
+  `overall.coverage_weight_pct` + `overall.unscored`.
+
+### Added (app-website-evaluator → 1.3.0, #63)
+- **AI-readiness now parse-validates JSON-LD**: a block that fails to parse **FAILs** (invalid
+  JSON-LD is silently ignored by assistants/search — worse than none), clean blocks pass, and
+  **rich schema types** (FAQPage / HowTo / Review / AggregateRating / Product / Article / …) are
+  credited as a strong AEO signal, with an info nudge when only basic types are present.
+
+### Tests
+- New coverage: collision guard preserves run 1 + redirects run 2; `--stack` e2e + dry-run + early
+  `--crop` validation; `--check-update` online/offline; the cadence scoping hint (fires unscoped,
+  silent scoped); the starred partial-coverage scorecard + `--json` coverage fields; JSON-LD
+  parse-validation (broken → FAIL, FAQPage → credited).
+
 ## [1.2.0] - 2026-06-26
 
 A feature wave — one high-impact addition per plugin, so all four bump to 1.2.0 (the marketplace
@@ -809,6 +860,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.3.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.3.0
 [1.2.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.2.0
 [1.1.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.2
 [1.1.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.1

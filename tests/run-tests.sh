@@ -650,8 +650,65 @@ if command -v ffmpeg >/dev/null 2>&1; then
       else
         fail "--cadence timeline not as expected (lowrow='$_lowrow')"
       fi
+      # 1.3.0 (#64): an UNSCOPED choppy scan hints to re-run with --start/--end; a scoped one doesn't.
+      bash "$SCRIPT" --video "$tmp/dup.mp4" --cadence --start 0 --end 2 2>"$tmp/cads.err" >/dev/null || true
+      if grep -q 'Whole clip scanned' "$tmp/cad.err" && ! grep -q 'Whole clip scanned' "$tmp/cads.err"; then
+        pass "--cadence hints about scoping only on an unscoped scan"
+      else
+        fail "--cadence scoping hint wrong (unscoped/scoped)"
+      fi
     else
       skip "could not build a cadence test clip (--cadence)"
+    fi
+    # --stack (1.3.0, #62): crop a band and tile it vertically across time -> stack_0001.png.
+    if bash "$SCRIPT" --video "$clip" --stack --crop 80:40:0:0 --fps 4 --out "$tmp/stk" >/dev/null 2>&1 \
+       && [[ -f "$tmp/stk/stack_0001.png" ]]; then
+      pass "--stack produced a vertical ROI time-stack"
+    else
+      fail "--stack did not produce stack_0001.png"
+    fi
+    # Collision guard (1.3.0, #64): a second run into a dir that already has PNGs must NOT
+    # overwrite — it redirects into a mode+window subdir and says so.
+    bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 3 --out "$tmp/coll" >/dev/null 2>&1
+    _first_count="$(find "$tmp/coll" -maxdepth 1 -name 'frame_*.png' | wc -l)"
+    _first_sum="$(cksum < "$tmp/coll/frame_0001.png" 2>/dev/null | cut -d' ' -f1)"
+    bash "$SCRIPT" --video "$clip" --start 1 --end 2 --fps 3 --out "$tmp/coll" >/dev/null 2>"$tmp/coll.err"
+    _first_sum_after="$(cksum < "$tmp/coll/frame_0001.png" 2>/dev/null | cut -d' ' -f1)"
+    if grep -q 'previous run' "$tmp/coll.err" \
+       && [[ "$_first_sum" == "$_first_sum_after" ]] \
+       && [[ -d "$tmp/coll/dense_1-2" ]] \
+       && [[ "$(find "$tmp/coll/dense_1-2" -name 'frame_*.png' | wc -l)" -gt 0 ]]; then
+      pass "output-collision guard preserves the first run and redirects the second (#64)"
+    else
+      fail "collision guard failed (count=$_first_count sum $_first_sum->$_first_sum_after)"
+    fi
+    # A THIRD run with the SAME mode+window must not clobber the redirect subdir either — it
+    # bumps a counter (review finding on the initial #64 fix).
+    _sub_sum="$(cksum < "$tmp/coll/dense_1-2/frame_0001.png" 2>/dev/null | cut -d' ' -f1)"
+    bash "$SCRIPT" --video "$clip" --start 1 --end 2 --fps 5 --out "$tmp/coll" >/dev/null 2>&1
+    _sub_sum_after="$(cksum < "$tmp/coll/dense_1-2/frame_0001.png" 2>/dev/null | cut -d' ' -f1)"
+    if [[ "$_sub_sum" == "$_sub_sum_after" ]] && [[ -d "$tmp/coll/dense_1-2_2" ]]; then
+      pass "collision guard counter-suffixes a same-mode+window rerun (dense_1-2_2)"
+    else
+      fail "same-window rerun clobbered the redirect subdir"
+    fi
+    # Analysis modes write no PNGs — the guard must NOT fire (no junk dir, no misleading note).
+    bash "$SCRIPT" --video "$clip" --cadence --out "$tmp/coll" >/dev/null 2>"$tmp/coll2.err" || true
+    if ! grep -q 'previous run' "$tmp/coll2.err" && [[ ! -d "$tmp/coll/dense_0-end" ]]; then
+      pass "collision guard skips PNG-less analysis modes (--cadence)"
+    else
+      fail "collision guard misfired on --cadence"
+    fi
+    # Glob metacharacters in the video name must not bypass the guard (find, not compgen -G).
+    cp "$clip" "$tmp/clip [1].mp4"
+    ( cd "$tmp" && bash "$SCRIPT_ABS" --video "clip [1].mp4" --start 0 --end 1 --fps 3 >/dev/null 2>&1 )
+    _g_sum="$(cksum < "$tmp/.frames/clip [1]/frame_0001.png" 2>/dev/null | cut -d' ' -f1)"
+    ( cd "$tmp" && bash "$SCRIPT_ABS" --video "clip [1].mp4" --start 1 --end 2 --fps 3 >/dev/null 2>&1 )
+    _g_sum_after="$(cksum < "$tmp/.frames/clip [1]/frame_0001.png" 2>/dev/null | cut -d' ' -f1)"
+    if [[ -n "$_g_sum" && "$_g_sum" == "$_g_sum_after" ]]; then
+      pass "collision guard is glob-safe (bracketed video names still protected)"
+    else
+      fail "glob-metachar video name bypassed the collision guard ($_g_sum -> $_g_sum_after)"
     fi
     # --stutter (alias for --cadence) + freeze gaps: a 1s FROZEN span should be reported as a freeze
     # gap, and the alias must still emit the cadence CSV (issue #56). Needs python3 + freezedetect.
@@ -1071,6 +1128,61 @@ assert d["tally"]["fail"]==0
   else
     skip "python3 not installed (evaluate-site.sh --json)"
   fi
+  # 1.3.0 (#63): dir mode stars the overall grade and names the unscored weight.
+  _cov="$(bash "$EVAL" --dir "$ev/good" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')"
+  if grep -q 'computed over' <<<"$_cov" && grep -q 'unscored: ' <<<"$_cov" \
+     && grep -qE 'overall [0-9]+/100 \([A-F]\*\)' <<<"$_cov" \
+     && grep -q 'run --url' <<<"$_cov"; then
+    pass "scorecard stars a partial-coverage grade + names unscored dims + hints --url (#63)"
+  else
+    fail "partial-coverage star/note missing from dir-mode scorecard"
+  fi
+  # 1.3.0 (#63): JSON-LD is parse-validated — broken JSON-LD FAILs; rich types are credited.
+  if command -v python3 >/dev/null 2>&1; then
+    mkdir -p "$ev/ld" "$ev/ldbad"
+    cat > "$ev/ld/index.html" <<'H'
+<!doctype html><html lang="en"><head><title>t</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[]}</script>
+</head><body><h1>t</h1></body></html>
+H
+    cat > "$ev/ldbad/index.html" <<'H'
+<!doctype html><html><head><title>t</title>
+<script type="application/ld+json">{"@type": "Article", broken}</script>
+</head><body>hi</body></html>
+H
+    _ldg="$(bash "$EVAL" --dir "$ev/ld" 2>/dev/null)"
+    _ldb="$(bash "$EVAL" --dir "$ev/ldbad" 2>/dev/null)"
+    if grep -q 'JSON-LD parses cleanly' <<<"$_ldg" && grep -q 'rich schema types present (FAQPage)' <<<"$_ldg" \
+       && grep -q 'fail to parse' <<<"$_ldb"; then
+      pass "AI-readiness parse-validates JSON-LD and credits rich schema types (#63)"
+    else
+      fail "JSON-LD validation/rich-type checks not as expected"
+    fi
+    # Unquoted type attribute is valid HTML — must still be detected (review finding).
+    # (Capture then match — grep -q on a live pipe can SIGPIPE the producer under pipefail; #21.)
+    mkdir -p "$ev/lduq"
+    printf '<html><head><title>t</title><script type=application/ld+json>{"@type":"Article"}</script></head><body>x</body></html>\n' > "$ev/lduq/index.html"
+    _lduq="$(bash "$EVAL" --dir "$ev/lduq" 2>/dev/null || true)"
+    if grep -q 'JSON-LD parses cleanly' <<<"$_lduq"; then
+      pass "AI-readiness detects JSON-LD with an unquoted type attribute"
+    else
+      fail "unquoted type= JSON-LD went undetected"
+    fi
+    # --json carries the coverage fields.
+    if bash "$EVAL" --dir "$ev/good" --json 2>/dev/null | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+o=d["overall"]
+assert isinstance(o["coverage_weight_pct"],int) and o["coverage_weight_pct"]<100
+assert "Security / hygiene" in o["unscored"]
+' 2>/dev/null; then
+      pass "--json reports coverage_weight_pct + unscored dimensions"
+    else
+      fail "--json coverage fields missing/wrong"
+    fi
+  else
+    skip "python3 not installed (JSON-LD validation tests)"
+  fi
   rm -rf "$ev"
 else
   fail "evaluate-site.sh not found: $EVAL"
@@ -1249,6 +1361,62 @@ if grep -q 'ffprobe' <<<"$_pace_dry" && grep -q 'best_effort_timestamp_time' <<<
 else
   fail "--pacing --dry-run did not print the ffprobe command"
 fi
+# --stack (1.3.0, #62): --crop is required (early, exit 2); dry-run plans a 1-column tile.
+bash "$EXTRACT" --video "$nf_tmp/clip.mov" --stack >/dev/null 2>&1
+if [[ $? -eq 2 ]]; then
+  pass "--stack without --crop exits 2 (before any install work)"
+else
+  fail "--stack without --crop did not exit 2"
+fi
+_stk_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --stack --crop 320:60:0:400 --end 3 --dry-run 2>/dev/null || true)"
+if grep -qE 'tile=1x[0-9]+' <<<"$_stk_dry" && grep -q 'crop=320' <<<"$_stk_dry"; then
+  pass "--stack --dry-run plans a crop + 1-column tile"
+else
+  fail "--stack --dry-run did not plan crop/tile=1xN"
+fi
+# --stack --dry-run with NO --end on an unreadable file: ffprobe fails -> the 48-row fallback
+# must plan the command, not die under pipefail (review finding on the initial 1.3.0 code).
+_stk_dry2="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --stack --crop 10:10:0:0 --dry-run 2>/dev/null)"; _stk_rc=$?
+if [[ $_stk_rc -eq 0 ]] && grep -q 'tile=1x48' <<<"$_stk_dry2"; then
+  pass "--stack survives an unprobeable file (48-row fallback, rc 0)"
+else
+  fail "--stack unprobeable-file path rc=$_stk_rc"
+fi
+# --check-update (1.3.0, #62): deterministic via VBA_UPDATE_URL + file:// (no network reliance).
+_cu_ver="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"
+_cu_tmp="$(mktemp -d)"
+# (a) fetch failure must NOT kill the script under set -euo pipefail — graceful fallback, rc 0.
+_cu="$(VBA_UPDATE_URL="file://$_cu_tmp/absent.json" bash "$EXTRACT" --check-update 2>&1)"; _cu_rc=$?
+if [[ $_cu_rc -eq 0 ]] && grep -q 'could not reach' <<<"$_cu"; then
+  pass "--check-update survives a failed fetch (pipefail) and reports gracefully"
+else
+  fail "--check-update offline path rc=$_cu_rc output='$_cu'"
+fi
+# (b) a newer marketplace version -> extraction + comparison + the update command.
+printf '{ "version": "99.9.9" }\n' > "$_cu_tmp/new.json"
+_cu="$(VBA_UPDATE_URL="file://$_cu_tmp/new.json" bash "$EXTRACT" --check-update 2>&1)"
+if grep -q 'marketplace has 99.9.9' <<<"$_cu" && grep -q 'claude plugin update video-bug-analyzer@portka-tools' <<<"$_cu"; then
+  pass "--check-update extracts the remote version and advises the update when trailing"
+else
+  fail "--check-update trailing path output='$_cu'"
+fi
+# (c) an OLDER marketplace version -> 'ahead', never a downgrade advice (sort -V).
+printf '{ "version": "0.0.1" }\n' > "$_cu_tmp/old.json"
+_cu="$(VBA_UPDATE_URL="file://$_cu_tmp/old.json" bash "$EXTRACT" --check-update 2>&1)"
+if grep -q 'ahead of the marketplace' <<<"$_cu" && ! grep -q 'claude plugin update' <<<"$_cu"; then
+  pass "--check-update reports a dev copy as ahead (no downgrade advice)"
+else
+  fail "--check-update ahead path output='$_cu'"
+fi
+# (d) equal -> up to date.
+printf '{ "version": "%s" }\n' "$_cu_ver" > "$_cu_tmp/same.json"
+_cu="$(VBA_UPDATE_URL="file://$_cu_tmp/same.json" bash "$EXTRACT" --check-update 2>&1)"
+if grep -q 'up to date' <<<"$_cu"; then
+  pass "--check-update reports up to date on an exact match"
+else
+  fail "--check-update equal path output='$_cu'"
+fi
+rm -rf "$_cu_tmp"
 # --motion --dry-run prints the tblend+signalstats command (issue #39).
 _mot_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --motion --fps 12 --dry-run 2>/dev/null || true)"
 if grep -q 'tblend=all_mode=difference' <<<"$_mot_dry" && grep -q 'signalstats' <<<"$_mot_dry"; then

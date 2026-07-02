@@ -243,7 +243,59 @@ case "$(root_has llms.txt)" in
   *)   info "llms.txt: could not determine" ;;
 esac
 if [[ -n "$HTML" ]]; then
-  htest 'application/ld\+json' ok "machine-readable JSON-LD present (good for AI extraction)" info "no JSON-LD — add schema.org so assistants can parse your content"
+  # 1.3.0 (#63): don't just detect JSON-LD — parse-validate it (an invalid block is silently
+  # ignored by assistants/search, worse than none) and credit RICH schema types (FAQPage/Review/…),
+  # which are the actual AEO wins. Falls back to the old presence check without python3.
+  if command -v python3 >/dev/null 2>&1; then
+    _ld_tmp="$(mktemp)"; printf '%s' "$HTML" > "$_ld_tmp"
+    _ld="$(python3 - "$_ld_tmp" <<'PY'
+import json, re, sys
+html = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+# quotes optional: <script type=application/ld+json> is valid HTML and parsed by crawlers
+blocks = re.findall(r'<script[^>]*type=["\']?application/ld\+json["\']?[^>]*>(.*?)</script>',
+                    html, re.S | re.I)
+ok = bad = 0
+types = set()
+RICH = {"FAQPage", "HowTo", "Review", "AggregateRating", "Product", "Article", "NewsArticle",
+        "BreadcrumbList", "Recipe", "Event", "VideoObject", "SoftwareApplication"}
+def collect(o):
+    if isinstance(o, dict):
+        t = o.get("@type")
+        if isinstance(t, str):
+            types.add(t)
+        elif isinstance(t, list):
+            types.update(x for x in t if isinstance(x, str))
+        for v in o.values():
+            collect(v)
+    elif isinstance(o, list):
+        for v in o:
+            collect(v)
+for b in blocks:
+    try:
+        collect(json.loads(b.strip()))
+        ok += 1
+    except Exception:
+        bad += 1
+print("%d\t%d\t%d\t%s" % (len(blocks), ok, bad, ",".join(sorted(types & RICH))))
+PY
+)"
+    rm -f "$_ld_tmp"
+    IFS=$'\t' read -r _ld_n _ld_ok _ld_bad _ld_rich <<<"$_ld"
+    if [[ "${_ld_n:-0}" -eq 0 ]]; then
+      info "no JSON-LD — add schema.org so assistants can parse your content"
+    elif [[ "${_ld_bad:-0}" -gt 0 ]]; then
+      bad "JSON-LD present but ${_ld_bad} block(s) fail to parse — invalid JSON-LD is silently ignored by assistants/search"
+    else
+      ok "JSON-LD parses cleanly (${_ld_ok} block(s))"
+      if [[ -n "${_ld_rich:-}" ]]; then
+        ok "rich schema types present (${_ld_rich}) — strong AEO signal"
+      else
+        info "only basic JSON-LD types — add FAQPage/Review/Article/HowTo where they fit for AEO"
+      fi
+    fi
+  else
+    htest 'application/ld\+json' ok "machine-readable JSON-LD present (good for AI extraction)" info "no JSON-LD — add schema.org so assistants can parse your content"
+  fi
 fi
 
 # --- Security (URL mode) --------------------------------------------------------------
@@ -286,13 +338,14 @@ fi
 # Per-dimension score = 100*(pass + 0.5*warn)/(scored checks); overall = weighted average.
 printf '\n\033[1mScorecard\033[0m\n' >&"$RFD"
 printf '  %-27s %6s  %5s  %s\n' "dimension" "weight" "score" "grade" >&"$RFD"
-declare -a OUT_SCORE OUT_GRADE OUT_WEIGHT
-tot_w=0; tot_ws=0
+declare -a OUT_SCORE OUT_GRADE OUT_WEIGHT UNSCORED
+tot_w=0; tot_ws=0; all_w=0
 for i in "${!SEC_NAME[@]}"; do
   sp=${SEC_P[i]}; sw=${SEC_W[i]}; sf=${SEC_F[i]}
   scored=$(( sp + sw + sf ))
   wt=$(weight_for "${SEC_NAME[i]}")
   OUT_WEIGHT+=("$wt")
+  all_w=$(( all_w + wt ))
   if [[ "$scored" -gt 0 ]]; then
     den=$(( 2 * scored ))
     score=$(( (200 * sp + 100 * sw + den / 2) / den ))   # rounded 100*(p+0.5w)/scored
@@ -303,18 +356,34 @@ for i in "${!SEC_NAME[@]}"; do
   else
     printf '  %-27s %5s%%  %4s    %s\n' "${SEC_NAME[i]}" "$wt" "n/a" "-" >&"$RFD"
     OUT_SCORE+=("null"); OUT_GRADE+=("-")
+    UNSCORED+=("${SEC_NAME[i]}")
   fi
 done
 if [[ "$tot_w" -gt 0 ]]; then overall=$(( (tot_ws + tot_w / 2) / tot_w )); else overall=0; fi
 ograde=$(grade_for "$overall")
+# 1.3.0 (#63): a dir-mode "A" was computed over only ~82% of weight (Security n/a) but the
+# headline read like a full-coverage grade. Star the grade and say what wasn't assessed.
+STAR=""
+COVERAGE=100
+if [[ ${#UNSCORED[@]} -gt 0 && "$all_w" -gt 0 ]]; then
+  STAR="*"
+  COVERAGE=$(( (100 * tot_w + all_w / 2) / all_w ))
+fi
 printf '  %s\n' "-------------------------------------------------" >&"$RFD"
-printf '  %-27s %6s  %4s    \033[1m%s\033[0m\n' "Overall (weighted)" "" "$overall" "$ograde" >&"$RFD"
-printf '\n\033[1mChecklist:\033[0m %d pass, %d warn, %d fail — overall %d/100 (%s). Weight by the\n' "$P" "$W" "$F" "$overall" "$ograde" >&"$RFD"
+printf '  %-27s %6s  %4s    \033[1m%s%s\033[0m\n' "Overall (weighted)" "" "$overall" "$ograde" "$STAR" >&"$RFD"
+if [[ -n "$STAR" ]]; then
+  printf '  * computed over %d%% of weight; unscored: %s\n' "$COVERAGE" "$(printf '%s; ' "${UNSCORED[@]}" | sed 's/; $//')" >&"$RFD"
+  if [[ -z "$URL" ]]; then
+    printf '    (dir mode cannot assess live security headers/HTTPS — run --url from a network-enabled shell, or Lighthouse, to score Security + live perf)\n' >&"$RFD"
+  fi
+fi
+printf '\n\033[1mChecklist:\033[0m %d pass, %d warn, %d fail — overall %d/100 (%s%s). Weight by the\n' "$P" "$W" "$F" "$overall" "$ograde" "$STAR" >&"$RFD"
 printf 'site type/community, then turn the dimension grades into a prioritized report (reference.md).\n' >&"$RFD"
 
 # --- JSON (machine-readable) ----------------------------------------------------------
 if [[ -n "$JSON" ]]; then
   REC="$REC" GP="$P" GW="$W" GF="$F" OVERALL="$overall" OGRADE="$ograde" \
+  COVERAGE="$COVERAGE" UNSCORED_NAMES="$(printf '%s\n' "${UNSCORED[@]:-}")" \
   TARGET="$ROOT_DESC" MODE="$([[ -n "$URL" ]] && echo url || echo dir)" \
   NAMES="$(printf '%s\n' "${SEC_NAME[@]:-}")" \
   SCORES="$(printf '%s\n' "${OUT_SCORE[@]:-}")" \
@@ -350,7 +419,9 @@ for idx, name in enumerate(names):
 obj = {
     "target": os.environ.get("TARGET",""),
     "mode": os.environ.get("MODE",""),
-    "overall": {"score": int(os.environ.get("OVERALL","0")), "grade": os.environ.get("OGRADE","")},
+    "overall": {"score": int(os.environ.get("OVERALL","0")), "grade": os.environ.get("OGRADE",""),
+                "coverage_weight_pct": int(os.environ.get("COVERAGE","100")),
+                "unscored": [n for n in os.environ.get("UNSCORED_NAMES","").split("\n") if n]},
     "tally": {"pass": int(os.environ.get("GP","0")), "warn": int(os.environ.get("GW","0")), "fail": int(os.environ.get("GF","0"))},
     "dimensions": dims,
 }

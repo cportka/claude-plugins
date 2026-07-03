@@ -94,8 +94,12 @@ grade_for() {
   else echo F; fi
 }
 
-# Case-insensitive "does the page HTML contain this regex?"  (best-effort; $HTML is the page)
-html_has() { grep -qiE "$1" <<<"$HTML"; }
+# Case-insensitive "does the page HTML contain this regex?"  (best-effort). Matches against a
+# whitespace-collapsed copy ($HTML_FLAT, set once the page is loaded) so a tag whose attributes are
+# split across lines — Prettier's default for long tags — still matches; grep is line-oriented, so
+# matching the raw $HTML read multi-line <meta …>/<script …> as "missing" (issue #67). Falls back
+# to raw $HTML until HTML_FLAT is computed.
+html_has() { grep -qiE "$1" <<<"${HTML_FLAT:-$HTML}"; }
 
 # htest <regex> <good-fn> <good-msg> <bad-fn> <bad-msg> — dispatch on whether the HTML matches.
 # (Avoids the `A && B || C` pattern, which isn't if-then-else.)
@@ -171,6 +175,12 @@ else
     echo "no"
   }
 fi
+
+# Whitespace-collapsed copy for the tag-presence checks (see html_has). Every run of whitespace —
+# including the newlines Prettier inserts when it splits a long tag across lines — becomes a single
+# space, so `<meta[^>]+name=…>` matches a multi-line tag identically to a single-line one (#67).
+# Content extraction (e.g. the <title> length) still reads the raw $HTML.
+HTML_FLAT="$(tr -s '[:space:]' ' ' <<<"$HTML")"
 
 say "App / website evaluation — $ROOT_DESC"
 if [[ -n "$URL" ]]; then info "URL mode (live fetch)"; else info "directory mode (local files)"; fi
@@ -322,12 +332,27 @@ fi
 sec "Performance / load (hints)"
 if [[ -n "$HTML" ]]; then
   if html_has '<img[^>]+loading=["'"'"']?lazy'; then ok "uses loading=\"lazy\" on images"; else info "no lazy-loaded images found — add loading=\"lazy\" below the fold"; fi
-  # Only external <script src=…> is render-blocking; inline / JSON-LD scripts aren't, and a page
-  # with no scripts at all has nothing to flag.
-  if html_has '<script[^>]+src='; then
-    if html_has '<script[^>]+\b(async|defer)\b'; then ok "external scripts use async/defer"; else warn "external <script> without async/defer — render-blocking JS slows first paint"; fi
-  else
+  # Render-blocking = an external <script src> that is NOT async/defer AND NOT type="module".
+  # Module scripts defer by spec (Vite emits `<script type="module" src=…>`), so flagging them was a
+  # false positive (#67). Enumerate each opening <script …> tag and classify per-tag, so a page that
+  # mixes a blocking classic script with deferred modules is judged on the classic one.
+  _scripts="$(grep -oiE '<script[^>]*>' <<<"$HTML_FLAT" || true)"
+  if [[ -z "$_scripts" ]] || ! grep -qiE 'src=' <<<"$_scripts"; then
     info "no external <script> tags (nothing render-blocking here)"
+  else
+    # keep only external scripts (src=), then drop the genuinely deferred ones. Match async/defer and
+    # type="module" only as real *attributes* — a token led by whitespace and closed by whitespace,
+    # `/`, `>`, or `=` — NOT the same letters sitting inside a src URL (e.g. `/js/defer.min.js` or
+    # `/async/app.js`) or a data-* attribute, which would otherwise hide a real render-blocking script.
+    _blocking="$(grep -iE 'src=' <<<"$_scripts" \
+                 | grep -ivE '[[:space:]](async|defer)([[:space:]/>=]|$)' \
+                 | grep -ivE '[[:space:]]type=["'"'"']?module' || true)"
+    if [[ -z "$_blocking" ]]; then
+      ok "external scripts are deferred (async/defer or type=\"module\") — non-blocking"
+    else
+      _nblk="$(grep -c . <<<"$_blocking")"
+      warn "$_nblk render-blocking external <script> (no async/defer/module) — slows first paint"
+    fi
   fi
   info "for real numbers (LCP/CLS/INP, payload size) run Lighthouse/PageSpeed on the live URL"
 else

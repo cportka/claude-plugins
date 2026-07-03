@@ -167,6 +167,14 @@ The first frame is skipped (no previous to difference against). `--fps` sets the
 `--start`/`--end`; needs `python3`. It measures *magnitude*, not direction — for coherent-vs-random
 (spiral) motion, frames + `--diff` are still the read; a true optical-flow overlay is a known gap.
 
+*Amplitude floor & `--crop` (a common misread):* averaged over the **whole frame** and then
+downscaled, low-amplitude motion — drifting dust motes, a slow spinner, a subtle settle — quantizes
+down toward `0.00–3`, where "a little life" is hard to tell from "frozen". When the peak stays under
+`~3/255`, the headline says so and suggests re-running with **`--crop W:H:X:Y`** on just that region:
+`--motion` now honors `--crop`, so measuring the ROI alone lifts the signal above the whole-frame
+noise floor. If it still reads near-zero *cropped*, that's a genuine freeze, not a scale artifact —
+which makes `--motion --crop` a clean A/B instrument for "did my fix actually add motion here?".
+
 **Saturation timeline (`--saturation`):** prints `t,saturation` — the mean colour saturation
 (`signalstats` SATAVG, 0 ≈ greyscale, higher ≈ more vivid, maxing ~180) per sampled frame — so
 "clownish / over-saturated vs muted / elegant" is a number you can verify after a palette fix.

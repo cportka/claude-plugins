@@ -135,7 +135,8 @@
 #   --motion            Motion timeline: print t,motion (mean inter-frame pixel delta, 0..255)
 #                       per sampled frame, so "is it moving / where does motion concentrate?"
 #                       becomes a number. Quantifies --diff. Sample rate from --fps; honors
-#                       --start/--end. (ffmpeg tblend+signalstats; needs python3.)
+#                       --start/--end and --crop (crop to a spinner/dust region to lift a subtle
+#                       signal above the whole-frame noise floor). (ffmpeg tblend+signalstats; python3.)
 #   --saturation        Colour-saturation timeline: print t,saturation (signalstats SATAVG,
 #                       0 grey .. ~180 vivid) per sampled frame, so "clownish/over-saturated vs
 #                       muted/elegant" is measurable and verifiable after a fix. Sample rate from
@@ -190,7 +191,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.3.0"
+VBA_VERSION="1.3.1"
 
 VIDEO=""
 START=""
@@ -1109,9 +1110,11 @@ PY
 # long / choppy / is the dust even moving?" becomes a number and you can see WHERE motion
 # concentrates. tblend=difference gives |this - previous|; signalstats' YAVG is that frame's
 # average magnitude; metadata=print dumps it. Quantifies what --diff shows visually. Uses
-# PRE_ARGS — run after them. Honors --crop? No: full-frame motion (crop the source first if needed).
+# PRE_ARGS — run after them. Honors --crop (#66): cropping to a region (a spinner, drifting motes,
+# a scrub bar) measures motion over just that ROI, lifting a subtle signal above the whole-frame
+# downscale noise floor where it would otherwise read ~0 and be indistinguishable from frozen.
 run_motion() {
-  local vf="fps=${FPS},tblend=all_mode=difference,signalstats,metadata=mode=print:file="
+  local vf="fps=${FPS},${CROP_VF}tblend=all_mode=difference,signalstats,metadata=mode=print:file="
   if [[ -n "$DRY_RUN" ]]; then
     printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" \
       -vf "${vf}<tmp>" -an -f null -
@@ -1126,9 +1129,10 @@ run_motion() {
   local base; base="$(to_seconds "${START:-0}")"
   local mfile; mfile="$(mktemp)"
   ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
-  python3 - "$mfile" "$base" "$FPS" <<'PY'
+  python3 - "$mfile" "$base" "$FPS" "${CROP:+1}" <<'PY'
 import sys
 mfile, base, fps = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]) or 1.0
+cropped = len(sys.argv) > 4 and sys.argv[4] == "1"
 t=None; n=0; rows=[]
 print("t,motion")
 for line in open(mfile):
@@ -1154,6 +1158,19 @@ if rows:
     e.write("Motion: mean inter-frame delta %.2f (0-255 luma); peak %.2f @ %.2fs over %d samples.\n"
             % (avg, peak[1], peak[0], len(rows)))
     e.write("Brightest = most motion; flat-low spans = little/no change (static).\n")
+    # Amplitude floor (#66): a whole-frame downscale quantizes subtle motion (drifting motes, a slow
+    # spinner) down toward 0, where "a little life" is indistinguishable from "frozen". Below ~3/255
+    # peak, say so — and, if not already cropped, point at --crop as the way to lift the signal.
+    FLOOR = 3.0
+    if peak[1] < FLOOR:
+        if cropped:
+            e.write("Very low amplitude (peak %.2f < %.0f/255) even over the cropped region — this "
+                    "reads as genuinely static/frozen, not just downscale-quantized.\n" % (peak[1], FLOOR))
+        else:
+            e.write("Very low amplitude (peak %.2f < %.0f/255): at full-frame scale, subtle motion (a "
+                    "spinner, drifting motes) is hard to tell from frozen. Re-run with --crop W:H:X:Y on "
+                    "that region to measure just it and lift it above the downscale noise floor.\n"
+                    % (peak[1], FLOOR))
 else:
     e.write("No motion samples — clip too short or --fps too low.\n")
 PY

@@ -5,6 +5,44 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.3.1] - 2026-07-03
+
+Triage of the round-5 dogfood feedback (#66, #67). `app-website-evaluator` → 1.3.1 and
+`video-bug-analyzer` → 1.3.1 (`repo-bootstrap` and `tab-chord-formatter` unchanged at 1.2.0).
+PATCH: correctness + a smarter hint, all backward-compatible.
+
+### Fixed (app-website-evaluator → 1.3.1, #67)
+- **Multi-line (Prettier) tags are no longer read as missing.** Prettier splits a long tag across
+  lines, but the tag-presence checks grepped line-by-line — so an attribute-per-line
+  `<meta name="viewport" …>`, `<meta name="description" …>`, or `og:description` reported FAIL/WARN
+  on a page that had them. Checks now match against a **whitespace-collapsed** copy of the HTML, so
+  a multi-line tag matches identically to a single-line one. (Content extraction like the `<title>`
+  length still reads the raw HTML.)
+- **`type="module"` scripts are no longer flagged render-blocking.** Vite emits
+  `<script type="module" src=…>`, which defers by spec — but the performance check warned "external
+  `<script>` without async/defer". It now enumerates each `<script …>` tag and counts as
+  render-blocking only an external `src` script that is **not** `async`/`defer` **and not**
+  `type="module"`, so a page mixing a blocking classic script with deferred modules is judged on the
+  classic one (and reports how many).
+
+### Fixed (video-bug-analyzer → 1.3.1, #66)
+- **`--motion` now honors `--crop`.** It previously measured whole-frame motion and silently ignored
+  `--crop`, so the suggested "crop to the dust region" workaround was a no-op. Cropping now measures
+  motion over just that ROI — lifting a subtle signal (drifting motes, a slow spinner) above the
+  whole-frame downscale noise floor where it otherwise reads ~0 and is indistinguishable from frozen.
+
+### Added (video-bug-analyzer → 1.3.1, #66)
+- **Amplitude-floor hint.** When the peak inter-frame delta stays under ~3/255, the `--motion`
+  headline says the amplitude is near the floor and — if not already cropped — points at
+  `--crop W:H:X:Y` to isolate the region. Cropped and still near-zero, it reports the region as
+  genuinely static rather than scale-quantized, making `--motion --crop` a clean A/B "did my fix add
+  motion here?" instrument. Documented in `reference.md` and `--help`.
+
+### Tests
+- New coverage: multi-line/Prettier `<meta>` tags credited + `type="module"` treated as deferred
+  while a classic `<script src>` still WARNs (#67); `--motion` honors `--crop` (dry-run chain +
+  runtime), and the amplitude-floor hint fires unscoped and reports a cropped region as static (#66).
+
 ## [1.3.0] - 2026-07-02
 
 Triage of the round-4 dogfood feedback (#62, #63, #64). `video-bug-analyzer` → 1.3.0 and
@@ -860,6 +898,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.3.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.3.1
 [1.3.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.3.0
 [1.2.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.2.0
 [1.1.2]: https://github.com/cportka/claude-plugins/releases/tag/v1.1.2

@@ -765,6 +765,19 @@ if command -v ffmpeg >/dev/null 2>&1; then
       else
         fail "--motion timeline not as expected (still='$_still' moved='$_moved')"
       fi
+      # 1.3.1 (#66): a near-static (solid) clip reads under the amplitude floor. Unscoped, the
+      # headline hints to --crop the region; with --crop it reports the region itself as static.
+      if ffmpeg -hide_banner -loglevel error -f lavfi -i "color=gray:size=160x120:rate=10:duration=1" "$tmp/flat.mp4" -y 2>/dev/null; then
+        _mflat="$(bash "$SCRIPT" --video "$tmp/flat.mp4" --motion --fps 5 2>&1 >/dev/null || true)"
+        _mflatc="$(bash "$SCRIPT" --video "$tmp/flat.mp4" --motion --crop 40:40:0:0 --fps 5 2>&1 >/dev/null || true)"
+        if grep -qi 'Re-run with --crop' <<<"$_mflat" && grep -qi 'cropped region' <<<"$_mflatc"; then
+          pass "--motion hints --crop on near-zero amplitude, calls a cropped region static (#66)"
+        else
+          fail "--motion amplitude-floor hint not as expected (#66)"
+        fi
+      else
+        skip "could not build a flat clip (--motion amplitude floor)"
+      fi
     else
       skip "could not build a motion test clip (--motion)"
     fi
@@ -1072,7 +1085,10 @@ if [[ -f "$EVAL" ]]; then
   if bash "$EVAL" --help >/dev/null 2>&1; then pass "evaluate-site.sh --help exits 0"; else fail "evaluate-site.sh --help failed"; fi
   bash "$EVAL" >/dev/null 2>&1; _ev_rc=$?
   if [[ "$_ev_rc" -eq 2 ]]; then pass "evaluate-site.sh errors without --url/--dir"; else fail "evaluate-site.sh should require an input"; fi
-  if bash "$EVAL" --url https://example.com --dry-run 2>/dev/null | grep -q 'Dry run'; then
+  # Capture then match — piping a live producer into `grep -q` under `set -o pipefail` can SIGPIPE
+  # the producer (exit 141) once grep matches and closes the pipe, flaking a false FAIL (issue #21).
+  _evdry="$(bash "$EVAL" --url https://example.com --dry-run 2>/dev/null || true)"
+  if grep -q 'Dry run' <<<"$_evdry"; then
     pass "evaluate-site.sh --dry-run prints intended fetches (no network)"
   else
     fail "evaluate-site.sh --dry-run did not print"
@@ -1182,6 +1198,61 @@ assert "Security / hygiene" in o["unscored"]
     fi
   else
     skip "python3 not installed (JSON-LD validation tests)"
+  fi
+  # 1.3.1 (#67): Prettier splits a long tag across lines; the checker must still read the attributes
+  # (grep is line-oriented, so a multi-line <meta …> was reported "missing"). And Vite's
+  # type="module" scripts must NOT be flagged render-blocking — module scripts defer by spec.
+  mkdir -p "$ev/vite"
+  cat > "$ev/vite/index.html" <<'H'
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <meta
+      name="description"
+      content="A prettier-formatted Vite single-page app."
+    />
+    <title>Vite SPA — multiline meta</title>
+    <meta
+      property="og:description"
+      content="share text split across lines"
+    />
+    <script type="module" crossorigin src="/assets/index-abc123.js"></script>
+  </head>
+  <body><h1>Hi</h1></body>
+</html>
+H
+  _vite="$(bash "$EVAL" --dir "$ev/vite" 2>/dev/null || true)"
+  if grep -q 'viewport meta present' <<<"$_vite" \
+     && grep -q 'meta description present' <<<"$_vite" \
+     && grep -q 'og:description present' <<<"$_vite" \
+     && ! grep -q 'render-blocking' <<<"$_vite"; then
+    pass "evaluate-site.sh reads multi-line (Prettier) meta + treats type=module as deferred (#67)"
+  else
+    fail "multi-line meta / module-script handling not as expected (#67)"
+  fi
+  # A classic external <script src> with no async/defer/module is still flagged render-blocking, and
+  # a genuinely missing description still FAILs — the flattening fix must not mask real gaps.
+  mkdir -p "$ev/blk"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><script src="/app.js"></script></head><body><h1>h</h1></body></html>\n' > "$ev/blk/index.html"
+  _blk="$(bash "$EVAL" --dir "$ev/blk" 2>/dev/null || true)"
+  if grep -q 'render-blocking' <<<"$_blk"; then
+    pass "evaluate-site.sh still flags a classic render-blocking <script> (no false negative, #67)"
+  else
+    fail "evaluate-site.sh missed a genuine render-blocking script (#67)"
+  fi
+  # Attribute-boundary (review finding on #67): async/defer/module must be matched as real
+  # attributes, not letters inside a src URL — `/js/defer.min.js` is a blocking classic script.
+  mkdir -p "$ev/urlkw"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><script src="/js/defer.min.js"></script></head><body><h1>h</h1></body></html>\n' > "$ev/urlkw/index.html"
+  _urlkw="$(bash "$EVAL" --dir "$ev/urlkw" 2>/dev/null || true)"
+  if grep -q 'render-blocking' <<<"$_urlkw"; then
+    pass "evaluate-site.sh counts a classic <script src=/js/defer.min.js> as render-blocking (URL keyword ≠ attribute)"
+  else
+    fail "evaluate-site.sh mis-read 'defer' in a src URL as a defer attribute (#67 review)"
   fi
   rm -rf "$ev"
 else
@@ -1423,6 +1494,13 @@ if grep -q 'tblend=all_mode=difference' <<<"$_mot_dry" && grep -q 'signalstats' 
   pass "--motion --dry-run prints the tblend+signalstats command"
 else
   fail "--motion --dry-run did not print tblend+signalstats"
+fi
+# --motion --crop --dry-run: --motion now honors --crop, so the crop filter is in the motion chain (#66).
+_motc_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --motion --crop 80:40:0:0 --dry-run 2>/dev/null || true)"
+if grep -q 'crop=80:40:0:0' <<<"$_motc_dry" && grep -q 'tblend=all_mode=difference' <<<"$_motc_dry"; then
+  pass "--motion --crop --dry-run honors --crop (crop filter in the motion chain, #66)"
+else
+  fail "--motion --crop --dry-run did not include the crop filter"
 fi
 # --saturation --dry-run prints the signalstats command (1.0.0).
 _sat_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --saturation --dry-run 2>/dev/null || true)"

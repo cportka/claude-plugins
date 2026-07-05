@@ -1,0 +1,7 @@
+# Security contact for the portka-tools Claude Code plugin marketplace.
+# Policy: https://github.com/cportka/claude-plugins/blob/main/SECURITY.md
+Contact: https://github.com/cportka/claude-plugins/security/advisories/new
+Expires: 2027-07-05T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://cportka.github.io/claude-plugins/.well-known/security.txt
+Policy: https://github.com/cportka/claude-plugins/blob/main/SECURITY.md

@@ -20,6 +20,8 @@ form and are triaged into the items below.
   `--blackdetect`'s empty-frame threshold.
 - `--stutter`/`--fps-drops` (1.1.2) quantifies FPS stalls: effective-fps-per-window **and** the
   longest freeze gaps (freezedetect), so a "feels choppy" report becomes timestamps + durations.
+  A static/near-black recording pre-roll is detected and excluded from the "choppiest windows"
+  ranking (1.4.1, #70), so the lead-in stops competing with the freeze gaps for the top spots.
 - `--pacing` (1.2.0) reads the real per-frame presentation timestamps (ffprobe) for a frame-pacing
   /jitter timeline — catches uneven timing even when every frame's content differs (which the
   content-based `--cadence`/`--stutter` can't), with median/p95/max + worst-hitch timestamps.
@@ -50,6 +52,10 @@ form and are triaged into the items below.
   would run each mode over each clip and label the CSVs by source. Low priority.
 - **Numeric plot over a CSV** — the OCR/measure/motion/saturation modes emit `t,value`; rendering
   a quick plot (or min/max/dips) would beat reading the CSV by eye.
+- **Machine-readable freeze gaps** (#70) — the freeze-gap list is human-readable on stderr; a
+  `t_start,dur_ms` CSV would let it be plotted against an app's own timing marks. Deferred over an
+  output-shape choice: the `--cadence` stdout is already the `t,unique_frames,fps` CSV, so a second
+  table needs either a separate `--freeze-csv` sink or a delimiter that won't confuse consumers.
 - **Two-timestamp centered overlay / contour diff** — `--strip` is side-by-side; a matched-scale
   centered overlay (or edge diff) would show whether two features align.
 - **Event alignment for compare** (`--align-on scene` / per-clip `--t0`) — `--compare-videos`

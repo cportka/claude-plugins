@@ -156,7 +156,13 @@ choppiest windows (e.g. "stutter concentrated at the end-of-splash burst"). It m
 unique-*content* cadence, so a deliberately static scene also reads low (nothing new is drawn) —
 the honest signal. `--start`/`--end` scope it; needs `python3` (and `ffprobe` for the
 nominal/average split). The avg-vs-nominal number alone often localizes a perf bug to overdraw;
-the per-window timeline tells you *when*.
+the per-window timeline tells you *when*. It also runs a **freeze-gap** pass (`freezedetect`) that
+lists the longest sustained frozen spans as `@Ns frozen for N ms` — the multi-hundred-ms stalls of
+a load hitch, which map cleanly onto an app's own timing marks. **Pre-roll handling (#70):** a
+recording that starts on a black screen / URL bar / static splash reads as a run of `0 fps` windows;
+on an unscoped scan the tool detects that dead lead-in, **excludes it from the "choppiest windows"
+ranking**, and notes where content starts (a frozen splash in the lead-in still shows in the freeze
+gaps, not the choppiest list) — so the ranking points at real content stutter, not the pre-roll.
 
 **Motion timeline (`--motion`):** prints `t,motion` where `motion` is the mean inter-frame pixel
 delta (0–255 luma) per sampled frame — the *quantitative* companion to `--diff`. It turns "feels

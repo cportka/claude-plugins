@@ -4,19 +4,19 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Portka Tools — Claude Code plugins</title>
-  <meta name="description" content="Portka Tools: a Claude Code plugin marketplace by Chris Portka. Analyze screen recordings (video-bug-analyzer), evaluate websites/apps (app-website-evaluator), and bootstrap repos (repo-bootstrap). Add it once, use it everywhere." />
+  <meta name="description" content="Portka Tools: a Claude Code plugin marketplace by Chris Portka. Analyze screen recordings (video-bug-analyzer), evaluate websites/apps with a scorecard (app-website-evaluator), format guitar tabs into a PDF songbook (tab-chord-formatter), and bootstrap repos (repo-bootstrap). Add it once, use it everywhere." />
   <link rel="canonical" href="https://cportka.github.io/claude-plugins/" />
   <meta name="theme-color" content="#0d1117" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
   <meta property="og:title" content="Portka Tools — Claude Code plugins" />
-  <meta property="og:description" content="A Claude Code plugin marketplace: analyze screen recordings, evaluate websites/apps, bootstrap repos. Add it once; use it in the CLI and in web sessions." />
+  <meta property="og:description" content="A Claude Code plugin marketplace: analyze screen recordings, evaluate websites/apps, format tab/chord songbooks, bootstrap repos. Add it once; use it in the CLI and in web sessions." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://cportka.github.io/claude-plugins/" />
   <meta property="og:image" content="https://cportka.github.io/claude-plugins/assets/og.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Portka Tools — Claude Code plugins" />
-  <meta name="twitter:description" content="A Claude Code plugin marketplace: analyze screen recordings, evaluate websites/apps, bootstrap repos." />
+  <meta name="twitter:description" content="A Claude Code plugin marketplace: analyze screen recordings, evaluate websites/apps, format tab/chord songbooks, bootstrap repos." />
   <meta name="twitter:image" content="https://cportka.github.io/claude-plugins/assets/og.png" />
   <script type="application/ld+json">
   {
@@ -24,7 +24,7 @@
     "@type": "WebSite",
     "name": "Portka Tools",
     "url": "https://cportka.github.io/claude-plugins/",
-    "description": "A Claude Code plugin marketplace: analyze screen recordings, evaluate websites/apps, bootstrap repos.",
+    "description": "A Claude Code plugin marketplace: analyze screen recordings, evaluate websites/apps, format tab/chord songbooks, bootstrap repos.",
     "author": { "@type": "Person", "name": "Chris Portka" },
     "license": "https://opensource.org/licenses/MIT"
   }
@@ -98,19 +98,21 @@
         <h3><code>video-bug-analyzer</code></h3>
         <p>
           Give Claude a screen recording and roughly when something happens; it extracts frames
-          (contact sheet, scene cuts, per-timestamp zoom, before/after strips) and reasons over
-          them. Plus analysis modes: black-screen detection, ROI&nbsp;OCR value tracking, feature
-          measurement, capture probing, and dominant-colour palettes. Needs <code>ffmpeg</code>.
+          (contact sheet, scene cuts, per-timestamp zoom, before/after strips, ROI time-stack) and
+          reasons over them. Plus quantitative modes: stutter &amp; freeze-gap timing, frame-pacing
+          jitter, motion and <strong>swirl-vs-suck flow</strong>, subject extent, black-screen
+          detection, ROI&nbsp;OCR, feature measurement, and palettes. Needs <code>ffmpeg</code>.
         </p>
         <p class="links"><a href="https://github.com/cportka/claude-plugins/tree/main/plugins/video-bug-analyzer">Details &rarr;</a></p>
       </div>
       <div class="card">
         <h3><code>app-website-evaluator</code></h3>
         <p>
-          Audit an app or website and get a prioritized, evidence-backed report — SEO &amp;
-          crawlability, AI-readiness (<code>llms.txt</code>), social/sharing assets, security,
-          performance, and growth (which communities to join/submit to, PR wins) — tailored to the
-          site's type and community.
+          Audit an app or website and get a prioritized, evidence-backed report with a standardized
+          <strong>scorecard</strong> — each dimension 0&ndash;100 + a letter grade, a coverage-honest
+          overall, and optional <code>--json</code>. Covers SEO &amp; crawlability, AI-readiness
+          (<code>llms.txt</code> + JSON-LD validation), social/sharing, security, performance, and
+          growth — tailored to the site's type and community.
         </p>
         <p class="links"><a href="https://github.com/cportka/claude-plugins/tree/main/plugins/app-website-evaluator">Details &rarr;</a></p>
       </div>
@@ -125,6 +127,17 @@
         </p>
         <p class="links"><a href="https://github.com/cportka/claude-plugins/tree/main/plugins/repo-bootstrap">Details &rarr;</a></p>
       </div>
+      <div class="card">
+        <h3><code>tab-chord-formatter</code></h3>
+        <p>
+          Turn a messy guitar tab / chord sheet into a clean, readable layout for screen — or render
+          a consistent monospace <strong>PDF songbook</strong> (one or many songs, a target
+          songs-per-page). Standardized <code>[Section]</code> labels, chords aligned over the right
+          lyrics, a tidy metadata header, and well-formed 6-line ASCII tab. Needs <code>python3</code>
+          (plus headless Chromium for PDF).
+        </p>
+        <p class="links"><a href="https://github.com/cportka/claude-plugins/tree/main/plugins/tab-chord-formatter">Details &rarr;</a></p>
+      </div>
     </div>
 
     <h2>Add it</h2>
@@ -135,6 +148,7 @@
 <span class="cmt"># install a plugin</span>
 /plugin install video-bug-analyzer@portka-tools
 /plugin install app-website-evaluator@portka-tools
+/plugin install tab-chord-formatter@portka-tools
 /plugin install repo-bootstrap@portka-tools</code></pre>
     <p>
       For a specific repo or a fresh web session, commit a <code>.claude/settings.json</code>

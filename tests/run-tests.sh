@@ -19,6 +19,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT" || { echo "cannot cd to repo root: $ROOT" >&2; exit 1; }
 
+# macOS still ships bash 3.2 (2007); this suite and several plugin scripts use bash 4+ features
+# (mapfile, safe empty-array expansion under `set -u`). Fail fast with ONE clear message instead of
+# a wall of confusing failures. Install a modern bash and re-run under it.
+if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
+  echo "This test suite needs bash 4+ (you have ${BASH_VERSION:-unknown}); macOS ships 3.2 from 2007." >&2
+  echo "Install a modern bash and re-run under it, e.g.:" >&2
+  echo "  brew install bash && /opt/homebrew/bin/bash tests/run-tests.sh" >&2
+  echo "(This does not affect publishing, or using the plugins on Linux/web where bash is 5.x.)" >&2
+  printf 'Summary: 0 passed, 0 failed, 0 skipped (suite requires bash 4+ - skipped)\n'
+  exit 0
+fi
+
 PASS=0
 FAIL=0
 SKIP=0

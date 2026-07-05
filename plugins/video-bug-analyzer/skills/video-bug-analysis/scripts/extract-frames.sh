@@ -124,9 +124,11 @@
 #                       then a per-window count of UNIQUE frames so you see WHEN it stutters. Prints
 #                       t,unique_frames,fps and headlines the choppiest windows; also lists the
 #                       longest FREEZE GAPS (sustained frozen spans, e.g. "@1.4s frozen for 633 ms")
-#                       — the multi-hundred-ms stalls. --window sets the bin (default 0.5s); honors
-#                       --start/--end. Measures UNIQUE-content cadence, so a deliberately static
-#                       scene also reads low. (ffmpeg mpdecimate + freezedetect + ffprobe; python3.)
+#                       — the multi-hundred-ms stalls. A static/near-black pre-roll (recording
+#                       lead-in / splash) is detected and kept out of the choppiest-windows ranking.
+#                       --window sets the bin (default 0.5s); honors --start/--end. Measures
+#                       UNIQUE-content cadence, so a static scene also reads low. (ffmpeg mpdecimate +
+#                       freezedetect + ffprobe; python3.)
 #   --pacing            Frame-PACING timeline (a from-scratch counterpart to --cadence): read the
 #                       actual per-frame presentation timestamps and print t,interval_ms — the time
 #                       between consecutive DISPLAYED frames. Catches uneven timing / jank / VFR / a
@@ -212,7 +214,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.4.0"
+VBA_VERSION="1.4.1"
 
 VIDEO=""
 START=""
@@ -1144,14 +1146,36 @@ if times:
     for k in range(nb):
         cnt=buckets.get(k,0); ws=t0+k*window; fps=cnt/window
         rows.append((ws,cnt,fps)); print("%.3f,%d,%.2f"%(ws,cnt,fps))
+# Leading static/near-black pre-roll (#70): mpdecimate drops duplicate frames, so a recording that
+# starts on a black screen / URL bar / static splash reads as a run of 0-unique windows at the top.
+# Find where sustained content begins (a window that is active AND followed by an active one) so the
+# dead lead-in doesn't dominate the "choppiest windows" ranking — only detected on an unscoped scan.
+lead_dead=0; content_start=(rows[0][0] if rows else base)
+if not scoped and rows:
+    k=0
+    while k < len(rows) and not (rows[k][1] > 0 and (k+1 == len(rows) or rows[k+1][1] > 0)):
+        k += 1
+    if 0 < k < len(rows):
+        lead=rows[:k]; content=rows[k:]
+        content_med=sorted(r[1] for r in content)[len(content)//2]
+        # Pre-roll only if the lead-in is genuinely near-static: it has idle windows AND even its
+        # busiest window is far quieter than typical content. Otherwise real content that merely
+        # FREEZES early (active -> 0 fps -> active) would be misread as pre-roll and its frozen
+        # windows dropped from the ranking - exactly what --cadence must headline (#70 review).
+        if any(r[1]==0 for r in lead) and max(r[1] for r in lead) <= max(1.0, 0.5*content_med):
+            lead_dead=k; content_start=rows[k][0]
 e=sys.stderr
 e.write("Cadence: nominal %.2f fps (r_frame_rate); container avg %.2f fps; unique %.2f fps over %.2fs (%d unique frames).\n"
         % (nominal, avg, eff, span, uniq))
 if nominal>0 and eff>0 and eff < 0.85*nominal:
     e.write("Effective cadence is well below nominal -> dropped/duplicated frames (stutter). Choppiest windows:\n")
-    for ws,cnt,fps in sorted(rows, key=lambda r:r[2])[:3]:
+    content_rows = rows[lead_dead:] if lead_dead else rows
+    for ws,cnt,fps in sorted(content_rows, key=lambda r:r[2])[:3]:
         e.write("  @%.2fs: %.1f fps (%d unique in %.2fs)\n" % (ws, fps, cnt, window))
-    if not scoped:   # whole-clip scan: pre-roll (typing, tab-switching) can top this list (#64)
+    if lead_dead:    # #70: dead lead-in was excluded from the ranking above
+        e.write("(Skipped ~%.2fs of static/near-black lead-in - recording pre-roll or a splash before first paint; content starts ~@%.2fs. A frozen splash in that lead-in shows in the freeze gaps below, not here.)\n"
+                % (content_start - rows[0][0], content_start))
+    elif not scoped:  # whole-clip scan with no clear pre-roll: pre-roll can still rank (#64)
         e.write("(Whole clip scanned - pre-roll like URL-bar typing can rank here; re-run with --start/--end to scope to the suspect window.)\n")
 else:
     e.write("Cadence looks steady (effective near nominal).\n")

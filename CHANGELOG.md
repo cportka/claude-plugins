@@ -5,6 +5,36 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.4.1] - 2026-07-05
+
+Triage of round-6 dogfood feedback #70. `video-bug-analyzer` → 1.4.1 (others unchanged). PATCH: a
+correctness refinement to `--cadence`, backward-compatible.
+
+### Fixed (video-bug-analyzer → 1.4.1, #70)
+- **`--cadence`/`--stutter` no longer lets a recording's pre-roll dominate "choppiest windows".** A
+  clip that starts on a black screen / URL bar / static splash reads (after `mpdecimate`) as a run of
+  `0 fps` windows, which previously topped the choppiest-windows ranking and competed with the
+  freeze-gap section — pointing a reader at the pre-roll seconds instead of the real stutter. On an
+  unscoped scan the tool now detects that leading static/near-black **lead-in**, excludes it from the
+  ranking, and notes where content starts (a frozen splash in the lead-in still surfaces in the
+  freeze gaps, which correctly caught it). The freeze-gap pass — which the reporter confirmed mapped
+  1:1 onto the app's own `compile`/`prime` timing marks — is unchanged. Scoped scans
+  (`--start`/`--end`) are unaffected; a continuous clip still gets the generic scoping hint (#64).
+- The reporter's low-priority "machine-readable freeze-gap CSV" ask is recorded in
+  [IMPROVEMENTS.md](./IMPROVEMENTS.md) (it needs an output-shape decision so a second table doesn't
+  confuse consumers of the existing `t,unique_frames,fps` stdout).
+
+Pre-merge adversarial review hardening: the lead-in is only treated as pre-roll when it is genuinely
+near-static (idle windows **and** a busiest window far quieter than the content) — so active content
+that merely **freezes early** (active → 0 fps → active) is not mistaken for pre-roll and its frozen
+windows stay in the ranking, which is exactly what `--cadence` must headline.
+
+### Tests
+- New coverage: a 3s-black-pre-roll + 2s-content clip confirms the dead lead-in is excluded from the
+  choppiest windows, the content-start note fires, and the freeze-gap pass still reports the frozen
+  splash; an active-then-early-freeze clip confirms the frozen windows are **kept** in the ranking
+  (not misread as pre-roll) — while the continuous-clip #64 scoping behavior is preserved.
+
 ## [1.4.0] - 2026-07-05
 
 Triage of the round-6 dogfood feedback (#69). `video-bug-analyzer` → 1.4.0 (`app-website-evaluator`
@@ -940,6 +970,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.4.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.4.1
 [1.4.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.4.0
 [1.3.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.3.1
 [1.3.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.3.0

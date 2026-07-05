@@ -657,6 +657,44 @@ if command -v ffmpeg >/dev/null 2>&1; then
       else
         fail "--cadence scoping hint wrong (unscoped/scoped)"
       fi
+      # 1.4.1 (#70): a static/near-black pre-roll must not dominate "choppiest windows" — the dead
+      # lead-in is detected + excluded from the ranking (with a note), and the freeze-gap pass still
+      # catches the frozen splash. Build 3s black pre-roll + 2s animated content @20fps.
+      if ffmpeg -hide_banner -loglevel error \
+           -f lavfi -i "color=black:s=160x120:r=20:d=3" \
+           -f lavfi -i "testsrc=s=160x120:r=20:d=2" \
+           -filter_complex "[0:v][1:v]concat=n=2:v=1[v]" -map "[v]" "$tmp/preroll.mp4" -y 2>/dev/null; then
+        bash "$SCRIPT" --video "$tmp/preroll.mp4" --cadence 2>"$tmp/pre.err" >/dev/null || true
+        # the lead-in note fires; the choppiest list has no dead 0-fps window; the freeze gap is caught.
+        _chop="$(sed -n '/Choppiest windows:/,/lead-in\|Whole clip/p' "$tmp/pre.err")"
+        if grep -q 'static/near-black lead-in' "$tmp/pre.err" \
+           && grep -q 'content starts' "$tmp/pre.err" \
+           && ! grep -qE '0 unique in' <<<"$_chop" \
+           && grep -qi 'frozen for' "$tmp/pre.err"; then
+          pass "--cadence excludes a static pre-roll from choppiest windows + notes content start (#70)"
+        else
+          fail "--cadence pre-roll handling not as expected (#70)"
+        fi
+      else
+        skip "could not build a pre-roll test clip (--cadence #70)"
+      fi
+      # 1.4.1 (#70 review): active content -> early FREEZE -> recovery must NOT be mistaken for
+      # pre-roll — the frozen 0-fps windows are the real defect and must stay in the ranking.
+      if ffmpeg -hide_banner -loglevel error \
+           -f lavfi -i "testsrc2=s=160x120:r=25:d=0.4" \
+           -f lavfi -i "color=c=blue:s=160x120:r=25:d=1.4" \
+           -f lavfi -i "testsrc2=s=160x120:r=25:d=1.0" \
+           -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1[v]" -map "[v]" -r 25 "$tmp/earlyfreeze.mp4" -y 2>/dev/null; then
+        bash "$SCRIPT" --video "$tmp/earlyfreeze.mp4" --cadence 2>"$tmp/ef.err" >/dev/null || true
+        _efchop="$(sed -n '/Choppiest windows:/,/lead-in\|Whole clip/p' "$tmp/ef.err")"
+        if ! grep -q 'static/near-black lead-in' "$tmp/ef.err" && grep -qE '0 unique in' <<<"$_efchop"; then
+          pass "--cadence keeps early-freeze windows in the ranking (not misread as pre-roll, #70 review)"
+        else
+          fail "--cadence misread an early freeze as pre-roll (#70 review)"
+        fi
+      else
+        skip "could not build an early-freeze clip (--cadence #70 review)"
+      fi
     else
       skip "could not build a cadence test clip (--cadence)"
     fi

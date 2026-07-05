@@ -797,6 +797,50 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a saturation test clip (--saturation)"
     fi
+    # --occupancy (1.4.0, #69): a small bright box on black reads a low coverage % (+ the "too
+    # small to see" hint); a big box reads clearly higher. Needs python3.
+    if ! command -v python3 >/dev/null 2>&1; then
+      skip "python3 not installed (--occupancy e2e)"
+    elif ffmpeg -hide_banner -loglevel error -f lavfi -i "color=black:s=200x200:rate=4:duration=1" -vf "drawbox=x=90:y=90:w=20:h=20:color=white:t=fill" "$tmp/occ_s.mp4" -y 2>/dev/null \
+       && ffmpeg -hide_banner -loglevel error -f lavfi -i "color=black:s=200x200:rate=4:duration=1" -vf "drawbox=x=20:y=20:w=160:h=160:color=white:t=fill" "$tmp/occ_b.mp4" -y 2>/dev/null; then
+      _occs="$(bash "$SCRIPT" --video "$tmp/occ_s.mp4" --occupancy --fps 2 2>/dev/null || true)"
+      _occserr="$(bash "$SCRIPT" --video "$tmp/occ_s.mp4" --occupancy --fps 2 2>&1 >/dev/null || true)"
+      _occb="$(bash "$SCRIPT" --video "$tmp/occ_b.mp4" --occupancy --fps 2 2>/dev/null || true)"
+      _cs="$(awk -F, 'NR==2{print int($2+0.5)}' <<<"$_occs")"   # small-subject coverage %
+      _cb="$(awk -F, 'NR==2{print int($2+0.5)}' <<<"$_occb")"   # big-subject coverage %
+      if [[ "$(head -n1 <<<"$_occs")" == "t,coverage_pct,x,y,w,h" ]] \
+         && [[ -n "$_cs" && -n "$_cb" && "$_cs" -lt 10 && "$_cb" -gt 40 && "$_cb" -gt "$_cs" ]] \
+         && grep -qi 'too small' <<<"$_occserr"; then
+        pass "--occupancy reports low coverage + 'too small' hint for a small subject, high for a big one (#69)"
+      else
+        fail "--occupancy coverage not as expected (small=$_cs% big=$_cb%)"
+      fi
+    else
+      skip "could not build occupancy test clips (--occupancy)"
+    fi
+    # --flow (1.4.0, #69): block-matching flow split into swirl (curl) vs suck (radial). Rotating
+    # static noise reads 'spinning in place' (Rotational-dominant); a zoom-OUT reads 'suck'
+    # (Radial-inward). geq builds unambiguous per-pixel noise (block matching's ideal input);
+    # skip cleanly if geq/zoompan aren't available. Needs python3.
+    if ! command -v python3 >/dev/null 2>&1; then
+      skip "python3 not installed (--flow e2e)"
+    elif ffmpeg -hide_banner -loglevel error -f lavfi -i "nullsrc=s=300x300" -vf "geq=lum='random(1)*255':cb=128:cr=128,format=gray" -frames:v 1 "$tmp/fnoise.png" -y 2>/dev/null \
+       && [[ -s "$tmp/fnoise.png" ]] \
+       && ffmpeg -hide_banner -loglevel error -loop 1 -i "$tmp/fnoise.png" -t 1.2 -r 12 -vf "rotate=a=0.30*t,crop=150:150" "$tmp/frot.mp4" -y 2>/dev/null \
+       && ffmpeg -hide_banner -loglevel error -i "$tmp/fnoise.png" -vf "zoompan=z='min(zoom+0.04,3)':d=16:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=150x150:fps=12,format=gray" "$tmp/fzin.mp4" -y 2>/dev/null \
+       && ffmpeg -hide_banner -loglevel error -i "$tmp/fzin.mp4" -vf reverse "$tmp/fzout.mp4" -y 2>/dev/null; then
+      _frot="$(bash "$SCRIPT" --video "$tmp/frot.mp4" --flow --fps 12 2>&1 || true)"    # stderr+stdout
+      _fzo="$(bash "$SCRIPT" --video "$tmp/fzout.mp4" --flow --fps 12 2>&1 || true)"
+      if grep -q 't,speed,curl,div' <<<"$_frot" \
+         && grep -qi 'Rotational-dominant' <<<"$_frot" && ! grep -qi 'suck' <<<"$_frot" \
+         && grep -qiE 'Radial-inward-dominant|suck' <<<"$_fzo"; then
+        pass "--flow reads rotation as spin-in-place and a zoom-out as inward 'suck' (#69)"
+      else
+        fail "--flow classification not as expected"
+      fi
+    else
+      skip "could not build flow test clips (--flow; needs geq/zoompan)"
+    fi
     # --compare-videos: two clips of different lengths -> ONE stacked sheet, a row per clip
     # (issue #41). Reuse the contact clip + the small clip from earlier; assert compare.png is
     # produced and is a 2-row stack (height ~= 2x a single row).
@@ -1501,6 +1545,28 @@ if grep -q 'crop=80:40:0:0' <<<"$_motc_dry" && grep -q 'tblend=all_mode=differen
   pass "--motion --crop --dry-run honors --crop (crop filter in the motion chain, #66)"
 else
   fail "--motion --crop --dry-run did not include the crop filter"
+fi
+# --flow --dry-run prints the grayscale-sampling command + honors --crop + caps frames (1.4.0, #69).
+_flow_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --flow --crop 120:120:0:0 --dry-run 2>/dev/null || true)"
+if grep -q 'format=gray' <<<"$_flow_dry" && grep -q 't,speed,curl,div' <<<"$_flow_dry" \
+   && grep -q 'crop=120:120:0:0' <<<"$_flow_dry" && grep -q 'frames:v 200' <<<"$_flow_dry"; then
+  pass "--flow --dry-run prints the sampling command, names the CSV, honors --crop, caps frames (#69)"
+else
+  fail "--flow --dry-run not as expected"
+fi
+# --occupancy-threshold must be numeric: a non-numeric value exits 2 cleanly (no Python traceback) (#69 review).
+bash "$EXTRACT" --video "$nf_tmp/clip.mov" --occupancy --occupancy-threshold abc >/dev/null 2>&1
+if [[ $? -eq 2 ]]; then
+  pass "--occupancy-threshold rejects a non-numeric value with exit 2 (#69 review)"
+else
+  fail "--occupancy-threshold did not reject a garbage value with exit 2"
+fi
+# --occupancy --dry-run prints the threshold-sampling command + CSV header (1.4.0, #69).
+_occ_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --occupancy --occupancy-threshold 55 --dry-run 2>/dev/null || true)"
+if grep -q 'format=gray' <<<"$_occ_dry" && grep -q 't,coverage_pct,x,y,w,h' <<<"$_occ_dry" && grep -q 'cutoff 55' <<<"$_occ_dry"; then
+  pass "--occupancy --dry-run prints the threshold command, CSV header, and the cutoff (#69)"
+else
+  fail "--occupancy --dry-run not as expected"
 fi
 # --saturation --dry-run prints the signalstats command (1.0.0).
 _sat_dry="$(bash "$EXTRACT" --video "$nf_tmp/clip.mov" --saturation --dry-run 2>/dev/null || true)"

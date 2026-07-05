@@ -164,8 +164,9 @@ too long / choppy / is the dust even moving?" into a number and shows **where** 
 concentrates (e.g. a flat-low span = nothing moving, a spike = a cut or burst). Built on
 `tblend=difference` + `signalstats` (YAVG); the headline reports the average and the peak moment.
 The first frame is skipped (no previous to difference against). `--fps` sets the rate; honors
-`--start`/`--end`; needs `python3`. It measures *magnitude*, not direction — for coherent-vs-random
-(spiral) motion, frames + `--diff` are still the read; a true optical-flow overlay is a known gap.
+`--start`/`--end`; needs `python3`. It measures *magnitude*, not direction — for the **character** of
+motion (spinning in place vs spiralling inward), reach for **`--flow`** (below), which splits the
+flow into swirl (rotation) and suck (radial) components.
 
 *Amplitude floor & `--crop` (a common misread):* averaged over the **whole frame** and then
 downscaled, low-amplitude motion — drifting dust motes, a slow spinner, a subtle settle — quantizes
@@ -174,6 +175,39 @@ down toward `0.00–3`, where "a little life" is hard to tell from "frozen". Whe
 `--motion` now honors `--crop`, so measuring the ROI alone lifts the signal above the whole-frame
 noise floor. If it still reads near-zero *cropped*, that's a genuine freeze, not a scale artifact —
 which makes `--motion --crop` a clean A/B instrument for "did my fix actually add motion here?".
+
+**Flow character (`--flow`):** `--motion`/`--diff` give motion *magnitude* and *where*, but not its
+*character* — "a disk spinning in place" and "a disk spiralling inward" light them up identically.
+`--flow` computes a coarse block-matching optical flow between sampled frames and decomposes it
+about a center into its **rotational** (curl / mean tangential = "swirl") and **radial** (divergence
+/ mean inward-outward = "suck") components, printing `t,speed,curl,div`. Read it:
+- **spinning in place** → `|curl|` high, `div ≈ 0`
+- **sucking inward** (a plunge into a well) → `div < 0`
+- **expanding outward** → `div > 0`
+- **spiralling inward** ("suck + twirl") → `|curl|` high **and** `div < 0`
+- **panning/translating** → both `curl` and `div` ≈ 0
+
+The headline classifies the dominant pattern. Center defaults to the frame center; set it with
+`--flow-center fx:fy` (fractions of the frame, e.g. `0.4:0.55`) or just `--crop` so the feature is
+centered. `--fps` sets the temporal rate — **raise it for fast motion** (the search caps at ~8 px
+of displacement per frame; more fps ⇒ smaller per-frame steps ⇒ a cleaner field). The pure-python
+matcher analyzes a **bounded number of frames** (the first ~200 sampled; it says so when it caps),
+so point it at the beat you care about with `--start`/`--end` rather than a whole long recording.
+Honors `--crop`,
+`--start`/`--end`; needs `python3` (stdlib only — no numpy/opencv). It works best on a **textured**
+subject (a churning disk, particles); flat/low-contrast blocks are skipped, and because it matches
+*translation*, pure **expansion/scaling** (outward `div`) is under-measured — inward "suck" and
+rotation are the reliable reads. This is the quantified answer to "is it swirling or sucking?" that
+the frames alone can't give.
+
+**Subject extent (`--occupancy`):** answers "how much of the frame does the subject actually
+occupy?" — the "present but too small to see" case that brightness/colour modes miss. It thresholds
+each sampled frame above the background and prints `t,coverage_pct,x,y,w,h` (the subject's coverage
+fraction + bounding box, in the downscaled sample's px). "The galaxy is tiny" becomes `coverage ≈
+3%`, and you can watch it climb as a camera auto-frames or pulls back. The bright-on-dark default
+(a visualizer on black) is flipped with `--occupancy-dark`; the `--occupancy-threshold N` (0–255,
+default 40) sets the subject/background cutoff. The counterpart to `--blackdetect` (which thresholds
+for the *empty* case). Honors `--crop`, `--start`/`--end`; needs `python3`.
 
 **Saturation timeline (`--saturation`):** prints `t,saturation` — the mean colour saturation
 (`signalstats` SATAVG, 0 ≈ greyscale, higher ≈ more vivid, maxing ~180) per sampled frame — so

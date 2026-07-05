@@ -5,6 +5,48 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.4.0] - 2026-07-05
+
+Triage of the round-6 dogfood feedback (#69). `video-bug-analyzer` → 1.4.0 (`app-website-evaluator`
+stays 1.3.1; `repo-bootstrap` and `tab-chord-formatter` unchanged at 1.2.0). MINOR: two new
+analysis modes, both backward-compatible, built on the existing motion-sampling / thresholding
+plumbing.
+
+### Added (video-bug-analyzer → 1.4.0, #69)
+- **`--flow` — motion *character*, not just magnitude.** `--motion`/`--diff` can't tell "a disk
+  spinning in place" from "a disk spiralling inward" — both light up the same. `--flow` computes a
+  coarse block-matching optical flow between sampled frames and decomposes it about a center into
+  its **rotational** (curl / "swirl") and **radial** (divergence / "suck") components, printing
+  `t,speed,curl,div`. Reads: spinning in place = `|curl|` high, `div≈0`; sucking inward = `div<0`;
+  spiralling inward ("suck + twirl") = high `curl` **and** `div<0`; panning = both ≈0. The headline
+  classifies the dominant pattern. Center from `--flow-center fx:fy` (default frame center) or
+  `--crop`; `--fps` sets the rate (raise it for fast motion). Pure Python (stdlib — no numpy/opencv);
+  full-search matching with an interior-block restriction so the field stays unbiased, frames fit to
+  160×160 (both axes) and the sampled-frame count is **capped** (with a note) so a long recording
+  can't hang — scope with `--start`/`--end`. Textured subjects (a churning disk) are its sweet spot;
+  outward *expansion* is under-measured (block matching assumes translation), so inward "suck" and
+  rotation are the reliable reads.
+- **`--occupancy` — subject extent.** Answers "how much of the frame does the subject actually
+  fill?" — the "present but too small to see" case brightness/colour modes miss. Thresholds each
+  sampled frame above the background and prints `t,coverage_pct,x,y,w,h` (coverage fraction +
+  bounding box). "The galaxy is tiny" becomes `coverage ≈ 3%`, watchable as a camera pulls back.
+  `--occupancy-threshold N` sets the cutoff, `--occupancy-dark` flips to a dark subject; the
+  counterpart to `--blackdetect`'s empty-frame threshold. Honors `--crop`, `--start`/`--end`.
+- The multi-clip batch idea (#69's third, lower-priority ask — run the same modes over N clips,
+  one report keyed by clip) is recorded in [IMPROVEMENTS.md](./IMPROVEMENTS.md) rather than built
+  this round (it overlaps `--compare-videos`).
+
+### Tests
+- New coverage: `--flow` classifies rotating noise as spin-in-place and a zoom-out as inward "suck"
+  (block-matching validated against rotation/zoom/pan/static archetypes); `--occupancy` reads a low
+  coverage % + the "too small" hint for a small subject and high for a big one; dry-run command +
+  CSV-header pins for both; the `--flow` frame cap and the numeric `--occupancy-threshold` guard.
+- Pre-merge adversarial review hardening: `--flow` fits frames to 160×160 and caps the sampled-frame
+  count (an unbounded full-search could hang a long/portrait clip); a truncated PGM (killed ffmpeg)
+  is skipped instead of raising `IndexError` (also in `--measure`/`--occupancy`); a non-integer
+  `--occupancy-threshold` gives a clean error, and a decimal cutoff is tolerated; a bad
+  `--flow-center` (out-of-range / non-finite) falls back to the frame center.
+
 ## [1.3.1] - 2026-07-03
 
 Triage of the round-5 dogfood feedback (#66, #67). `app-website-evaluator` → 1.3.1 and
@@ -898,6 +940,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.4.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.4.0
 [1.3.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.3.1
 [1.3.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.3.0
 [1.2.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.2.0

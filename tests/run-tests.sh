@@ -1781,6 +1781,24 @@ else
   else
     fail "docs/DISTRIBUTION.md missing or lacks the submission channel"
   fi
+  # Diagnostics (helper-fix): the inline structural gate credits a valid marketplace.json without
+  # needing the claude CLI, and --verbose emits an environment/tool report.
+  if grep -q 'marketplace.json: valid' <<<"$_pub"; then
+    pass "publish.sh structurally validates marketplace.json inline (no claude CLI needed)"
+  else
+    fail "publish.sh did not run the inline marketplace validation"
+  fi
+  _pubv="$(bash "$PUBLISH" --verbose 2>&1 || true)"
+  if grep -q 'Environment' <<<"$_pubv" && grep -qE 'bash-ver|uname' <<<"$_pubv"; then
+    pass "publish.sh --verbose prints an environment/tool report"
+  else
+    fail "publish.sh --verbose did not print the environment report"
+  fi
+  if grep -q 'skipped (--skip-tests)' <<<"$(bash "$PUBLISH" --skip-tests 2>&1 || true)"; then
+    pass "publish.sh --skip-tests skips the advisory test suite"
+  else
+    fail "publish.sh --skip-tests did not skip the suite"
+  fi
 fi
 
 # --- Summary --------------------------------------------------------------------------

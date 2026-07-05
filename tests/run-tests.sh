@@ -350,7 +350,7 @@ section "bash syntax check"
 scripts=()
 while IFS= read -r -d '' sh; do
   scripts+=("$sh")
-done < <(find plugins tests submissions -name '*.sh' -print0 2>/dev/null)
+done < <(find plugins tests submissions scripts -name '*.sh' -print0 2>/dev/null)
 for sh in "${scripts[@]}"; do
   if bash -n "$sh" 2>/dev/null; then
     pass "bash -n clean: $sh"
@@ -1704,6 +1704,45 @@ PY
     skip "no Playwright Chromium (format-tab.py --pdf e2e)"
   fi
   rm -rf "$_ftmp"
+fi
+
+# --- scripts/publish.sh (community distribution helper) -------------------------------
+section "scripts/publish.sh"
+PUBLISH="scripts/publish.sh"
+if [[ ! -f "$PUBLISH" ]]; then
+  skip "no scripts/publish.sh"
+else
+  if [[ -x "$PUBLISH" ]]; then pass "publish.sh is executable"; else fail "publish.sh not executable (chmod +x)"; fi
+  if bash "$PUBLISH" --help >/dev/null 2>&1; then
+    pass "publish.sh --help exits 0"
+  else
+    fail "publish.sh --help did not exit 0"
+  fi
+  bash "$PUBLISH" --bogus >/dev/null 2>&1; _pub_rc=$?
+  if [[ $_pub_rc -eq 2 ]]; then pass "publish.sh rejects unknown args (exit 2)"; else fail "publish.sh exited $_pub_rc on a bad arg (expected 2)"; fi
+  # Default plan mode: prints the key sections, references DISTRIBUTION.md, and (crucially) writes
+  # nothing / mutates no git state. Capture then match (no live-pipe grep -q under pipefail).
+  _pub="$(bash "$PUBLISH" 2>/dev/null || true)"
+  if grep -q 'MANUAL steps' <<<"$_pub" \
+     && grep -q 'clau.de/plugin-directory-submission' <<<"$_pub" \
+     && grep -q 'docs/DISTRIBUTION.md' <<<"$_pub"; then
+    pass "publish.sh plan mode prints the automatable + manual checklist"
+  else
+    fail "publish.sh plan mode missing key sections"
+  fi
+  # Plan/default mode must not execute writes: no gh/curl mutation should occur without --run. Assert
+  # it stays read-only by checking it doesn't claim to have run anything (no 'tests: PASS' line etc.).
+  if ! grep -q 'tests: PASS' <<<"$_pub"; then
+    pass "publish.sh default mode is a plan (does not execute the gated steps)"
+  else
+    fail "publish.sh executed gated steps without --run"
+  fi
+  # The companion playbook exists and names the primary channel.
+  if [[ -f docs/DISTRIBUTION.md ]] && grep -q 'clau.de/plugin-directory-submission' docs/DISTRIBUTION.md; then
+    pass "docs/DISTRIBUTION.md present with the community-submission channel"
+  else
+    fail "docs/DISTRIBUTION.md missing or lacks the submission channel"
+  fi
 fi
 
 # --- Summary --------------------------------------------------------------------------

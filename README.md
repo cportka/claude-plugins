@@ -141,7 +141,9 @@ into a fix and a new version.
 
 [SemVer](https://semver.org) — every PR bumps the version and adds a
 [CHANGELOG](./CHANGELOG.md) entry. Known gaps and ideas: [IMPROVEMENTS.md](./IMPROVEMENTS.md).
-Cutting a release or submitting the marketplace: [RELEASING.md](./RELEASING.md).
+Cutting a release: [RELEASING.md](./RELEASING.md). Getting it discovered by the community
+(directories, awesome-lists, announcements) — a verified playbook + a `scripts/publish.sh` helper:
+[docs/DISTRIBUTION.md](./docs/DISTRIBUTION.md).
 
 ## License
 

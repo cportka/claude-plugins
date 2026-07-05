@@ -4,6 +4,12 @@ How to cut a release of the `portka-tools` marketplace and get it discovered. St
 **(manual)** can't be done from this automated environment (the git proxy blocks tag pushes, and
 there's no MCP tool for repo settings / external submissions) — they're for a maintainer.
 
+> **Getting discovered?** The community-distribution steps below (§4–§6) are consolidated, verified,
+> and partly automated in **[docs/DISTRIBUTION.md](./docs/DISTRIBUTION.md)** + the
+> **[`scripts/publish.sh`](./scripts/publish.sh)** helper: `scripts/publish.sh` prints the plan,
+> `--run` executes the GitHub metadata steps (topics/description/homepage/Pages), and it lays out the
+> manual submissions (Anthropic community marketplace, awesome-lists) and announcement channels.
+
 ## 1. Cut the release (in a PR)
 
 1. Bump `version` in each changed plugin's `.claude-plugin/plugin.json` (SemVer; the marketplace

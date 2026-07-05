@@ -141,6 +141,25 @@
 #                       0 grey .. ~180 vivid) per sampled frame, so "clownish/over-saturated vs
 #                       muted/elegant" is measurable and verifiable after a fix. Sample rate from
 #                       --fps; honors --start/--end. (ffmpeg signalstats; needs python3.)
+#   --flow              Flow *character*, not just magnitude: coarse block-matching optical flow
+#                       between sampled frames, decomposed about a center into its rotational
+#                       (curl / "swirl") and radial (divergence / "suck") parts -> t,speed,curl,div.
+#                       Distinguishes "spinning in place" (|curl| high, div~0) from "sucking inward"
+#                       (div<0) — what --motion/--diff (magnitude only) can't. Center from
+#                       --flow-center fx:fy (fraction of frame, default 0.5:0.5); honors --crop,
+#                       --start/--end; --fps sets the rate (raise it for fast motion). (python3.)
+#   --flow-center fx:fy  Center the --flow swirl/radial split is measured about, as fractions of
+#                       the frame (0..1). Default 0.5:0.5 (frame center) — or --crop so the feature centers.
+#   --occupancy         Subject-extent timeline: how much of the frame the subject actually fills.
+#                       Threshold above the background and print t,coverage_pct,x,y,w,h (bounding box
+#                       in sampled px) per frame — the "subject present but small" counterpart to
+#                       --blackdetect. "The galaxy is tiny" becomes coverage ~3%, and you watch it
+#                       grow as a camera pulls back. --occupancy-threshold sets the cutoff,
+#                       --occupancy-dark flips to a dark subject; honors --crop, --start/--end. (python3.)
+#   --occupancy-threshold N  Luma cutoff (0..255) splitting subject from background for --occupancy
+#                       (default 40; subject = brighter than N, or darker with --occupancy-dark).
+#   --occupancy-dark    --occupancy measures a dark subject on a light background (default is the
+#                       reverse: a bright subject on a dark background, e.g. a visualizer on black).
 #   --stack             ROI time-stack: crop a fixed band (--crop, required — a scrub bar, HUD,
 #                       status row) and tile the samples VERTICALLY into stack_0001.png, so one
 #                       image reads that region's evolution top-to-bottom across the clip. Sample
@@ -180,6 +199,8 @@
 #   extract-frames.sh --video safari.mov --ab firefox.mov --fps 10       # where do they diverge?
 #   extract-frames.sh --video splash.mov --cadence --window 0.5          # when does it stutter?
 #   extract-frames.sh --video splash.mov --motion --fps 12               # when/where is motion?
+#   extract-frames.sh --video orbit.mov --flow --fps 8                   # spin-in-place vs suck-inward?
+#   extract-frames.sh --video galaxy.mov --occupancy --fps 4             # is the subject too small?
 #   extract-frames.sh --video splash.mov --saturation --fps 6            # vivid vs muted, over time
 #   extract-frames.sh --compare-videos fresh.mov,replay.mov --label      # A vs B, phase-aligned
 #   extract-frames.sh --video app.mov --intro                            # "the intro does X" — t=0
@@ -191,7 +212,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.3.1"
+VBA_VERSION="1.4.0"
 
 VIDEO=""
 START=""
@@ -241,6 +262,11 @@ SATURATION=""  # --saturation prints a per-frame colour-saturation timeline, exi
 PACING=""      # --pacing prints a per-frame timestamp-interval (jitter) timeline, exits (1.2.0)
 STACK=""       # --stack tiles a cropped ROI vertically across time -> stack_*.png (1.3.0, #62)
 CHECK_UPDATE="" # --check-update compares installed vs marketplace version, exits (1.3.0, #62)
+FLOW=""        # --flow rotational/radial optical-flow decomposition -> t,speed,curl,div (1.4.0, #69)
+FLOW_CENTER="0.5:0.5" # --flow-center fx:fy (fraction of frame) the swirl/suck is measured about
+OCCUPANCY=""   # --occupancy subject-extent timeline -> t,coverage_pct,bbox (1.4.0, #69)
+OCC_THRESH="40" # --occupancy-threshold luma cutoff separating subject from background (0..255)
+OCC_DARK=""    # --occupancy-dark measures a dark subject on a light background (else bright-on-dark)
 FPS_SET=""     # track whether --fps was passed (so presets don't override it)
 
 usage() {
@@ -428,6 +454,11 @@ while [[ $# -gt 0 ]]; do
     --pacing) PACING=1; shift ;;                      # ADDED (1.2.0): frame-pacing/jitter timeline
     --stack) STACK=1; shift ;;                        # ADDED (1.3.0, #62): ROI time-stack
     --check-update) CHECK_UPDATE=1; shift ;;          # ADDED (1.3.0, #62): version check, exit
+    --flow) FLOW=1; shift ;;                           # ADDED (1.4.0, #69): swirl/suck flow split
+    --flow-center) FLOW_CENTER="${2:-}"; shift 2 ;;   # center (fx:fy fractions) for --flow
+    --occupancy) OCCUPANCY=1; shift ;;                # ADDED (1.4.0, #69): subject-extent timeline
+    --occupancy-threshold) OCC_THRESH="${2:-}"; shift 2 ;;  # luma cutoff subject vs background
+    --occupancy-dark) OCC_DARK=1; shift ;;            # subject is dark-on-light (default bright-on-dark)
     --version) echo "video-bug-analyzer $(_plugin_version)"; exit 0 ;;  # ADDED
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -451,6 +482,13 @@ fi
 # --stack needs its ROI up front — fail before any ffmpeg install/probe work (1.3.0, #62).
 if [[ -n "$STACK" && -z "$CROP" ]]; then
   echo "Error: --stack needs --crop W:H:X:Y (the region to track over time)." >&2
+  exit 2
+fi
+
+# --occupancy-threshold must be numeric — reject garbage up front with a clear message rather than
+# a raw Python traceback + leaked temp dir later (1.4.0, #69 review).
+if [[ -n "$OCCUPANCY" && ! "$OCC_THRESH" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  echo "Error: --occupancy-threshold must be a number 0..255 (got '$OCC_THRESH')." >&2
   exit 2
 fi
 
@@ -767,19 +805,24 @@ limit=int(limit); mx=int(mx); my=int(my); fps=float(fps); base=float(base)
 vw=float(vw) if vw else None
 vh=float(vh) if vh else None
 def read_pgm(p):
-    with open(p,'rb') as f: data=f.read()
-    if data[:2]!=b'P5': return 0,0,b''
-    i=2; vals=[]
-    while len(vals)<3:                       # parse width, height, maxval (skip ws/comments)
-        while i<len(data) and data[i:i+1].isspace(): i+=1
-        if data[i:i+1]==b'#':
-            while i<len(data) and data[i:i+1]!=b'\n': i+=1
-            continue
-        j=i
-        while j<len(data) and not data[j:j+1].isspace(): j+=1
-        vals.append(int(data[i:j])); i=j
-    w,h,_maxv=vals; i+=1                      # one whitespace byte follows maxval
-    return w,h,data[i:i+w*h]
+    try:
+        with open(p,'rb') as f: data=f.read()
+        if data[:2]!=b'P5': return 0,0,b''
+        i=2; vals=[]
+        while len(vals)<3:                       # parse width, height, maxval (skip ws/comments)
+            while i<len(data) and data[i:i+1].isspace(): i+=1
+            if data[i:i+1]==b'#':
+                while i<len(data) and data[i:i+1]!=b'\n': i+=1
+                continue
+            j=i
+            while j<len(data) and not data[j:j+1].isspace(): j+=1
+            vals.append(int(data[i:j])); i=j
+        w,h,_maxv=vals; i+=1                      # one whitespace byte follows maxval
+        px=data[i:i+w*h]
+        if len(px)!=w*h: return 0,0,b''          # truncated frame -> skip, don't IndexError
+        return w,h,px
+    except Exception:
+        return 0,0,b''
 def pct(diam, dim): return ("%.2f" % (diam/dim*100)) if dim else ""
 print("t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy")
 for n,p in enumerate(sorted(glob.glob(os.path.join(d,"f_*.pgm")))):
@@ -815,6 +858,93 @@ PY
     echo "No frames sampled — check the clip and --start/--end." >&2
   fi
   [[ -z "$vw" ]] && echo "Note: ffprobe not found — diam_pct_* left blank (px only)." >&2
+}
+
+# subject-extent / occupancy (#69) — "how much of the frame does the subject actually
+# occupy?" Threshold above (bright-on-dark, default) or below (--occupancy-dark) a luma cutoff and
+# report, per sampled frame, the coverage fraction plus the subject's bounding box:
+# t,coverage_pct,x,y,w,h. The "subject present but small" counterpart to --blackdetect (which
+# thresholds for the empty/black case). Frames are downscaled (coverage is scale-invariant; bbox is
+# in the sampled px, printed with the sample dims) so the pure-python threshold stays cheap. Honors
+# --crop (occupancy within an ROI), --start/--end. ffmpeg -> grayscale PGM; python3 thresholds.
+run_occupancy() {
+  local kind="bright"; [[ -n "$OCC_DARK" ]] && kind="dark"
+  local vf="${CROP_VF}fps=${FPS},scale='min(240,iw)':-1,format=gray"
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.pgm"
+    printf '\n'
+    echo "# then threshold each PGM (${kind} subject, cutoff ${OCC_THRESH}) -> coverage % + bbox"
+    echo "# t,coverage_pct,x,y,w,h"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --occupancy needs python3 to threshold the frames. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local d; d="$(mktemp -d)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
+  local base; base="$(to_seconds "${START:-0}")"
+  python3 - "$d" "$OCC_THRESH" "$kind" "$FPS" "$base" <<'PY'
+import sys, os, glob
+d, thr, kind, fps, base = sys.argv[1:6]
+thr=int(round(float(thr))); fps=float(fps) or 1.0; base=float(base)   # tolerate a decimal cutoff
+def read_pgm(p):
+    try:
+        with open(p,'rb') as f: data=f.read()
+        if data[:2]!=b'P5': return 0,0,b''
+        i=2; vals=[]
+        while len(vals)<3:                       # width, height, maxval (skip whitespace/comments)
+            while i<len(data) and data[i:i+1].isspace(): i+=1
+            if data[i:i+1]==b'#':
+                while i<len(data) and data[i:i+1]!=b'\n': i+=1
+                continue
+            j=i
+            while j<len(data) and not data[j:j+1].isspace(): j+=1
+            vals.append(int(data[i:j])); i=j
+        w,h,_=vals; i+=1
+        px=data[i:i+w*h]
+        if len(px)!=w*h: return 0,0,b''          # truncated frame -> skip, don't IndexError
+        return w,h,px
+    except Exception:
+        return 0,0,b''
+print("t,coverage_pct,x,y,w,h")
+rows=[]; dims=""
+for n,p in enumerate(sorted(glob.glob(os.path.join(d,"f_*.pgm")))):
+    w,h,px=read_pgm(p)
+    if not w or not h: continue
+    dims="%dx%d" % (w,h)
+    cnt=0; minx=miny=10**9; maxx=maxy=-1
+    for y in range(h):
+        row=px[y*w:(y+1)*w]
+        for x in range(w):
+            v=row[x]
+            if (v>thr) if kind=="bright" else (v<thr):
+                cnt+=1
+                if x<minx: minx=x
+                if x>maxx: maxx=x
+                if y<miny: miny=y
+                if y>maxy: maxy=y
+    t=base+n/fps; cov=100.0*cnt/(w*h)
+    if maxx<0:
+        print("%.3f,0.00,0,0,0,0" % t); rows.append((t,0.0)); continue
+    print("%.3f,%.2f,%d,%d,%d,%d" % (t,cov,minx,miny,maxx-minx+1,maxy-miny+1))
+    rows.append((t,cov))
+e=sys.stderr
+if rows:
+    cov=[r[1] for r in rows]; avg=sum(cov)/len(cov)
+    lo=min(rows,key=lambda r:r[1]); hi=max(rows,key=lambda r:r[1])
+    e.write("Occupancy: %s subject fills mean %.1f%% of frame (sampled %s); range %.1f%% @%.2fs .. %.1f%% @%.2fs over %d frames.\n"
+            % (kind, avg, dims, lo[1], lo[0], hi[1], hi[0], len(rows)))
+    if avg < 5:
+        e.write("Very small subject (mean <5%): 'too small to see' is now a number — watch coverage climb if the camera pulls back or auto-frames.\n")
+    if hi[1]-lo[1] >= 5:
+        e.write("Coverage shifts over the clip (%.1f%% -> %.1f%%) — an intro/zoom is resizing the subject.\n" % (rows[0][1], rows[-1][1]))
+    if avg > 95:
+        e.write("Near-full coverage (>95%): the threshold may be catching the background — try a higher --occupancy-threshold (or --occupancy-dark).\n")
+else:
+    e.write("No frames sampled — clip too short or --fps too low.\n")
+PY
+  rm -rf "$d"
 }
 
 # --probe — print the capture's geometry (dimensions, aspect, orientation,
@@ -1177,6 +1307,177 @@ PY
   rm -f "$mfile"
 }
 
+# rotational/radial flow decomposition (#69) — --motion/--diff give magnitude and *where*,
+# but not *character*: "a disk spinning in place" and "a disk spiralling inward" light them up the
+# same. This computes a coarse block-matching optical flow between sampled frames and decomposes it
+# about a center into its rotational (curl / mean tangential = "swirl") and radial (divergence /
+# mean inward-outward = "suck") parts -> CSV t,speed,curl,div. Read: spin-in-place = |curl| high,
+# div~0; suck inward = div<0; expansion = div>0. Frames are downscaled to fit 160x160 (both axes,
+# so a tall portrait clip can't blow up the block count) and a per-block full search is used —
+# reliable on high-frequency texture where a coarse step-search locks onto a spurious minimum.
+# Flat (textureless) blocks are skipped so a big black background doesn't dilute the signal. The
+# matcher is pure-python, so the number of sampled frames is capped (FLOW_MAX) to bound runtime —
+# scope a longer clip with --start/--end or a lower --fps. Honors --crop, --start/--end,
+# --flow-center. Needs python3.
+run_flow() {
+  local vf="${CROP_VF}fps=${FPS},scale='min(160,iw)':'min(160,ih)':force_original_aspect_ratio=decrease,format=gray"
+  local flow_max=200                                  # cap sampled frames — full-search matching is O(frames)
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v "$flow_max" "<tmp>/f_%05d.pgm"
+    printf '\n'
+    echo "# then block-match consecutive PGMs (full search) -> flow field -> decompose about ${FLOW_CENTER} (fx:fy)"
+    echo "# t,speed,curl,div   (curl = swirl/tangential; div = radial: <0 inward 'suck', >0 outward)"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --flow needs python3 to compute block-matching flow. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local d; d="$(mktemp -d)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v "$flow_max" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
+  # If we filled the cap, the clip has more than we analyzed — say so (don't silently truncate).
+  if [[ "$(find "$d" -maxdepth 1 -name 'f_*.pgm' | wc -l)" -ge "$flow_max" ]]; then
+    echo "Note: --flow analyzed the first ${flow_max} sampled frames (~$(awk "BEGIN{printf \"%.0f\", ${flow_max}/${FPS}}")s at --fps ${FPS}); narrow with --start/--end or lower --fps to cover a different/longer span." >&2
+  fi
+  local base; base="$(to_seconds "${START:-0}")"
+  python3 - "$d" "$FPS" "$base" "$FLOW_CENTER" <<'PY'
+import sys, os, glob
+d, fps, base, center = sys.argv[1:5]
+fps=float(fps) or 1.0; base=float(base)
+try:
+    fx, fy = (float(x) for x in center.split(":"))
+except Exception:
+    fx, fy = 0.5, 0.5
+if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):   # out-of-range / nan / inf -> frame center
+    fx, fy = 0.5, 0.5
+
+def read_pgm(p):
+    try:
+        with open(p, 'rb') as f: data=f.read()
+        if data[:2]!=b'P5': return 0,0,None
+        i=2; vals=[]
+        while len(vals)<3:
+            while i<len(data) and data[i:i+1].isspace(): i+=1
+            if data[i:i+1]==b'#':
+                while i<len(data) and data[i:i+1]!=b'\n': i+=1
+                continue
+            j=i
+            while j<len(data) and not data[j:j+1].isspace(): j+=1
+            vals.append(int(data[i:j])); i=j
+        w,h,_=vals; i+=1
+        px=data[i:i+w*h]
+        if len(px)!=w*h: return 0,0,None            # truncated frame (killed ffmpeg) -> skip, don't IndexError
+        return w,h,px
+    except Exception:
+        return 0,0,None
+
+B=16          # block size (px)
+R=8           # search radius (px) — raise --fps if motion exceeds this per frame
+STRIDE=2      # subsample the block when scoring (~4x faster; fine for a coarse flow)
+VAR=20.0      # min block variance (over the sampled pixels) to trust a vector (skip flat background)
+
+def sad(a, b, w, ax, ay, bx, by):
+    s=0; yy=0
+    while yy<B:
+        ra=(ay+yy)*w+ax; rb=(by+yy)*w+bx; xx=0
+        while xx<B:
+            dv=a[ra+xx]-b[rb+xx]
+            s+= dv if dv>=0 else -dv
+            xx+=STRIDE
+        yy+=STRIDE
+    return s
+
+def block_var(px, w, ax, ay):
+    s=0; s2=0; n=0; yy=0
+    while yy<B:
+        r=(ay+yy)*w+ax; xx=0
+        while xx<B:
+            v=px[r+xx]; s+=v; s2+=v*v; n+=1
+            xx+=STRIDE
+        yy+=STRIDE
+    m=s/n
+    return s2/n - m*m
+
+frames=[fr for fr in (read_pgm(p) for p in sorted(glob.glob(os.path.join(d,"f_*.pgm"))))
+        if fr[2] is not None and fr[0]>0]
+print("t,speed,curl,div")
+rows=[]
+for k in range(len(frames)-1):
+    w,h,a=frames[k]; w2,h2,b=frames[k+1]
+    if (w,h)!=(w2,h2): continue
+    cx=fx*w; cy=fy*h
+    tang=[]; rad=[]; spd=[]
+    # only interior blocks whose FULL +-R search stays in-frame — a clipped search at the edge
+    # underestimates motion asymmetrically and injects a spurious radial (inward) bias.
+    y=R
+    while y+B+R<=h:
+        x=R
+        while x+B+R<=w:
+            if block_var(a,w,x,y) < VAR:            # flat block — no reliable vector
+                x+=B; continue
+            # full search within +-R for the best-matching displacement. High-frequency texture
+            # (a churning disk, noise) has a spiky match surface where a coarse step-search locks
+            # onto a spurious minimum — full search finds the true global one.
+            bdx=bdy=0; best=None
+            dy2=-R
+            while dy2<=R:
+                ny=y+dy2
+                if 0<=ny and ny+B<=h:
+                    dx2=-R
+                    while dx2<=R:
+                        nx=x+dx2
+                        if 0<=nx and nx+B<=w:
+                            c=sad(a,b,w,x,y,nx,ny)
+                            if best is None or c<best: best=c; bdx=dx2; bdy=dy2
+                        dx2+=1
+                dy2+=1
+            rx=(x+B/2.0)-cx; ry=(y+B/2.0)-cy
+            r=(rx*rx+ry*ry)**0.5
+            if r < B:                               # too close to center — unstable, skip
+                x+=B; continue
+            rad.append((bdx*rx+bdy*ry)/r)           # radial: + outward, - inward ("suck")
+            tang.append((rx*bdy-ry*bdx)/r)          # tangential: signed "swirl"
+            spd.append((bdx*bdx+bdy*bdy)**0.5)
+            x+=B
+        y+=B
+    t=base+(k+0.5)/fps
+    if spd:
+        mv=sum(spd)/len(spd); curl=sum(tang)/len(tang); div=sum(rad)/len(rad)
+    else:
+        mv=curl=div=0.0
+    print("%.3f,%.2f,%.2f,%.2f" % (t,mv,curl,div))
+    rows.append((t,mv,curl,div))
+e=sys.stderr
+if rows:
+    mv=sum(r[1] for r in rows)/len(rows)
+    curl=sum(r[2] for r in rows)/len(rows)
+    div=sum(r[3] for r in rows)/len(rows)
+    acurl=abs(curl); adiv=abs(div)
+    e.write("Flow: mean speed %.2f px/frame; curl %.2f (swirl), div %.2f (radial) about center "
+            "(%.2f,%.2f) over %d pair(s).\n" % (mv, curl, div, fx, fy, len(rows)))
+    if mv < 0.4:
+        e.write("Near-zero flow — little/no motion, or too textureless to match; try --crop on the "
+                "subject or raise --fps.\n")
+    elif acurl >= 1.5*adiv and acurl > 0.4:
+        e.write("Rotational-dominant: swirl >> radial -> 'spinning in place' (rotating, not moving "
+                "toward/away from center).\n")
+    elif adiv >= 1.5*acurl and adiv > 0.4:
+        e.write(("Radial-inward-dominant: div < 0 -> content pulled toward center ('suck').\n"
+                 if div < 0 else
+                 "Radial-outward-dominant: div > 0 -> content expanding away from center.\n"))
+    elif acurl > 0.4 and adiv > 0.4:
+        e.write(("Swirl + inward radial -> 'suck + twirl toward center' (spiralling inward).\n"
+                 if div < 0 else
+                 "Swirl + outward radial -> spiralling outward.\n"))
+    else:
+        e.write("Flow present but not clearly rotational or radial about this center — likely "
+                "translation; try --flow-center fx:fy or --crop to center the feature.\n")
+else:
+    e.write("No flow samples — clip too short, textureless, or --fps too low.\n")
+PY
+  rm -rf "$d"
+}
+
 # colour-saturation timeline — signalstats' SATAVG per sampled frame, so "is this
 # clownish/over-saturated or muted/elegant?" is a number you can verify after a fix (requested in
 # the rc.16/rc.17 dogfeeds). 0 ≈ greyscale; higher ≈ more vivid (SAT maxes ~180). Uses PRE_ARGS.
@@ -1236,7 +1537,7 @@ PY
 _has_pngs() { [[ -d "$1" ]] && [[ -n "$(find "$1" -maxdepth 1 -name '*.png' -print -quit 2>/dev/null)" ]]; }
 _writes_pngs=1
 for _flag in "$BLACKDETECT" "$OCR_ROI" "$MEASURE" "$PROBE" "$PALETTE" "$AB" "$CADENCE" \
-             "$MOTION" "$SATURATION" "$PACING" "$LIST_SCENES"; do
+             "$MOTION" "$SATURATION" "$PACING" "$FLOW" "$OCCUPANCY" "$LIST_SCENES"; do
   [[ -n "$_flag" ]] && _writes_pngs=""
 done
 if [[ -n "$_writes_pngs" ]] && _has_pngs "$OUT"; then
@@ -1433,6 +1734,20 @@ fi
 # --pacing is an analysis mode — print a frame-pacing (timestamp-jitter) timeline and exit.
 if [[ -n "$PACING" ]]; then
   run_pacing
+  feedback_hint
+  exit 0
+fi
+
+# --flow is an analysis mode — print a rotational/radial flow timeline and exit (1.4.0, #69).
+if [[ -n "$FLOW" ]]; then
+  run_flow
+  feedback_hint
+  exit 0
+fi
+
+# --occupancy is an analysis mode — print a subject-extent timeline and exit (1.4.0, #69).
+if [[ -n "$OCCUPANCY" ]]; then
+  run_occupancy
   feedback_hint
   exit 0
 fi

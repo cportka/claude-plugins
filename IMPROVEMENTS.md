@@ -10,7 +10,14 @@ form and are triaged into the items below.
 **Strengths**
 - Repeatable, bug-tuned frame extraction (dense / scene-change / contact-sheet) plus a deep set
   of analysis modes (blackdetect, OCR, measure, probe, palette, ab/compare, cadence/stutter,
-  pacing, motion, saturation) — most emit a CSV/report and exit, so they compose.
+  pacing, motion, flow, occupancy, saturation) — most emit a CSV/report and exit, so they compose.
+- `--flow` (1.4.0, #69) reads motion *character*, not just magnitude: a coarse block-matching
+  optical flow decomposed about a center into swirl (rotational/curl) and suck (radial/divergence),
+  so "spinning in place" (|curl| high, div≈0) is distinguishable from "spiralling inward" (high curl,
+  div<0) — the read `--motion`/`--diff` (magnitude only) can't give.
+- `--occupancy` (1.4.0, #69) quantifies subject extent — coverage % + bounding box per frame — so
+  "the subject is too small to see" becomes a number and you can watch it grow; counterpart to
+  `--blackdetect`'s empty-frame threshold.
 - `--stutter`/`--fps-drops` (1.1.2) quantifies FPS stalls: effective-fps-per-window **and** the
   longest freeze gaps (freezedetect), so a "feels choppy" report becomes timestamps + durations.
 - `--pacing` (1.2.0) reads the real per-frame presentation timestamps (ffprobe) for a frame-pacing
@@ -32,8 +39,15 @@ form and are triaged into the items below.
 - Scene-change is heuristic (threshold per clip); many PNGs cost tokens if the window/fps isn't tight.
 
 **Ideas (not yet built)**
-- **Optical-flow / trajectory overlay** — `--motion` gives magnitude; *direction/coherence*
-  ("spiralling inward, ~2.5 turns" vs random drift) needs flow vectors or per-blob tracking.
+- **Denser / labelled flow** — `--flow` (1.4.0, #69) ships the swirl-vs-suck (curl/divergence) split
+  that answers "spinning in place vs spiralling inward". Remaining: a *dense* per-blob trajectory
+  overlay (turn count, drift direction), and better handling of pure **expansion** (outward `div` is
+  under-measured because block matching assumes translation, not scaling) — a small-motion
+  gradient/pyramid pass or a scale-aware match would close that.
+- **Multi-clip batch** (#69) — run the same analysis modes over N clips and emit one report keyed by
+  clip (the "same bug across Chrome + Firefox" case). Overlaps `--compare-videos` (which is a single
+  phase-aligned A/B sheet, not a per-clip timeline batch); a `--batch a.mov,b.mov --motion` shape
+  would run each mode over each clip and label the CSVs by source. Low priority.
 - **Numeric plot over a CSV** — the OCR/measure/motion/saturation modes emit `t,value`; rendering
   a quick plot (or min/max/dips) would beat reading the CSV by eye.
 - **Two-timestamp centered overlay / contour diff** — `--strip` is side-by-side; a matched-scale

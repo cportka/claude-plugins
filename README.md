@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 1.4.1 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md) · **Privacy:** [PRIVACY.md](./PRIVACY.md) · **Security:** [SECURITY.md](./SECURITY.md)
+> **Version:** 1.5.0 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md) · **Privacy:** [PRIVACY.md](./PRIVACY.md) · **Security:** [SECURITY.md](./SECURITY.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -13,7 +13,7 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 | :-- | :-- | :-- |
 | [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.4.1 | Analyze a screen recording — extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips, ROI time-stack `--stack`) and reason over them, plus analysis modes: black-screen detection, ROI OCR, feature measurement, palettes, cross-clip diff/compare, stutter / dropped-frame + freeze gaps (`--stutter`), frame-pacing jitter (`--pacing`), motion, swirl-vs-suck flow (`--flow`), subject extent (`--occupancy`) & saturation timelines. Runs never overwrite a previous extraction; `--check-update` spots a stale install. |
 | [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.2.0 | Onboard a repo to this marketplace — safely merge `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run`/`--print-only` and a one-paste `/plugin` CLI fallback. With `--portka-standard`, also install the Portka standard: a workflow `CLAUDE.md`, a git/`gh` permissions allowlist, and an enforced SemVer version sync bound to the repo's existing version + a basic test suite (and a native `node:test`/`unittest` version-sync test for JS/Python repos). |
-| [`app-website-evaluator`](./plugins/app-website-evaluator) | 1.3.1 | Evaluate an app/website with a standardized, coverage-honest scorecard — each dimension 0–100 + letter grade, a weighted overall that's **starred** when unassessed weight is excluded (e.g. Security in dir mode), and optional `--json`. AI-readiness parse-validates JSON-LD and credits rich schema types. Covers SEO, crawlability, AI-readiness, social/sharing, security, performance, and growth — tailored to the site's type and community. |
+| [`app-website-evaluator`](./plugins/app-website-evaluator) | 1.4.0 | Evaluate an app/website with a standardized, coverage-honest scorecard — each dimension 0–100 + letter grade, a weighted overall that's **starred** when unassessed weight is excluded, and optional `--json`. Scores a live `--url`, a local `--dir` build, or **pre-fetched `--html`** (a file or stdin, optionally `--headers`) so an agent behind a sandbox egress proxy still gets the full scorecard without curl reaching the origin. Security now credits **source-visible controls** a static host can ship (a `<meta>` CSP, `security.txt`, zero third-party `<script>` origins). AI-readiness parse-validates JSON-LD and credits rich schema types. Covers SEO, crawlability, AI-readiness, social/sharing, security, performance, and growth — tailored to the site's type and community. |
 | [`tab-chord-formatter`](./plugins/tab-chord-formatter) | 1.2.0 | Format a messy guitar tab/chord sheet into a clean, readable layout for screen, or render a consistent monospace **PDF songbook** (one or many songs, a target songs-per-page) — standardized `[Section]` labels, chords aligned over the right lyrics, a tidy metadata header, and well-formed 6-line ASCII tab blocks. |
 
 ## Add a plugin
@@ -81,7 +81,15 @@ and the `--intro` load-bug preset — each documented in `--help` and the skill'
 E=plugins/app-website-evaluator/skills/app-evaluation/scripts/evaluate-site.sh
 "$E" --url https://example.com     # live: crawlability, SEO, social, security headers, …
 "$E" --dir ./dist                  # a local build (no network)
+curl -sSL https://example.com | "$E" --html -   # score pre-fetched HTML (sandbox proxy blocks --url)
+"$E" --html page.html --headers resp-headers.txt  # …and score the live security headers too
 ```
+
+Behind a sandbox egress proxy that 403s arbitrary hosts (web/remote Claude Code), `--url` can't
+reach the origin — fetch the page some other way (an MCP tool, headless browser, `web_fetch`) and
+feed it to `--html`; add `--headers` (e.g. `curl -sSI` output) to still score HSTS/CSP/nosniff. Point
+`--dir` at the **built/deployed** output, not source — robots.txt / sitemap.xml / security.txt are
+often generated at build time (the tool warns if `--dir` looks like a source tree).
 
 **tab-chord-formatter** — paste or link a messy guitar tab / chord sheet and ask Claude to clean
 it up; it runs the `tab-formatting` skill (normalize → re-align chords → output standard plain

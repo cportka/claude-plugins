@@ -24,7 +24,7 @@
     {
       "name": "app-website-evaluator",
       "source": "./plugins/app-website-evaluator",
-      "description": "Evaluate an app or website with a standardized, coverage-honest scorecard — each dimension 0-100 + letter grade, a weight-averaged overall that is starred when unassessed weight is excluded (e.g. Security in dir mode), and optional --json. AI-readiness parse-validates JSON-LD and credits rich schema types (FAQPage/Review/Article). Covers SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth — tailored to the site's type and community.",
+      "description": "Evaluate an app or website with a standardized, coverage-honest scorecard — each dimension 0-100 + letter grade, a weight-averaged overall that is starred when unassessed weight is excluded, and optional --json. Scores a live --url, a local --dir build, or pre-fetched --html (file or stdin, +--headers) so an agent behind a sandbox egress proxy still gets the full scorecard. Security credits source-visible controls (a <meta> CSP, security.txt, no third-party <script> origins). AI-readiness parse-validates JSON-LD and credits rich schema types (FAQPage/Review/Article). Covers SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth — tailored to the site's type and community.",
       "category": "analysis",
       "tags": ["seo", "audit", "website", "growth", "performance", "accessibility", "scorecard"]
     },

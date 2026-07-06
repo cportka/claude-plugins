@@ -1348,6 +1348,92 @@ H
   else
     fail "evaluate-site.sh mis-read 'defer' in a src URL as a defer attribute (#67 review)"
   fi
+  # 1.4.0 (#79): --html scores pre-fetched HTML with no origin fetch (for sandbox egress proxies).
+  # A file, or - for stdin; --headers feeds the live security-header checks without curl.
+  mkdir -p "$ev/pf"
+  cat > "$ev/pf/page.html" <<'H'
+<!doctype html><html lang="en"><head><title>Prefetched — MCP</title>
+<meta name="description" content="fetched by an MCP tool, scored without curl">
+<meta name="viewport" content="width=device-width"><meta property="og:image" content="https://ex.dev/og.png">
+<link rel="canonical" href="https://ex.dev/"><script src="/app.js" type="module"></script>
+</head><body><h1>x</h1></body></html>
+H
+  cat > "$ev/pf/headers.txt" <<'H'
+HTTP/2 200
+strict-transport-security: max-age=63072000
+content-security-policy: default-src 'self'
+x-content-type-options: nosniff
+referrer-policy: no-referrer
+H
+  _pf="$(bash "$EVAL" --html "$ev/pf/page.html" 2>/dev/null || true)"
+  if grep -q 'HTML mode' <<<"$_pf" && grep -q 'meta description present' <<<"$_pf" \
+     && grep -q 'security.txt: could not determine' <<<"$_pf"; then
+    pass "evaluate-site.sh --html scores pre-fetched HTML without an origin fetch (#79)"
+  else
+    fail "--html mode did not score pre-fetched HTML as expected (#79)"
+  fi
+  _pfs="$(bash "$EVAL" --html - < "$ev/pf/page.html" 2>/dev/null || true)"
+  if grep -q 'HTML from stdin' <<<"$_pfs" && grep -q '<title> present' <<<"$_pfs"; then
+    pass "evaluate-site.sh --html - reads HTML from stdin (#79)"
+  else
+    fail "--html - (stdin) did not read/score piped HTML (#79)"
+  fi
+  _pfh="$(bash "$EVAL" --html "$ev/pf/page.html" --headers "$ev/pf/headers.txt" 2>/dev/null || true)"
+  if grep -q 'HSTS header set' <<<"$_pfh" && grep -q 'Content-Security-Policy header set' <<<"$_pfh" \
+     && grep -q 'X-Content-Type-Options set' <<<"$_pfh"; then
+    pass "evaluate-site.sh --html --headers scores live security headers without curl (#79)"
+  else
+    fail "--headers did not feed the security-header checks in --html mode (#79)"
+  fi
+  # --headers requires --html; --html - and --headers - can't both read stdin.
+  bash "$EVAL" --headers "$ev/pf/headers.txt" >/dev/null 2>&1; _hrc=$?
+  echo x | bash "$EVAL" --html - --headers - >/dev/null 2>&1; _s2rc=$?
+  if [[ "$_hrc" -eq 2 && "$_s2rc" -eq 2 ]]; then
+    pass "evaluate-site.sh rejects --headers without --html and both-stdin (#79)"
+  else
+    fail "argument guards for --headers/--html wrong (headers-only=$_hrc both-stdin=$_s2rc, want 2/2)"
+  fi
+  # 1.4.0 (#79): source-visible Security is SCORED in --dir/--html (a static host can't set headers).
+  # meta CSP + a shipped security.txt + zero third-party <script> origins => Security is no longer n/a.
+  mkdir -p "$ev/sec/.well-known"
+  cat > "$ev/sec/index.html" <<'H'
+<!doctype html><html lang="en"><head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+<meta name="viewport" content="width=device-width"><title>Secure static site</title>
+<meta name="description" content="dependency-free static app"><link rel="canonical" href="https://ex.dev/">
+<meta property="og:image" content="https://ex.dev/og.png"><script src="/app.js" defer></script>
+</head><body><h1>hi</h1></body></html>
+H
+  printf 'User-agent: *\n' > "$ev/sec/robots.txt"
+  printf 'Contact: mailto:s@ex.dev\nExpires: 2027-01-01T00:00:00Z\n' > "$ev/sec/.well-known/security.txt"
+  _sec="$(bash "$EVAL" --dir "$ev/sec" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if grep -q 'CSP declared via <meta http-equiv>' <<<"$_sec" \
+     && grep -q 'no third-party <script> origins' <<<"$_sec" \
+     && grep -q 'security.txt present' <<<"$_sec" \
+     && grep -qE 'Security / hygiene +[0-9]+% +[0-9]+ ' <<<"$_sec"; then
+    pass "evaluate-site.sh scores source-visible Security in --dir mode (meta CSP + security.txt + no 3p scripts) (#79)"
+  else
+    fail "source-visible Security sub-score not credited/scored in --dir mode (#79)"
+  fi
+  # Third-party <script> origins are flagged (supply-chain surface), excluding same-origin/relative.
+  mkdir -p "$ev/tp"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><script src="https://cdn.example.net/x.js"></script><script src="/local.js"></script></head><body><h1>h</h1></body></html>\n' > "$ev/tp/index.html"
+  _tp="$(bash "$EVAL" --dir "$ev/tp" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if grep -qE '1 third-party <script> origin.*cdn\.example\.net' <<<"$_tp"; then
+    pass "evaluate-site.sh flags third-party <script> origins and ignores same-origin srcs (#79)"
+  else
+    fail "third-party <script> origin accounting wrong (#79)"
+  fi
+  # --dir foot-gun: a source tree (package.json build script) warns to point at the built output.
+  mkdir -p "$ev/srctree"
+  printf '{"scripts":{"build":"vite build"}}\n' > "$ev/srctree/package.json"
+  echo '<!doctype html><html lang=en><head><title>t</title></head><body>x</body></html>' > "$ev/srctree/index.html"
+  _st="$(bash "$EVAL" --dir "$ev/srctree" 2>/dev/null || true)"
+  if grep -q 'looks like a source tree' <<<"$_st" && grep -q 'BUILT/deployed' <<<"$_st"; then
+    pass "evaluate-site.sh warns when --dir points at a source tree, not the build (#79)"
+  else
+    fail "--dir source-tree foot-gun warning missing (#79)"
+  fi
   rm -rf "$ev"
 else
   fail "evaluate-site.sh not found: $EVAL"

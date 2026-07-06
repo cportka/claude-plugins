@@ -51,6 +51,14 @@ community** (see SKILL.md §1) — these are defaults, not a one-size checklist.
 - No leaked secrets, `.env`, `.git/`, source maps, or stack traces in production.
 - Dependencies current (no known CVEs); a `/.well-known/security.txt` for contact.
 - Cookie consent / privacy policy where required; forms validated server-side.
+- **Source-visible controls (scored off the network too).** Live HTTP headers + HTTPS need `--url`
+  (or `--html --headers`), but a static host can't set headers and instead ships controls visible in
+  the build — the script credits these in `--dir` / `--html` mode so Security isn't a blanket `n/a`:
+  a `<meta http-equiv="Content-Security-Policy">` (a header CSP still wins when present), a shipped
+  `/.well-known/security.txt`, and its **third-party `<script>` posture** — zero off-origin script
+  origins (everything same-origin/relative) is credited as minimal supply-chain surface; off-origin
+  origins are listed with a "pin with Subresource Integrity" nudge. A dependency-free static runtime
+  scores well here even with no server headers.
 
 ### Performance / load
 - Total transfer and request count reasonable for type; a CDN for static assets.
@@ -97,9 +105,20 @@ repeatable answer. Each check is **PASS (1.0) / WARN (0.5) / FAIL (0.0)**; **INF
   **A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, F < 60**. A dimension with no scored checks shows `n/a`.
 - **Overall** = the **weight-averaged** dimension score. Default weights (sum 100):
   SEO 20 · Security/hygiene 18 · Crawlability 15 · Brand assets 13 · Social 12 · Performance 12 ·
-  AI-readiness 10. (`--url` mode also scores Security/Performance; `--dir` mode shows them `n/a`.)
-- **`--json`** emits the same scorecard machine-readably (overall + per-dimension score/grade +
-  every check) for diffing runs or wiring into CI.
+  AI-readiness 10.
+- **Coverage-honest star.** When a dimension can't be assessed it shows `n/a` and is **excluded** from
+  the overall, which is then **starred** (`B*`) with the % of weight it was computed over and the
+  unscored dimensions named — so a partial-coverage grade never reads like a full one. Live-only
+  signals need the origin: `--url` (or `--html --headers`) scores HTTPS + response headers and richer
+  Performance; `--dir` / `--html` still score **source-visible Security** (a `<meta>` CSP,
+  `security.txt`, third-party-script posture) — only the live transport checks and real perf numbers
+  are left `n/a` off the network.
+- **Input source.** One of `--url` (live), `--dir` (a local **built/deployed** tree — not `src/`; the
+  tool warns if it looks like source), or `--html <file|->` (pre-fetched HTML for sandboxes whose
+  egress proxy blocks `--url`), optionally with `--headers <file|->` to score the live security
+  headers without curl.
+- **`--json`** emits the same scorecard machine-readably (overall + `coverage_weight_pct` + `mode` +
+  per-dimension score/grade + every check) for diffing runs or wiring into CI.
 
 The grade is the **shape at a glance**; the *report* is still judgment. Re-grade a dimension only
 with evidence the heuristic was wrong (e.g. a JS-rendered SPA hid content from the fetch), and say

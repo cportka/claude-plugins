@@ -30,22 +30,42 @@ Everything below is weighted by these answers. State the classification at the t
 
 ## 2. Gather evidence
 
-Run the bundled checker, then read the source if you have it:
+Run the bundled checker, then read the source if you have it. It takes **one of three input
+sources**:
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/app-evaluation/scripts/evaluate-site.sh --url https://example.com
-# or, for a local build / repo you can read:
-${CLAUDE_PLUGIN_ROOT}/skills/app-evaluation/scripts/evaluate-site.sh --dir ./dist
+S=${CLAUDE_PLUGIN_ROOT}/skills/app-evaluation/scripts/evaluate-site.sh
+"$S" --url https://example.com          # live fetch (needs curl): headers, HTTPS, robots/sitemap, perf
+"$S" --dir ./dist                       # a local BUILT/deployed dir (no network)
+curl -sSL https://example.com | "$S" --html -           # score pre-fetched HTML — no curl to origin
+"$S" --html page.html --headers resp-headers.txt        # …and score the live security headers too
 ```
+
+**Behind a sandbox egress proxy** (web/remote Claude Code) `--url` often can't reach the origin — the
+proxy 403s arbitrary hosts. When that happens, fetch the page some other way (an MCP fetch tool, a
+headless browser, `web_fetch`) and feed it to **`--html`** (a file, or `-` for stdin); add
+**`--headers`** (e.g. `curl -sSI` output, or an MCP fetch's response headers) to still score the live
+HSTS / CSP / X-Content-Type-Options / Referrer-Policy checks. Exactly one of `--url` / `--dir` /
+`--html`; `--headers` only pairs with `--html`.
+
+**Point `--dir` at the built/deployed output, not source.** Many sites generate `robots.txt`,
+`sitemap.xml`, and `.well-known/security.txt` **at build time** (e.g. a `build-web.js`), so scanning
+`src/` false-negatives Crawlability *and* Security — build first and target `dist/` / `build/` / the
+deployed tree. The tool prints a NOTE when `--dir` looks like a source tree (a `package.json` build
+script, or a `src/` with no root robots/sitemap).
 
 It prints a PASS/WARN/FAIL/INFO checklist over crawlability, SEO, social, assets, AI-readiness,
-security (URL mode), and performance hints, then a **standardized Scorecard**: each dimension scores
+security, and performance hints, then a **standardized Scorecard**: each dimension scores
 **0–100** (PASS=1, WARN=0.5, FAIL=0; INFO unscored) with a **letter grade** (A ≥90, B ≥80, C ≥70,
-D ≥60, F <60), and a **weight-averaged overall** grade. Add **`--json`** for a machine-readable
-scorecard (stdout; human report → stderr). It needs `curl` for `--url` (degrades to base checks if
-absent) and only `grep`/`sed`/`python3` for `--dir`. Don't stop at the script: read `robots.txt`,
-the sitemap, the page `<head>`, and (if available) the repo — the score is the evidence base, your
-judgment (weighted by type/community) is the report.
+D ≥60, F <60), and a **weight-averaged overall** grade (starred when part of the weight is
+unassessed). Add **`--json`** for a machine-readable scorecard (stdout; human report → stderr). It
+needs `curl` for `--url` (degrades to base checks if absent) and only `grep`/`sed`/`python3` for
+`--dir` / `--html`. **Security scores even off the network:** live HTTPS + response headers need
+`--url` (or `--html --headers`), but source-visible controls — a `<meta http-equiv>` CSP, a shipped
+`security.txt`, and zero third-party `<script>` origins — are credited in every mode, so Security
+isn't a blanket `n/a` for a static build. Don't stop at the script: read `robots.txt`, the sitemap,
+the page `<head>`, and (if available) the repo — the score is the evidence base, your judgment
+(weighted by type/community) is the report.
 
 ## 3. Evaluate across dimensions
 

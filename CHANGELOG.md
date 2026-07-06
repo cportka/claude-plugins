@@ -5,6 +5,53 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.5.0] - 2026-07-06
+
+Triage of the DedTxt dogfood feedback #79 — `app-website-evaluator`'s **first real `--dir` run on a
+shipping static site** (DedTxt scored `A*` 100/100 over 82% of weight). `app-website-evaluator` →
+1.4.0 (`video-bug-analyzer` stays 1.4.1; `repo-bootstrap` and `tab-chord-formatter` unchanged at
+1.2.0). MINOR: a new pre-fetched input mode + a source-visible Security sub-score, both
+backward-compatible.
+
+### Added (app-website-evaluator → 1.4.0, #79)
+- **`--html <file|-> [--headers <file|->]` — score already-fetched HTML without curl reaching the
+  origin.** The primary `--url` mode needs `curl` to hit the origin, but web/remote Claude Code runs
+  behind an egress proxy that 403s arbitrary hosts (DedTxt was blocked outright), so the whole live
+  path was unavailable. Now an agent that fetched the page another way — an MCP tool, a headless
+  browser, `web_fetch` — can pipe it in (`… | evaluate-site.sh --html -`) or pass a file, and pair
+  `--headers` (e.g. `curl -sSI` output) to still score the live **HSTS / CSP / X-Content-Type-Options
+  / Referrer-Policy** header checks. Exactly one of `--url` / `--dir` / `--html`; `--headers` requires
+  `--html`; `--html -` and `--headers -` can't both read stdin.
+- **Source-visible Security sub-score — Security is no longer a blanket `n/a` off the network (18% of
+  weight).** A static host *can't* set HTTP headers, but it ships controls that are visible in the
+  build: a `<meta http-equiv="Content-Security-Policy">`, a `/.well-known/security.txt`, and its
+  third-party `<script>` posture. `--dir` / `--html` now score these — a `<meta>` CSP and a shipped
+  `security.txt` are credited, and **zero third-party `<script>` origins** (all scripts same-origin /
+  relative) is scored as the real minimal-supply-chain-surface win it is; third-party origins are
+  listed with a "pin with SRI" nudge. Header CSP still wins when present (the `<meta>` check stands
+  down to avoid double-counting). A truly control-free static page still reads `n/a` — honest.
+- **`--dir` source-tree foot-gun guard.** Many sites generate `robots.txt` / `sitemap.xml` /
+  `.well-known/security.txt` at build time, so pointing `--dir` at `src/` false-negatives Crawlability
+  *and* Security. When `--dir` looks like a source tree (a `package.json` build script, or a `src/`
+  with no root robots.txt/sitemap.xml), the tool now prints a NOTE to target the built/deployed output
+  (`dist/`, `build/`, `out/`).
+- The scorecard's partial-coverage footnote now says source-visible Security *is* scored and only the
+  live signals (HTTPS / response headers, real perf numbers) need the origin — via `--url`,
+  `--html --headers`, or Lighthouse.
+
+### Docs
+- `SKILL.md` and `reference.md` document the three input sources, call out the build-vs-source
+  gotcha explicitly (generated robots/sitemap/security.txt), and explain the source-visible Security
+  signals; README gains a `--html`/proxy example and the plugin-table copy is refreshed.
+
+### Tests
+- New coverage: `--html` scores a pre-fetched page (file and stdin) with no origin fetch; `--headers`
+  drives the security-header checks in `--html` mode; the argument guards (`--headers` without
+  `--html`, both-stdin) exit 2; a `<meta>`-CSP + `security.txt` + no-third-party-scripts build makes
+  Security a scored dimension; third-party `<script>` origins are flagged while same-origin `src`s are
+  ignored; and a source-tree `--dir` warns to point at the build. The existing dir-mode star / #63
+  coverage tests still hold (a control-free page keeps Security `n/a`).
+
 ## [1.4.1] - 2026-07-05
 
 Triage of round-6 dogfood feedback #70. `video-bug-analyzer` → 1.4.1 (others unchanged). PATCH: a

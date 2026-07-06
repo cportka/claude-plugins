@@ -11,11 +11,18 @@
 # Usage:
 #   evaluate-site.sh --url <https://example.com>
 #   evaluate-site.sh --dir <path-to-built-site-or-repo>
+#   evaluate-site.sh --html page.html [--headers resp-headers.txt]   # analyze already-fetched HTML
+#   curl -sSL <url> | evaluate-site.sh --html -                      # ...or from stdin
 #   evaluate-site.sh --url <url> --dry-run     # print what it would fetch, no network
 #
 # Options:
 #   --url <url>    Evaluate a live site (fetches the page, headers, robots.txt, sitemap, llms.txt).
 #   --dir <path>   Evaluate a local directory (an index.html / built site, or a repo).
+#   --html <f|->   Score HTML you already fetched (a file, or - for stdin) WITHOUT curl reaching the
+#                  origin — for sandboxes whose egress proxy blocks arbitrary hosts. Pair with
+#                  --headers to also run the live security-header checks (#79).
+#   --headers <f|-> Response headers (e.g. `curl -sSI` output, or an MCP fetch's headers) to feed the
+#                  Security header checks in --html mode. Optional; only meaningful with --html.
 #   --dry-run      Print the requests/files that would be checked, without doing network I/O.
 #   --json         Emit a machine-readable JSON scorecard on stdout (human report -> stderr).
 #   -h, --help     Show this help.
@@ -30,6 +37,8 @@ set -uo pipefail
 
 URL=""
 DIR=""
+HTMLIN=""
+HEADIN=""
 DRY_RUN=""
 JSON=""
 
@@ -39,6 +48,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --url) URL="${2:-}"; shift 2 ;;
     --dir) DIR="${2:-}"; shift 2 ;;
+    --html) HTMLIN="${2:-}"; shift 2 ;;
+    --headers) HEADIN="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --json) JSON=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -46,13 +57,32 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$URL" && -z "$DIR" ]]; then
-  echo "Error: pass --url <url> or --dir <path>. See --help." >&2
+# Exactly one input source.
+_n_src=0
+[[ -n "$URL" ]] && _n_src=$((_n_src+1))
+[[ -n "$DIR" ]] && _n_src=$((_n_src+1))
+[[ -n "$HTMLIN" ]] && _n_src=$((_n_src+1))
+if [[ "$_n_src" -eq 0 ]]; then
+  echo "Error: pass one of --url <url>, --dir <path>, or --html <file|->. See --help." >&2
   exit 2
 fi
-if [[ -n "$URL" && -n "$DIR" ]]; then
-  echo "Error: use one of --url or --dir, not both." >&2
+if [[ "$_n_src" -gt 1 ]]; then
+  echo "Error: use exactly one of --url / --dir / --html, not several." >&2
   exit 2
+fi
+if [[ -n "$HEADIN" && -z "$HTMLIN" ]]; then
+  echo "Error: --headers is only meaningful with --html (--url fetches its own headers)." >&2
+  exit 2
+fi
+if [[ "$HTMLIN" == "-" && "$HEADIN" == "-" ]]; then
+  echo "Error: --html - and --headers - can't both read stdin; put one in a file." >&2
+  exit 2
+fi
+
+# Input mode: url (live fetch) | dir (local build/repo) | html (pre-fetched HTML, optional headers).
+if   [[ -n "$URL" ]];    then MODE=url
+elif [[ -n "$HTMLIN" ]]; then MODE=html
+else                          MODE=dir
 fi
 
 # --- output helpers + per-dimension scoring -------------------------------------------
@@ -108,13 +138,16 @@ htest() { if html_has "$1"; then "$2" "$3"; else "$4" "$5"; fi; }
 hdr()   { if grep -qi "$1" <<<"$HEADERS"; then ok "$2"; else "$3" "$4"; fi; }
 
 if [[ -n "$DRY_RUN" ]]; then
-  if [[ -n "$URL" ]]; then
+  if [[ "$MODE" == url ]]; then
     echo "Dry run — would fetch (no network performed):"
     echo "  curl -fsSL $URL                 # page HTML"
     echo "  curl -sSI  $URL                 # response headers (HTTPS, security)"
     echo "  curl -fsS  ${URL%/}/robots.txt"
     echo "  curl -fsS  ${URL%/}/sitemap.xml"
     echo "  curl -fsS  ${URL%/}/llms.txt"
+  elif [[ "$MODE" == html ]]; then
+    echo "Dry run — would read HTML from: ${HTMLIN} ${HEADIN:+(+ response headers from $HEADIN)}"
+    echo "  (no network; robots.txt/sitemap.xml/llms.txt/security.txt can't be probed from HTML alone)"
   else
     echo "Dry run — would read from: $DIR (index.html, robots.txt, sitemap.xml, llms.txt, manifest, icons)"
   fi
@@ -146,6 +179,29 @@ if [[ -n "$URL" ]]; then
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${base}/$1" 2>/dev/null || true)"
     if [[ "$code" == "200" ]]; then echo "yes"; else echo "no"; fi
   }
+elif [[ -n "$HTMLIN" ]]; then
+  # Pre-fetched HTML (a file, or - for stdin) — for sandboxes whose egress proxy blocks arbitrary
+  # hosts, so an agent that fetched the page another way (MCP tool, headless browser, web_fetch)
+  # can still get the standardized scorecard, incl. the Security header checks via --headers (#79).
+  if [[ "$HTMLIN" == "-" ]]; then
+    HTML="$(cat 2>/dev/null || true)"; ROOT_DESC="(HTML from stdin)"
+  else
+    [[ -f "$HTMLIN" ]] || { echo "Error: --html file not found: $HTMLIN" >&2; exit 2; }
+    HTML="$(cat "$HTMLIN" 2>/dev/null || true)"; ROOT_DESC="$HTMLIN"
+  fi
+  [[ -z "$HTML" ]] && warn "--html input is empty — nothing to score (check the file / the fetch that produced it)"
+  if [[ -n "$HEADIN" ]]; then
+    if [[ "$HEADIN" == "-" ]]; then
+      HEADERS="$(cat 2>/dev/null || true)"
+    else
+      [[ -f "$HEADIN" ]] || { echo "Error: --headers file not found: $HEADIN" >&2; exit 2; }
+      HEADERS="$(cat "$HEADIN" 2>/dev/null || true)"
+    fi
+  else
+    HEADERS=""
+  fi
+  # We have only the HTML (+ maybe headers), not the site root — root files are indeterminate.
+  root_has() { echo "unknown"; }
 else
   [[ -d "$DIR" ]] || { echo "Error: directory not found: $DIR" >&2; exit 2; }
   ROOT_DESC="$DIR"
@@ -174,6 +230,16 @@ else
     [[ "$rel" == "security.txt" && -f "$DIR/.well-known/security.txt" ]] && { echo "yes"; return; }
     echo "no"
   }
+  # Foot-gun guard (#79): --dir should point at the BUILT/deployed output, not a source tree. Many
+  # sites generate robots.txt / sitemap.xml / .well-known/security.txt at build time, so scanning
+  # source false-negatives Crawlability *and* Security. Flag the two tell-tale source-tree shapes:
+  # a package.json with a build script, or a src/ dir with no robots.txt & no sitemap at the root.
+  DIR_SRC_NOTE=""
+  if [[ -f "$DIR/package.json" ]] && grep -qE '"build[^"]*"[[:space:]]*:' "$DIR/package.json" 2>/dev/null; then
+    DIR_SRC_NOTE="a package.json build script"
+  elif [[ -d "$DIR/src" && "$(root_has robots.txt)" == "no" && "$(root_has sitemap.xml)" == "no" ]]; then
+    DIR_SRC_NOTE="a src/ directory but no root robots.txt or sitemap.xml"
+  fi
 fi
 
 # Whitespace-collapsed copy for the tag-presence checks (see html_has). Every run of whitespace —
@@ -183,7 +249,17 @@ fi
 HTML_FLAT="$(tr -s '[:space:]' ' ' <<<"$HTML")"
 
 say "App / website evaluation — $ROOT_DESC"
-if [[ -n "$URL" ]]; then info "URL mode (live fetch)"; else info "directory mode (local files)"; fi
+case "$MODE" in
+  url)  info "URL mode (live fetch)" ;;
+  html) info "HTML mode (pre-fetched HTML${HEADERS:+ + response headers}; no origin fetch)" ;;
+  dir)  info "directory mode (local files)" ;;
+esac
+if [[ -n "${DIR_SRC_NOTE:-}" ]]; then
+  say "  NOTE: $DIR looks like a source tree ($DIR_SRC_NOTE). Point --dir at the BUILT/deployed"
+  say "        output (e.g. dist/, build/, out/) instead — robots.txt, sitemap.xml and"
+  say "        .well-known/security.txt are often generated at build time, so scanning source"
+  say "        false-negatives Crawlability and Security."
+fi
 
 # --- Crawlability / indexing ----------------------------------------------------------
 sec "Crawlability / indexing"
@@ -308,25 +384,66 @@ PY
   fi
 fi
 
-# --- Security (URL mode) --------------------------------------------------------------
+# --- Security / hygiene ---------------------------------------------------------------
 sec "Security / hygiene"
-if [[ -n "$URL" ]]; then
+# Live transport checks need the origin: HTTPS (URL mode) and response headers (URL mode, or
+# --html paired with --headers). A static host can't set HTTP headers, so we ALSO score the
+# *source-visible* controls a static site can ship — a <meta> CSP, its third-party <script>
+# posture, a shipped security.txt — so Security isn't a blanket n/a in --dir / --html mode (#79).
+if [[ "$MODE" == url ]]; then
   if [[ "$URL" == https://* ]]; then ok "served over HTTPS"; else bad "not HTTPS — serve over TLS and redirect http→https"; fi
-  if [[ -n "$HEADERS" ]]; then
-    hdr '^strict-transport-security:' "HSTS header set" warn "no Strict-Transport-Security header"
-    hdr '^content-security-policy:'   "Content-Security-Policy set" warn "no Content-Security-Policy header"
-    hdr '^x-content-type-options:'    "X-Content-Type-Options set" warn "no X-Content-Type-Options: nosniff"
-    hdr '^referrer-policy:'           "Referrer-Policy set" info "no Referrer-Policy header"
-  else
-    info "no response headers captured — security-header checks skipped"
-  fi
-  case "$(root_has .well-known/security.txt)" in
-    yes) ok "security.txt present" ;;
-    *)   info "no /.well-known/security.txt (a contact for security reports)" ;;
-  esac
-else
-  info "security/header checks need --url (live HTTPS + headers can't be read from a directory)"
 fi
+if [[ -n "$HEADERS" ]]; then
+  hdr '^strict-transport-security:' "HSTS header set" warn "no Strict-Transport-Security header"
+  hdr '^content-security-policy:'   "Content-Security-Policy header set" warn "no Content-Security-Policy response header (a <meta> CSP is a weaker fallback)"
+  hdr '^x-content-type-options:'    "X-Content-Type-Options set" warn "no X-Content-Type-Options: nosniff"
+  hdr '^referrer-policy:'           "Referrer-Policy set" info "no Referrer-Policy header"
+elif [[ "$MODE" == html ]]; then
+  info "no response headers captured — pass --headers <file|-> alongside --html to score HSTS/CSP/nosniff"
+fi
+# Source-visible controls — checkable from the HTML/build alone, so they score in every mode.
+if [[ -n "$HTML" ]]; then
+  # A <meta http-equiv="Content-Security-Policy"> is a real (if weaker) CSP a static host CAN ship.
+  # Only credit/flag it when there's no response-header CSP (which is the stronger mechanism).
+  _has_hdr_csp=""
+  [[ -n "$HEADERS" ]] && grep -qi '^content-security-policy:' <<<"$HEADERS" && _has_hdr_csp=1
+  if [[ -z "$_has_hdr_csp" ]]; then
+    htest '<meta[^>]+http-equiv=["'"'"']?content-security-policy' \
+      ok "CSP declared via <meta http-equiv> (source-visible; a response header is stronger)" \
+      info "no Content-Security-Policy (no response-header CSP and no <meta http-equiv> CSP)"
+  fi
+  # Third-party <script src> origins widen the supply-chain/exfil surface. Absolute-URL scripts only
+  # (relative srcs are same-origin); exclude the site's own host in URL mode. Zero third-party
+  # origins is a genuine, source-visible security posture a static site earns.
+  _script_tags="$(grep -oiE '<script[^>]*>' <<<"$HTML_FLAT" || true)"
+  if grep -qiE 'src=' <<<"$_script_tags"; then
+    # Lowercase first (so the src= strip and host compare need no case-insensitive sed 'I' flag,
+    # which isn't portable to BSD sed), then peel to the bare host[:port].
+    _ext_hosts="$(grep -oiE 'src=["'"'"']?(https?:)?//[^"'"'"' >]+' <<<"$_script_tags" \
+                  | tr '[:upper:]' '[:lower:]' \
+                  | sed -E 's#^src=["'"'"']?##; s#^https?:##; s#^//##; s#[/?#].*$##' \
+                  | grep -v '^$' | sort -u || true)"
+    if [[ "$MODE" == url ]]; then
+      _own_host="$(sed -E 's#^https?://##; s#[/?#].*$##' <<<"$URL" | tr '[:upper:]' '[:lower:]')"
+      [[ -n "$_own_host" && -n "$_ext_hosts" ]] && _ext_hosts="$(grep -vixF "$_own_host" <<<"$_ext_hosts" || true)"
+    fi
+    _ext_hosts="$(grep -v '^$' <<<"$_ext_hosts" || true)"
+    if [[ -z "$_ext_hosts" ]]; then
+      ok "no third-party <script> origins (scripts are same-origin/relative) — minimal supply-chain surface"
+    else
+      _nhosts="$(grep -c . <<<"$_ext_hosts")"
+      _hlist="$(tr '\n' ' ' <<<"$_ext_hosts" | sed 's/ *$//; s/ /, /g')"
+      warn "$_nhosts third-party <script> origin(s) ($_hlist) — each adds supply-chain/exfil surface; pin with SRI"
+    fi
+  fi
+fi
+# security.txt — a machine-readable security contact (RFC 9116). root_has finds it in --dir mode
+# (./.well-known/), probes it live in --url mode, and is "unknown" in --html mode.
+case "$(root_has .well-known/security.txt)" in
+  yes) ok "security.txt present (a contact for security reports)" ;;
+  no)  info "no /.well-known/security.txt (add a security contact — RFC 9116)" ;;
+  *)   info "security.txt: could not determine (need --url or --dir)" ;;
+esac
 
 # --- Performance hints (heuristic) ----------------------------------------------------
 sec "Performance / load (hints)"
@@ -398,8 +515,9 @@ printf '  %s\n' "-------------------------------------------------" >&"$RFD"
 printf '  %-27s %6s  %4s    \033[1m%s%s\033[0m\n' "Overall (weighted)" "" "$overall" "$ograde" "$STAR" >&"$RFD"
 if [[ -n "$STAR" ]]; then
   printf '  * computed over %d%% of weight; unscored: %s\n' "$COVERAGE" "$(printf '%s; ' "${UNSCORED[@]}" | sed 's/; $//')" >&"$RFD"
-  if [[ -z "$URL" ]]; then
-    printf '    (dir mode cannot assess live security headers/HTTPS — run --url from a network-enabled shell, or Lighthouse, to score Security + live perf)\n' >&"$RFD"
+  if [[ "$MODE" != url ]]; then
+    printf '    (no live signals here — source-visible Security is scored, but HTTPS/response-header checks and\n' >&"$RFD"
+    printf '     real perf numbers need the origin: run --url from a network-enabled shell, feed --html --headers, or Lighthouse)\n' >&"$RFD"
   fi
 fi
 printf '\n\033[1mChecklist:\033[0m %d pass, %d warn, %d fail — overall %d/100 (%s%s). Weight by the\n' "$P" "$W" "$F" "$overall" "$ograde" "$STAR" >&"$RFD"
@@ -409,7 +527,7 @@ printf 'site type/community, then turn the dimension grades into a prioritized r
 if [[ -n "$JSON" ]]; then
   REC="$REC" GP="$P" GW="$W" GF="$F" OVERALL="$overall" OGRADE="$ograde" \
   COVERAGE="$COVERAGE" UNSCORED_NAMES="$(printf '%s\n' "${UNSCORED[@]:-}")" \
-  TARGET="$ROOT_DESC" MODE="$([[ -n "$URL" ]] && echo url || echo dir)" \
+  TARGET="$ROOT_DESC" MODE="$MODE" \
   NAMES="$(printf '%s\n' "${SEC_NAME[@]:-}")" \
   SCORES="$(printf '%s\n' "${OUT_SCORE[@]:-}")" \
   GRADES="$(printf '%s\n' "${OUT_GRADE[@]:-}")" \

@@ -922,6 +922,31 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "smoothness header missing"
     fi
+    # 1.4.2 (#83): a high-refresh CAPTURE (>=90 Hz nominal) of a lower-cadence app (~30/60 fps) must
+    # NOT be called "choppy" — that shortfall is expected frame *duplication*, not jank. Inject the
+    # rates via a fake ffprobe so the classification is exercised without constructing a VFR clip.
+    _fpbin="$tmp/fpbin"; mkdir -p "$_fpbin"
+    cat > "$_fpbin/ffprobe" <<'FP'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+    *r_frame_rate*)   echo "${FAKE_RFR:-120/1}";  exit 0 ;;
+    *avg_frame_rate*) echo "${FAKE_AFR:-573/10}"; exit 0 ;;
+  esac
+done
+exit 0
+FP
+    chmod +x "$_fpbin/ffprobe"
+    : > "$tmp/hi.mp4"
+    _hi="$(PATH="$_fpbin:$PATH" FAKE_RFR=120/1 FAKE_AFR=573/10 bash "$SCRIPT" --video "$tmp/hi.mp4" --start 0 --end 1 --fps 2 --out "$tmp/hi.out" 2>&1 >/dev/null || true)"
+    _jk="$(PATH="$_fpbin:$PATH" FAKE_RFR=120/1 FAKE_AFR=100/1 bash "$SCRIPT" --video "$tmp/hi.mp4" --start 0 --end 1 --fps 2 --out "$tmp/jk.out" 2>&1 >/dev/null || true)"
+    if grep -q 'normal for a 60 fps app, not choppy' <<<"$_hi" \
+       && ! grep -q 'likely choppy' <<<"$_hi" \
+       && grep -q 'likely choppy' <<<"$_jk"; then
+      pass "smoothness: 60fps app on a 120Hz capture isn't called choppy; a real shortfall still is (#83)"
+    else
+      fail "smoothness high-refresh (#83) classification wrong (hi='$_hi' jk='$_jk')"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -1047,6 +1072,22 @@ if [[ -f "$BOOTSTRAP" ]]; then
   else
     fail "portka-standard did not write the user-scope CLAUDE.md"
   fi
+  # 1.3.0: the managed block funnels feedback to issues (not branches on the marketplace), keeps
+  # releasing a human step, and handles branch-pinned sessions (#81 / ambient field report).
+  _cm="$ps/.claude/CLAUDE.md"
+  if grep -q 'gh issue create --repo cportka/claude-plugins' "$_cm" \
+     && grep -qi 'do \*\*not\*\* open a branch, commit, or PR on that repo' "$_cm"; then
+    pass "portka-standard CLAUDE.md funnels feedback to marketplace issues, not branches/PRs"
+  else
+    fail "portka-standard CLAUDE.md missing the feedback-funnel guidance"
+  fi
+  if grep -q "Releasing is the user's manual step" "$_cm" \
+     && grep -qi 'do \*\*not\*\* create or push a git tag' "$_cm" \
+     && grep -q 'Branch-pinned session' "$_cm"; then
+    pass "portka-standard CLAUDE.md keeps releasing manual + handles branch-pinned sessions"
+  else
+    fail "portka-standard CLAUDE.md missing manual-release / branch-pinned guidance"
+  fi
   # Permissions merge into BOTH settings; the marketplace + plugins survive in the project one.
   if python3 - "$ps/.claude/settings.json" "$ph/.claude/settings.json" <<'PY'
 import json, sys
@@ -1059,6 +1100,7 @@ for d in (proj, home):
     assert any(r.startswith("Bash(git push") for r in allow), allow
     assert any(r.startswith("Bash(git checkout") for r in allow), allow
     assert any(r.startswith("Bash(gh pr") for r in allow), allow
+    assert any(r.startswith("Bash(gh issue") for r in allow), allow   # file feedback (1.3.0)
 PY
   then
     pass "portka-standard merges git/gh permissions into project + user settings (marketplace kept)"
@@ -1127,6 +1169,13 @@ if [[ -f "$BOOTSTRAP" ]]; then
   else
     fail "scaffolded suite is red on a mature repo (#59 regression)"
   fi
+  # 1.3.0 (ambient P1): a package.json with no test script gets `scripts.test = "node --test"` wired
+  # so `npm test` runs the sync test (bare `node --test`, never the ERR_MODULE trap `node --test tests/`).
+  if [[ "$(python3 -c 'import json;print(json.load(open("'"$mr"'/package.json")).get("scripts",{}).get("test",""))')" == "node --test" ]]; then
+    pass "portka-standard wires package.json scripts.test = 'node --test' when absent (ambient P1)"
+  else
+    fail "portka-standard did not wire npm test into a script-less package.json"
+  fi
   # Native version-sync test (1.2.0): a package.json repo also gets a node:test that passes.
   if [[ -f "$mr/tests/version-sync.test.mjs" ]]; then
     pass "portka-standard emits a native node:test version-sync test for a package.json repo"
@@ -1141,6 +1190,14 @@ if [[ -f "$BOOTSTRAP" ]]; then
     fi
   else
     fail "portka-standard did not emit the native node:test for a package.json repo"
+  fi
+  # 1.3.0 (#81/ambient): the scaffolded CHANGELOG check anchors to a `## [ver]` heading — a loose
+  # substring (a URL / prose mention) must NOT satisfy it. (Do this last; it clobbers the CHANGELOG.)
+  printf '# Changelog\n\nSee https://x/rel/0.22.0 — shipped 0.22.0.\n\n## [0.1.0]\n- old\n' > "$mr/CHANGELOG.md"
+  if bash "$mr/tests/run-tests.sh" >/dev/null 2>&1; then
+    fail "scaffolded CHANGELOG check still passes on a loose-only version mention (not anchored)"
+  else
+    pass "scaffolded CHANGELOG check rejects a loose-only mention (anchored to ## [ver], #81/ambient)"
   fi
   rm -rf "$mr" "$mrh"
   # A pyproject repo gets a unittest version-sync test that passes (python3 always present here).

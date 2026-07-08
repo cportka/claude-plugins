@@ -179,7 +179,9 @@
 #   --version           Print the plugin version and exit.
 #
 # Every run prints a one-line "smoothness:" header (effective vs nominal fps + a dropped-frame
-# estimate) — the quickest "is it choppy?" read; --cadence / --motion localize it.
+# estimate) — the quickest "is it choppy?" read; --cadence / --motion localize it. A high-refresh
+# capture (>=90Hz) of a ~30/60fps app is called out as normal (expected frame duplication), not
+# choppy, so a 120Hz recording of a 60fps app doesn't read as a false "52% dropped".
 #   -h, --help          Show this help.
 #
 # ffmpeg is required. It's already on PATH in many environments; if it's missing this tries
@@ -214,7 +216,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.4.1"
+VBA_VERSION="1.6.0"
 
 VIDEO=""
 START=""
@@ -642,9 +644,23 @@ print_smoothness() {
   [[ -n "$rfr" && -n "$afr" ]] || return 0
   awk -v r="$rfr" -v a="$afr" '
     function fr(s,  p){ if(index(s,"/")){split(s,p,"/"); return (p[2]+0)?p[1]/p[2]:0} return s+0 }
+    function near(x,c){ return (x >= c-6 && x <= c+6) }   # near a common animation cadence (±6 fps)
     BEGIN{ R=fr(r); A=fr(a); if(R<=0||A<=0) exit;
       printf "smoothness: effective %.1f fps vs nominal %.1f fps", A, R;
-      if (A < R) { d=(1-A/R)*100; if (d>=5) printf "  (~%.0f%% frames dropped/duplicated — likely choppy; --cadence/--motion to localize)", d }
+      if (A < R) {
+        d=(1-A/R)*100;
+        # A high-refresh CAPTURE (>=90 Hz nominal) of a lower-cadence app (~30/~60 fps) reads as a
+        # big "dropped" %, but it is just expected frame *duplication* (display refreshes faster than
+        # the app renders), not jank (#83). Only irregular pacing is choppy — so when the effective
+        # rate lands near 30/60 on a high-refresh capture, name that instead of crying wolf, and
+        # point at --motion/--pacing (which localize *real* stutter).
+        if (R >= 90 && (near(A,60) || near(A,30))) {
+          cad = near(A,60) ? 60 : 30;
+          printf "  (~%.0f fps content on a %.0f Hz capture — normal for a %d fps app, not choppy; --motion/--pacing to check for real stutter)", A, R, cad;
+        } else if (d>=5) {
+          printf "  (~%.0f%% frames dropped/duplicated — likely choppy; --cadence/--motion to localize)", d;
+        }
+      }
       printf "\n";
     }' >&2
 }

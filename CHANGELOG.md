@@ -5,6 +5,65 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.6.0] - 2026-07-08
+
+Triage round: `repo-bootstrap` #81 + a mis-filed field report, and `video-bug-analyzer` #83.
+`repo-bootstrap` → 1.6.0 and `video-bug-analyzer` → 1.6.0 (`app-website-evaluator` stays 1.4.0,
+`tab-chord-formatter` stays 1.2.0). MINOR overall: new Portka-standard guidance + backward-compatible
+scaffold correctness fixes and a heuristic refinement.
+
+### Portka standard — funnel feedback, leave releases to humans, respect branch-pinned sessions
+The workflow `CLAUDE.md` that `repo-bootstrap --portka-standard` installs (and this repo's own copy)
+gained three standing rules, prompted by a field report that arrived as a *branch on this repo*
+instead of an issue — the funnel this fixes:
+- **Feedback goes to the marketplace's issue tracker, not stray branches.** A new "Reporting feedback
+  on the tools you use" section tells an agent to file a **Plugin feedback** issue on
+  `cportka/claude-plugins` (with a ready `gh issue create … --label feedback` command) and to treat
+  a co-located marketplace repo as **read-only** — never open a branch/commit/PR on it. `gh issue` is
+  added to the permissions allowlist so the command is pre-approved.
+- **Releasing is the user's manual step.** Prepare the release in the PR (version + CHANGELOG), but
+  never create/push a git tag or run `gh release` — hosted/sandbox environments block tag pushes, so
+  it just fails. The user tags and cuts the release from the GitHub web UI after merge.
+- **Branch-pinned sessions.** Step 1 now acknowledges hosted runs (e.g. Claude Code on the web) where
+  the harness pins work to a feature branch and forbids `main`: skip the `main` checkout, open the PR
+  from the assigned branch, and let a human merge — resolving the update-main-first vs. never-touch-main
+  tension the field report hit.
+
+### Fixed (repo-bootstrap → 1.6.0, #81 + field report)
+- **Scaffolded CHANGELOG check is now anchored to a real release heading.** The generated
+  `tests/run-tests.sh`, `version-sync.test.mjs`, and `test_version_sync.py` matched the version as a
+  bare substring — so a URL, a prose mention, or an unrelated version satisfied it and a CHANGELOG
+  with no `## [x.y.z]` section for the current version could ship green. All three now require a
+  `## [version]` heading (dots escaped, brackets optional).
+- **`npm test` is wired up for manifest repos.** A `package.json` with no `test` script (the common
+  case the #59 native binding targets) now gets `"test": "node --test"` merged in (never clobbering an
+  existing one), so the repo's own command runs the sync test — and the "run with" hint uses bare
+  `node --test`, never the `node --test tests/` form that throws `ERR_MODULE_NOT_FOUND`.
+
+### Fixed (video-bug-analyzer → 1.6.0, #83)
+- **The `smoothness:` banner no longer cries "choppy" on a high-refresh capture.** A 120 Hz ProMotion
+  recording of a 60 fps app reads as ~57 effective fps vs 120 nominal — which the heuristic reported
+  as "~52% frames dropped/duplicated — likely choppy," a false positive (the duplicated frames are
+  expected when the display refreshes faster than the app renders, not jank). When the nominal rate is
+  a high display refresh (≥ 90 Hz) and the effective rate lands near a common animation cadence
+  (~30/~60 fps), the banner now says e.g. *"~57 fps content on a 120 Hz capture — normal for a 60 fps
+  app, not choppy; --motion/--pacing to check for real stutter."* Irregular shortfalls (effective not
+  near a common cadence) are still flagged, and normal-refresh captures are unchanged.
+
+### Deferred to [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+- Greenfield `--portka-standard` CI ships no language toolchain (no `setup-node`/`npm ci`), so a repo
+  whose `tests/cases/*.sh` call a real toolchain is red on the runner though green locally (#81).
+- A bare `VERSION` plus a later-added manifest can silently drift (the runner binds to the
+  top-priority source only); an optional `--pages` deploy scaffold for greenfield front-ends; and an
+  end-of-run "wrote N files" summary.
+
+### Tests
+- New coverage: the scaffolded CHANGELOG check rejects a loose-only version mention (bash + node:test);
+  `scripts.test` is wired for a script-less `package.json`; the managed `CLAUDE.md` carries the
+  feedback-funnel, manual-release, and branch-pinned guidance; `gh issue` is in the allowlist; and the
+  `smoothness:` banner treats a 60 fps app on a 120 Hz capture as normal while still flagging a real
+  shortfall (a fake `ffprobe` injects the rates). Suite: 210 passed, 0 failed, 1 skipped.
+
 ## [1.5.0] - 2026-07-06
 
 Triage of the DedTxt dogfood feedback #79 — `app-website-evaluator`'s **first real `--dir` run on a

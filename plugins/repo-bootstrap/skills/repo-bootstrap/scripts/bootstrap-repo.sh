@@ -193,7 +193,7 @@ NO_WRITE=""
 
 # Portka standard: the git/gh permissions allowlist + the workflow text, defined once so that both
 # --print-only (manual mode) and the writing path below emit the same content. ADDED (1.1.2).
-STD_PERMS_JSON='["Bash(git status:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git pull:*)","Bash(git fetch:*)","Bash(git branch:*)","Bash(git add:*)","Bash(git commit:*)","Bash(git push:*)","Bash(git merge:*)","Bash(git rebase:*)","Bash(git diff:*)","Bash(git log:*)","Bash(gh pr:*)","Bash(gh run:*)","Bash(gh workflow:*)"]'
+STD_PERMS_JSON='["Bash(git status:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git pull:*)","Bash(git fetch:*)","Bash(git branch:*)","Bash(git add:*)","Bash(git commit:*)","Bash(git push:*)","Bash(git merge:*)","Bash(git rebase:*)","Bash(git diff:*)","Bash(git log:*)","Bash(gh pr:*)","Bash(gh run:*)","Bash(gh workflow:*)","Bash(gh issue:*)"]'
 BEGIN_MARK="<!-- BEGIN portka-standard (managed by repo-bootstrap — edit between the markers, or re-run to refresh) -->"
 END_MARK="<!-- END portka-standard -->"
 STD_CLAUDE_BLOCK=""
@@ -204,18 +204,45 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
 Standing conventions for how Claude Code works here. Follow them for every change, without being
 asked, so our back-and-forth stays on the code — not on process.
 
-For each change you make:
+For each change you make **in this repository**:
 
 1. **Update `main` first.** Begin by switching to `main` and pulling the latest. A previous
    change's branch being gone is the user's confirmation that they saw it (see step 5).
-2. **Branch for everything.** Every fix, update, or change goes on a new branch — never commit to
-   `main` directly.
+   *Branch-pinned session?* In a hosted/branch-pinned environment (e.g. Claude Code on the web) the
+   harness assigns you a feature branch and forbids pushing to `main` — then **skip the `main`
+   checkout**: commit to your assigned branch, open the PR from it, and stop at step 3; a human
+   merges.
+2. **Branch for everything (in this repo).** Every fix, update, or change goes on a new branch here —
+   never commit to `main` directly. If another repo is open in the same session (e.g. a plugin
+   marketplace you installed tools from), it is **read-only reference**: do all your branches and PRs
+   on *this* repo, never on it.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
    request. If the repo has no CI yet, add a basic workflow that runs the test suite.
 4. **Green, then merge.** Wait until every check passes, then merge the PR automatically. Never
    merge on red.
 5. **Hand back a short PR link.** Give the user a short link to the merged PR as confirmation. They
    delete the branch when satisfied — which you pick up next time you update `main` (step 1).
+
+**Releasing is the user's manual step — don't tag or cut releases.** Prepare the release *in the
+PR* (bump the version, update `CHANGELOG.md`), but do **not** create or push a git tag and do **not**
+run `gh release` / publish a GitHub Release. Hosted/sandbox environments block tag pushes, so it
+just fails. After the PR merges, the user tags the release and cuts it from the GitHub web UI.
+
+## Reporting feedback on the tools you use
+
+Hit a bug or rough edge in a plugin you installed (or in this standard)? **File it as a GitHub issue
+on the marketplace repo the tool came from — `cportka/claude-plugins` — using the "Plugin feedback"
+template.** Do **not** open a branch, commit, or PR on that repo: you don't have write access there
+and it isn't how feedback is collected. One command:
+
+```
+gh issue create --repo cportka/claude-plugins --label feedback \
+  --title "[feedback] <plugin>: <one-line summary>" \
+  --body "What you ran, expected vs. actual, environment, and a concrete suggestion."
+```
+
+Keep *this* repo's branches and PRs about *your* code; route tool feedback to the marketplace's
+issue tracker, where it gets triaged into a fix and a new version.
 
 ## Versioning — SemVer (enforced)
 
@@ -629,10 +656,14 @@ else
     fail "version '$VER' (from $SRC) is not SemVer"
   fi
   if [[ -f CHANGELOG.md ]]; then
-    if grep -qF "$VER" CHANGELOG.md; then
-      pass "CHANGELOG.md references $VER"
+    # Anchor to a real Keep-a-Changelog heading (## [x.y.z]) — a bare substring match also passed on
+    # a URL, a prose mention, or an unrelated version, so a CHANGELOG with no release section for
+    # $VER could slip through. Escape dots; brackets are optional (## [1.2.3] or ## 1.2.3).
+    _ver_re="^##[[:space:]]+\[?${VER//./\\.}\]?([[:space:]]|\$)"
+    if grep -qE "$_ver_re" CHANGELOG.md; then
+      pass "CHANGELOG.md has a release section for $VER"
     else
-      fail "CHANGELOG.md has no entry for $VER"
+      fail "CHANGELOG.md has no '## [$VER]' release section"
     fi
   fi
   # Cross-check the README version line only when one exists (don't force the convention on repos
@@ -684,12 +715,49 @@ test("version is valid SemVer", () => {
   assert.match(version, /^\d+\.\d+\.\d+([-+][0-9A-Za-z.]+)?$/);
 });
 
-test("CHANGELOG.md documents the current version", () => {
+test("CHANGELOG.md has a release section for the current version", () => {
   const log = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
-  assert.ok(log.includes(version), `CHANGELOG.md has no entry for ${version}`);
+  // Anchor to a Keep-a-Changelog heading (## [x.y.z]), not a bare substring: a loose match also
+  // passed on a URL, a prose mention, or an unrelated version. Brackets optional; dots escaped.
+  const esc = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const heading = new RegExp(String.raw`^##\s+\[?${esc}\]?(\s|$)`, "m");
+  assert.ok(heading.test(log), `CHANGELOG.md has no "## [${version}]" release section`);
 });
 MJS
         echo "Wrote $NT (node:test — run with 'node --test')"
+      fi
+      # Wire up `npm test` so the sync test actually runs via the repo's own command. `node --test`
+      # (bare) auto-discovers tests/*.test.mjs; `node --test tests/` is a trap (ERR_MODULE_NOT_FOUND).
+      # Only add a `test` script if there's none — never clobber an existing one (ambient P1).
+      PKG="$DIR/package.json"
+      if [[ -n "$NO_WRITE" ]]; then
+        echo "[dry-run] would set package.json scripts.test = 'node --test' (if absent)"
+      elif [[ -f "$PKG" ]]; then
+        _test_wire="$(python3 - "$PKG" <<'PY'
+import json, sys
+p = sys.argv[1]
+try:
+    d = json.load(open(p, encoding="utf-8"))
+except Exception:
+    print("skip"); sys.exit(0)
+scripts = d.get("scripts")
+if not isinstance(scripts, dict):
+    scripts = {}
+cur = scripts.get("test")
+if (not cur) or ("no test specified" in str(cur)):   # unset or npm's default placeholder
+    scripts["test"] = "node --test"
+    d["scripts"] = scripts
+    json.dump(d, open(p, "w", encoding="utf-8"), indent=2)
+    open(p, "a", encoding="utf-8").write("\n")
+    print("wrote")
+else:
+    print("keep")
+PY
+)"
+        case "$_test_wire" in
+          wrote) echo "Set package.json scripts.test = 'node --test' (wires up 'npm test')" ;;
+          keep)  echo "package.json already has a test script — leaving it; run the sync test with 'node --test'" >&2 ;;
+        esac
       fi
       ;;
     pyproject.toml)
@@ -723,7 +791,11 @@ class VersionSync(unittest.TestCase):
     def test_changelog_has_version(self):
         v = project_version()
         self.assertTrue(v, "no version in pyproject.toml")
-        self.assertIn(v, (ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
+        # Anchor to a Keep-a-Changelog heading (## [x.y.z]), not a bare substring: a loose match
+        # also passed on a URL, a prose mention, or an unrelated version. Brackets optional.
+        log = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        heading = re.compile(r"(?m)^##\s+\[?%s\]?(\s|$)" % re.escape(v))
+        self.assertRegex(log, heading, 'no "## [%s]" release section in CHANGELOG.md' % v)
 
 
 if __name__ == "__main__":

@@ -91,13 +91,31 @@ form and are triaged into the items below.
   web sessions.
 - `--portka-standard` also emits a **native version-sync test** (1.2.0) in the repo's own runner —
   `node:test` for a `package.json` repo, `unittest` for a `pyproject.toml` repo — so `npm test` /
-  `pytest` enforces the version↔CHANGELOG sync, not just the standalone bash runner.
+  `pytest` enforces the version↔CHANGELOG sync, not just the standalone bash runner. The managed
+  `CLAUDE.md` (1.6.0) funnels tool feedback to the marketplace's **issues** (not stray branches),
+  leaves tagging/releasing to a human, and handles branch-pinned web sessions; the scaffolded suite's
+  CHANGELOG check is anchored to a real `## [version]` heading and a script-less `package.json` gets
+  `npm test` wired to `node --test`.
 
 **Weaknesses / ideas (not yet built)**
 - Requires `python3` (no pure-bash/`jq` fallback yet).
 - The native version-sync test covers JS + Python; **Cargo** (and other ecosystems) still get only
   the bash runner. And it's emitted *alongside* `tests/run-tests.sh` — could **replace** the
   standalone runner (and rewire CI to the native command) when a manifest is present, per #59.
+- **Greenfield CI ships no language toolchain** (#81): `portka-standard.yml` runs `bash
+  tests/run-tests.sh` with no `actions/setup-node`/`npm ci` (or python/rust). Right default for a
+  docs/bash repo, but the moment a repo's `tests/cases/*.sh` invoke a real toolchain (`tsc`,
+  `node --test`, `esbuild`) CI is red though green locally. When a manifest is detected, emit a
+  matching setup + install step (or scaffold it commented) so buildable repos are green out of the box.
+- **All-present version sources should agree** (#81): a greenfield `VERSION` (0.1.0) plus a
+  later-added `package.json` silently drift — the runner binds to the top-priority source and stops
+  checking `VERSION`. On re-run / when a manifest appears, drop the redundant `VERSION` or assert all
+  present sources match.
+- **Optional `--pages` deploy scaffold** (field report): a large share of greenfield repos are static
+  front-ends whose next question is "how does this ship?" An opt-in, collision-aware `--pages` that
+  drops a Pages workflow (+ `.nojekyll`) would round out the "green PR that merges and ships" story.
+- **End-of-run summary**: `--portka-standard` writes across several trees; a one-line "wrote N files
+  across settings/version-sync/CI" at the end would confirm scope at a glance.
 
 ## app-website-evaluator
 

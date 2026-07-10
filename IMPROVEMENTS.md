@@ -27,6 +27,9 @@ form and are triaged into the items below.
   content-based `--cadence`/`--stutter` can't), with median/p95/max + worst-hitch timestamps.
 - `--stack` (1.3.0, #62) is the ROI time-stack: crop a band (scrub bar / HUD / status row) and tile
   the samples vertically so one image reads that region's evolution across the clip.
+- Doubles as an **art/colour-reference** tool (1.8.0, #85): `--palette --over-time` emits the colour
+  *arc* (`t,[hex…]` per window) so a loop's colour journey is visible, and `--loop-check` reports the
+  first-vs-last-frame seam diff (+ a strip) for a seamless loop; GIF input works on every mode.
 - Output hygiene (1.3.0, #64): a run never overwrites a previous extraction — collisions redirect
   into a mode+window subdir. `--check-update` (#62) spots a stale install vs the marketplace.
 - Contact-sheet reads a whole span in one image (big token saver); the skill states confidence
@@ -52,6 +55,11 @@ form and are triaged into the items below.
   would run each mode over each clip and label the CSVs by source. Low priority.
 - **Numeric plot over a CSV** — the OCR/measure/motion/saturation modes emit `t,value`; rendering
   a quick plot (or min/max/dips) would beat reading the CSV by eye.
+- **`--montage a.gif,b.gif,…`** (#85) — an N-way *library survey*: one representative tile per input,
+  one contact sheet, to eyeball a whole collection's range at a glance. Distinct from the pairwise
+  phase-aligned `--compare-videos`; overlaps the multi-clip batch idea above (shape here is survey).
+- **Palette as a swatch artifact** (#85) — `--palette`/`--palette --over-time` emit hex text; a small
+  SVG/PNG swatch sheet would be a drop-in reference asset, closing "analyze → usable design artifact".
 - **Machine-readable freeze gaps** (#70) — the freeze-gap list is human-readable on stderr; a
   `t_start,dur_ms` CSV would let it be plotted against an app's own timing marks. Deferred over an
   output-shape choice: the `--cadence` stdout is already the `t,unique_frames,fps` CSV, so a second

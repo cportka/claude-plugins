@@ -124,6 +124,18 @@ ffmpeg `palettegen`; needs `python3` to read the swatch image. For *reference* r
 a timestamped contact tile gives the phase timeline and `--palette` gives the colours — together
 they turn "here's a clip I like" into a structured spec.
 
+**Colour arc (`--palette --over-time`):** a single palette flattens a loop that *sweeps* through
+colour states (powder-blue → magenta/cyan → back). `--over-time` splits the clip into N windows
+(`--segments <n>`, default 8) and prints each window's palette as `t<sec>  #hex #hex …`, so the
+colour *journey* is visible — the read a palette-driven generator actually needs. Honors `--colors`,
+`--start`/`--end`; same `palettegen` + `python3` path.
+
+**Loop / seam check (`--loop-check`):** for a *seamless* loop (a GIF, a shader toy, a looping
+render), the question is "does the last frame match the first?" `--loop-check` prints the mean
+absolute pixel difference between frame 0 and the final frame (0 = identical wrap; `<1%` loops
+cleanly, `<4%` near-seamless, else a visible seam) and writes a `loopcheck.png` strip (first │ last)
+so any seam is visible at a glance. Built on the palette PPM reader + the `--strip` hstack; `python3`.
+
 **A/B divergence (`--ab other.mov`):** for two captures of the *same* sequence (the same intro on
 two browsers/devices, or a before/after), this aligns them by time and prints a `t,ssim` CSV —
 1.0 means identical, lower means more different — then headlines the most divergent moments, so

@@ -6,6 +6,11 @@
 # either densely over a time window (default) or at scene-change boundaries, so the
 # right moment is actually captured instead of being missed between sparse samples.
 #
+# Also useful beyond bug-hunting: it's a general "reason over a clip's look + motion" tool —
+# art/aesthetic reference (mining a library of animated loops for palette + motion to drive a
+# generator), colour extraction (--palette, --palette --over-time for the colour arc), asset/QA
+# (--loop-check for a seamless loop, --probe/--contact for a quick read). GIF input works on every mode.
+#
 # Usage:
 #   extract-frames.sh --video <path> [--start <ts>] [--end <ts>] [--fps <n>]
 #                     [--scene <thr>] [--contact] [--text] [--cols <n>] [--rows <n>]
@@ -19,6 +24,8 @@
 #   extract-frames.sh --video <path> --measure <W:H:X:Y> [--fps <n>]  # feature diameter/center CSV
 #   extract-frames.sh --video <path> --probe                         # capture geometry/orientation
 #   extract-frames.sh --video <path> --palette [--colors <n>]        # dominant colours (hex)
+#   extract-frames.sh --video <path> --palette --over-time [--segments <n>]  # colour arc: t,[hex...] per window
+#   extract-frames.sh --video <path> --loop-check                    # seam diff: first vs last frame + strip
 #   extract-frames.sh --video <a> --ab <b> [--fps <n>]               # A/B divergence over time
 #   extract-frames.sh --video <path> --stutter [--window <sec>]      # stutter: dropped frames + freeze gaps
 #   extract-frames.sh --video <path> --pacing                        # frame-timestamp (jitter) timeline
@@ -113,6 +120,13 @@
 #                       reference's palette is part of the deliverable). Narrow with --start/--end
 #                       to read one phase. Sample rate from --fps. Needs python3.
 #   --colors <n>        How many dominant colours --palette extracts. Default: 8.
+#   --over-time         (with --palette) the colour *arc*: split the clip into N windows and print
+#                       each window's palette as `t<sec>  #hex #hex ...`, so a loop that sweeps
+#                       through colour states shows its journey, not one flattened ramp. (1.8.0, #85)
+#   --segments <n>      How many time windows --palette --over-time samples. Default: 8.
+#   --loop-check        Is this a clean *seamless* loop? Report the mean absolute pixel difference
+#                       between the first and last frame (0 = identical wrap) and write a
+#                       loopcheck.png strip (first | last) so a seam is visible. (1.8.0, #85; python3.)
 #   --ab <other>        A/B divergence: compare --video against <other> (two captures of the
 #                       SAME sequence — e.g. a different browser/device) and print a t,ssim CSV
 #                       (1.0 = identical, lower = more different), headlining the most divergent
@@ -216,7 +230,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.6.0"
+VBA_VERSION="1.8.0"
 
 VIDEO=""
 START=""
@@ -271,6 +285,9 @@ FLOW_CENTER="0.5:0.5" # --flow-center fx:fy (fraction of frame) the swirl/suck i
 OCCUPANCY=""   # --occupancy subject-extent timeline -> t,coverage_pct,bbox (1.4.0, #69)
 OCC_THRESH="40" # --occupancy-threshold luma cutoff separating subject from background (0..255)
 OCC_DARK=""    # --occupancy-dark measures a dark subject on a light background (else bright-on-dark)
+OVER_TIME=""   # --over-time: with --palette, emit a per-window colour arc (t,[hex...]) (1.8.0, #85)
+SEGMENTS=""    # --segments N: how many time windows --palette --over-time samples (default 8)
+LOOP_CHECK=""  # --loop-check: compare frame@0 vs frame@last (seam diff + strip) for a loop (1.8.0, #85)
 FPS_SET=""     # track whether --fps was passed (so presets don't override it)
 
 usage() {
@@ -448,6 +465,9 @@ while [[ $# -gt 0 ]]; do
     --probe) PROBE=1; shift ;;                        # print capture geometry
     --palette) PALETTE=1; shift ;;                    # dominant colours, exit
     --colors) COLORS="${2:-}"; shift 2 ;;             # number of palette colours
+    --over-time) OVER_TIME=1; shift ;;               # ADDED (1.8.0, #85): colour arc over windows
+    --segments) SEGMENTS="${2:-}"; shift 2 ;;        # windows for --palette --over-time (default 8)
+    --loop-check) LOOP_CHECK=1; shift ;;             # ADDED (1.8.0, #85): first-vs-last seam diff
     --ab) AB="${2:-}"; shift 2 ;;                      # A/B divergence vs <other>
     --cadence) CADENCE=1; shift ;;                    # frame-cadence timeline
     --stutter|--fps-drops) CADENCE=1; shift ;;       # ADDED (1.1.2, #56): aliases for --cadence
@@ -524,6 +544,13 @@ if [[ -n "$CHECK_UPDATE" ]]; then
     echo "video-bug-analyzer $_inst installed; ahead of the marketplace ($_remote) — a dev or pre-release copy."
   fi
   exit 0
+fi
+
+# --over-time / --segments only mean something for --palette (the colour arc). Guard so a typo
+# (e.g. --over-time alone) doesn't silently run a plain extraction (#85).
+if [[ -n "$OVER_TIME$SEGMENTS" && -z "$PALETTE" ]]; then
+  echo "Error: --over-time / --segments only apply to --palette (the colour arc). Add --palette." >&2
+  exit 2
 fi
 
 # --video is required EXCEPT in --strip and --compare-videos modes (they name their
@@ -1051,6 +1078,212 @@ for (r,g,b) in seen[:k]:
 PY
   rm -rf "$d"
   echo "Palette: up to ${COLORS} dominant colours${START:+ from ${START}}${END:+ to ${END}} (sampled at ${FPS} fps)." >&2
+}
+
+# read up to k dominant colours from a P6 PPM as space-joined #rrggbb (empty if unreadable).
+# Duration of the VIDEO stream. NOT format=duration — that's the longest stream, and an audio track
+# can outlast the video, sending a tail seek into an audio-only region (no frame -> false errors).
+# Falls back to the format duration only when the stream duration is unavailable (#85 review).
+_video_duration() {
+  local d=""
+  if command -v ffprobe >/dev/null 2>&1; then
+    d="$(ffprobe -v error -select_streams v:0 -show_entries stream=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    [[ -z "$d" || "$d" == "N/A" ]] && d="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+  fi
+  [[ "$d" == "N/A" ]] && d=""
+  echo "$d"
+}
+
+# Read up to k dominant colours from a PPM as space-joined #rrggbb. Tolerant of a malformed/truncated
+# header (no crash) and of a 16-bit (rgb48be, maxval>255) PPM — which ffmpeg emits for >8-bit sources
+# (#85 review): take the high byte of each 16-bit sample. Empty output if unreadable.
+_ppm_hexes() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+p, k = sys.argv[1], int(sys.argv[2])
+try:
+    data = open(p, 'rb').read()
+except OSError:
+    sys.exit(0)
+if data[:2] != b'P6':
+    sys.exit(0)
+i = 2; vals = []
+try:
+    while len(vals) < 3:
+        while i < len(data) and data[i:i+1].isspace(): i += 1
+        if i < len(data) and data[i:i+1] == b'#':
+            while i < len(data) and data[i:i+1] != b'\n': i += 1
+            continue
+        j = i
+        while j < len(data) and not data[j:j+1].isspace(): j += 1
+        if j == i:                       # EOF before a complete header
+            sys.exit(0)
+        vals.append(int(data[i:j])); i = j
+except ValueError:
+    sys.exit(0)
+w, h, mx = vals; i += 1
+bpp = 6 if mx > 255 else 3                # rgb48be (16-bit, high byte first) vs rgb24
+px = data[i:]
+seen = []; s = set()
+for o in range(0, len(px) - (bpp - 1), bpp):   # complete pixels only (truncated frame is safe)
+    c = (px[o], px[o+2], px[o+4]) if bpp == 6 else (px[o], px[o+1], px[o+2])
+    if c not in s:
+        s.add(c); seen.append(c)
+print(" ".join("#%02x%02x%02x" % c for c in seen[:k]))
+PY
+}
+
+# --palette --over-time — the colour *arc*. Split [--start,--end] (or the whole clip) into N windows
+# and print each window's dominant palette as `t<sec>  #hex #hex ...`, so a loop that sweeps through
+# colour states (a datamosh gif, day->night) shows its journey instead of one flattened ramp (#85).
+# Reuses palettegen per window + the PPM swatch reader. Honors --colors, --segments (default 8), --start/--end.
+run_palette_over_time() {
+  local segs="${SEGMENTS:-8}"
+  if ! [[ "$segs" =~ ^[0-9]+$ ]] || [[ "$segs" -lt 2 ]]; then
+    echo "Error: --segments must be an integer >= 2 (got '$segs')." >&2; exit 2
+  fi
+  if [[ "$segs" -gt 200 ]]; then
+    echo "Error: --segments $segs is too many (max 200 — it's one ffmpeg pass per window)." >&2; exit 2
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --palette needs python3 to read the swatches." >&2; exit 2
+  fi
+  if ! command -v ffprobe >/dev/null 2>&1; then
+    echo "Error: --palette --over-time needs ffprobe to read the clip duration." >&2; exit 2
+  fi
+  local dur s0 s1
+  dur="$(_video_duration)"
+  s0="$(to_seconds "${START:-0}")"
+  if [[ -n "$END" ]]; then s1="$(to_seconds "$END")"; else s1="$dur"; fi
+  # Clamp the span to the VIDEO duration so windows past the last video frame aren't sampled (they'd
+  # decode 0 frames). Combined with the per-window rm below, no window can fabricate a stale palette.
+  if [[ -n "$dur" ]] && awk -v a="$s1" -v b="$dur" 'BEGIN{exit !(a+0>b+0)}'; then s1="$dur"; fi
+  if [[ -z "$s1" ]] || ! awk -v a="$s0" -v b="$s1" 'BEGIN{exit !(b+0>a+0)}'; then
+    echo "Error: --palette --over-time needs a positive span (start=$s0 end=${s1:-?}) — is the file a valid, non-empty video?" >&2; exit 2
+  fi
+  local vf_palette="palettegen=max_colors=${COLORS}:reserve_transparent=0:stats_mode=full"
+  local tdur; tdur="$(awk -v s="$s0" -v e="$s1" -v n="$segs" 'BEGIN{printf "%.3f", (e-s)/n}')"
+  if [[ -n "$DRY_RUN" ]]; then
+    echo "# --palette --over-time: ${segs} windows of ${tdur}s across [${s0}, ${s1}] s; per window:"
+    printf 'ffmpeg'; printf ' %q' -nostdin -hide_banner -loglevel error -ss "<t0>" -t "$tdur" -i "$VIDEO" -vf "fps=${FPS},${vf_palette}" -frames:v 1 "<tmp>/win.ppm"
+    printf '\n'
+    echo "# then read each PPM -> a line: t<sec>  #hex #hex ..."
+    return 0
+  fi
+  local d; d="$(mktemp -d)"
+  echo "Palette over time — ${segs} windows, up to ${COLORS} colours each (t = window start, seconds):" >&2
+  local i t0 hexes
+  # -ss <t0> -t <window> is unambiguous input windowing (unlike -to, which drifts under input seek).
+  for ((i=0; i<segs; i++)); do
+    t0="$(awk -v s="$s0" -v e="$s1" -v i="$i" -v n="$segs" 'BEGIN{printf "%.3f", s+(e-s)*i/n}')"
+    # rm FIRST: a window that decodes 0 video frames leaves NO file (ffmpeg's image muxer opens lazily,
+    # so -y can't help), and _ppm_hexes would otherwise re-read the previous window's stale palette.
+    rm -f "$d/win.ppm"
+    ffmpeg -y -nostdin -hide_banner -loglevel error -ss "$t0" -t "$tdur" -i "$VIDEO" -vf "fps=${FPS},${vf_palette}" -frames:v 1 "$d/win.ppm" >/dev/null 2>&1 || true
+    hexes="$(_ppm_hexes "$d/win.ppm" "$COLORS")"
+    printf '%s\t%s\n' "$t0" "${hexes:-(no colours)}"
+  done
+  rm -rf "$d"
+}
+
+# --loop-check — is this a clean *seamless* loop? Extract the first and last frame, report the mean
+# absolute pixel difference between them (0 = identical wrap), and stitch them side-by-side so a seam
+# is visible. Built on the palette PPM reader + the --strip hstack (#85). Uses ffprobe for the duration.
+run_loop_check() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --loop-check needs python3 to compute the frame difference." >&2; exit 2
+  fi
+  # True LAST frame: decode a short tail and let -update 1 overwrite so the final frame wins (seeking
+  # to ~end and taking one frame overshoots to no-output). Tail from the VIDEO duration if ffprobe
+  # gives it (format=duration can include a longer audio stream), else -sseof -0.5 (no ffprobe).
+  # -pix_fmt rgb24 forces an 8-bit P6 PPM even for a 10-bit/HDR source (#85 review).
+  local dur tail_ss=""
+  dur="$(_video_duration)"
+  awk -v d="${dur:-0}" 'BEGIN{exit !(d+0>0)}' && tail_ss="$(awk -v d="$dur" 'BEGIN{x=d-0.5; if(x<0)x=0; printf "%.3f", x}')"
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -nostdin -hide_banner -loglevel error -ss 0 -i "$VIDEO" -pix_fmt rgb24 -frames:v 1 "<tmp>/first.ppm"; printf '\n'
+    if [[ -n "$tail_ss" ]]; then
+      printf 'ffmpeg'; printf ' %q' -nostdin -hide_banner -loglevel error -ss "$tail_ss" -i "$VIDEO" -pix_fmt rgb24 -update 1 -y "<tmp>/last.ppm"; printf '\n'
+    else
+      printf 'ffmpeg'; printf ' %q' -nostdin -hide_banner -loglevel error -sseof -0.5 -i "$VIDEO" -pix_fmt rgb24 -update 1 -y "<tmp>/last.ppm"; printf '\n'
+    fi
+    echo "# then meanAbsDiff(first,last) + hstack -> ${OUT}/loopcheck.png"
+    return 0
+  fi
+  local d; d="$(mktemp -d)"
+  ffmpeg -y -nostdin -hide_banner -loglevel error -ss 0 -i "$VIDEO" -pix_fmt rgb24 -frames:v 1 "$d/first.ppm" >/dev/null 2>&1 || true
+  if [[ -n "$tail_ss" ]]; then
+    ffmpeg -y -nostdin -hide_banner -loglevel error -ss "$tail_ss" -i "$VIDEO" -pix_fmt rgb24 -update 1 "$d/last.ppm" >/dev/null 2>&1 || true
+  else
+    ffmpeg -y -nostdin -hide_banner -loglevel error -sseof -0.5 -i "$VIDEO" -pix_fmt rgb24 -update 1 "$d/last.ppm" >/dev/null 2>&1 || true
+  fi
+  if [[ ! -s "$d/first.ppm" || ! -s "$d/last.ppm" ]]; then
+    echo "Error: --loop-check could not extract the first and last frame (does the clip decode?)." >&2
+    rm -rf "$d"; exit 1
+  fi
+  local mad
+  mad="$(python3 - "$d/first.ppm" "$d/last.ppm" <<'PY'
+import sys
+def readppm(p):
+    try:
+        data = open(p, 'rb').read()
+    except OSError:
+        return None
+    if data[:2] != b'P6':
+        return None
+    i = 2; vals = []
+    try:
+        while len(vals) < 3:
+            while i < len(data) and data[i:i+1].isspace(): i += 1
+            if i < len(data) and data[i:i+1] == b'#':
+                while i < len(data) and data[i:i+1] != b'\n': i += 1
+                continue
+            j = i
+            while j < len(data) and not data[j:j+1].isspace(): j += 1
+            if j == i:
+                return None
+            vals.append(int(data[i:j])); i = j
+    except ValueError:
+        return None
+    w, h, mx = vals; i += 1
+    raw = data[i:]
+    if mx > 255:                 # rgb48be -> take the high byte of each 16-bit sample
+        raw = raw[0::2]
+    return (raw, w, h)
+A = readppm(sys.argv[1]); B = readppm(sys.argv[2])
+if not A or not B or not A[0] or not B[0]:
+    print("NA"); sys.exit(0)
+a, aw, ah = A; b, bw, bh = B
+if (aw, ah) != (bw, bh):         # a mid-clip resize: min(len) would diff misaligned pixels
+    print("DIM\t%dx%d\t%dx%d" % (aw, ah, bw, bh)); sys.exit(0)
+n = min(len(a), len(b)); n -= n % 3
+if n == 0:
+    print("NA"); sys.exit(0)
+tot = sum(abs(a[k]-b[k]) for k in range(n))
+mad = tot/n
+print("%.2f\t%.2f\t%dx%d" % (mad, mad/255*100, aw, ah))
+PY
+)"
+  ffmpeg -y -nostdin -hide_banner -loglevel error -i "$d/first.ppm" -i "$d/last.ppm" \
+    -filter_complex "[0:v]scale=-2:480[a];[1:v]scale=-2:480[b];[a][b]hstack=inputs=2" \
+    -frames:v 1 "$OUT/loopcheck.png" >/dev/null 2>&1 || true
+  rm -rf "$d"
+  if [[ -z "$mad" || "$mad" == "NA" ]]; then
+    echo "Error: --loop-check could not read the extracted frames." >&2; exit 1
+  fi
+  if [[ "$mad" == DIM* ]]; then
+    local _tag d0 d1; IFS=$'\t' read -r _tag d0 d1 <<<"$mad"
+    echo "loop-check: first and last frame differ in SIZE (${d0} -> ${d1}) — not a seamless loop (a mid-clip resize)." >&2
+    echo "Wrote $OUT/loopcheck.png (left = first frame, right = last frame)."
+    return 0
+  fi
+  local mad_abs mad_pct dims verdict
+  IFS=$'\t' read -r mad_abs mad_pct dims <<<"$mad"
+  if awk -v p="$mad_pct" 'BEGIN{exit !(p<1.0)}'; then verdict="loops cleanly (first ~= last)"
+  elif awk -v p="$mad_pct" 'BEGIN{exit !(p<4.0)}'; then verdict="near-seamless (small first/last drift)"
+  else verdict="seam visible — the last frame differs from the first"; fi
+  echo "loop-check: mean abs first/last diff = ${mad_abs}/255 (${mad_pct}%) over ${dims} — ${verdict}" >&2
+  echo "Wrote $OUT/loopcheck.png (left = first frame, right = last frame)."
 }
 
 # A/B divergence — compare two captures of the SAME sequence (e.g. the same
@@ -1736,9 +1969,16 @@ if [[ -n "$PROBE" ]]; then
   exit 0
 fi
 
-# --palette is an analysis mode — print dominant colours and exit.
+# --palette is an analysis mode — print dominant colours (or the colour arc with --over-time) and exit.
 if [[ -n "$PALETTE" ]]; then
-  run_palette
+  if [[ -n "$OVER_TIME" ]]; then run_palette_over_time; else run_palette; fi
+  feedback_hint
+  exit 0
+fi
+
+# --loop-check is an analysis mode — seam diff between the first and last frame, then exit.
+if [[ -n "$LOOP_CHECK" ]]; then
+  run_loop_check
   feedback_hint
   exit 0
 fi

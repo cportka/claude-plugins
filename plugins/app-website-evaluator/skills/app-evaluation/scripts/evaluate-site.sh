@@ -168,6 +168,11 @@ if [[ -n "$URL" ]]; then
   fi
   ROOT_DESC="$URL"
   base="${URL%/}"
+  # Detect a subpath deploy (e.g. GitHub *project* Pages: https://user.github.io/repo/). Crawlers read
+  # robots.txt / sitemap.xml ONLY from the host root, so a robots.txt at the subpath is ignored (#86).
+  HOST_ROOT="$(sed -E 's#^(https?://[^/]+).*#\1#' <<<"$URL")"
+  URL_PATH="$(sed -E 's#^https?://[^/]+##' <<<"$URL")"
+  IS_SUBPATH=""; [[ -n "$URL_PATH" && "$URL_PATH" != "/" ]] && IS_SUBPATH=1
   UA="Mozilla/5.0 (compatible; portka-app-evaluator/1.0)"
   HTML="$(curl -fsSL --max-time 20 -A "$UA" "$URL" 2>/dev/null || true)"
   if [[ -z "$HTML" ]]; then
@@ -177,6 +182,12 @@ if [[ -n "$URL" ]]; then
   root_has() {
     local code
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${base}/$1" 2>/dev/null || true)"
+    if [[ "$code" == "200" ]]; then echo "yes"; else echo "no"; fi
+  }
+  # Probe a file at the HOST ROOT (what crawlers actually read), independent of any subpath.
+  root_url_has() {
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${HOST_ROOT}/$1" 2>/dev/null || true)"
     if [[ "$code" == "200" ]]; then echo "yes"; else echo "no"; fi
   }
 elif [[ -n "$HTMLIN" ]]; then
@@ -273,6 +284,16 @@ case "$(root_has sitemap.xml)" in
   no)  warn "sitemap.xml not found at root — add one and list it in robots.txt" ;;
   *)   info "sitemap.xml: could not determine" ;;
 esac
+# Project-Pages / subpath caveat (#86): a site served under a path (e.g. GitHub *project* Pages,
+# https://user.github.io/repo/) has its robots.txt checked above at the subpath — but crawlers honor
+# only the HOST-ROOT robots.txt. Probe the host root and report what actually governs crawling.
+if [[ "$MODE" == url && -n "${IS_SUBPATH:-}" ]]; then
+  info "served under a subpath (${URL_PATH%/}/) — crawlers read robots.txt & sitemap.xml only from the HOST ROOT ($HOST_ROOT/), not this subpath"
+  case "$(root_url_has robots.txt)" in
+    yes) ok "host-root robots.txt reachable ($HOST_ROOT/robots.txt) — crawl directives are honored" ;;
+    no)  warn "no robots.txt at the host root ($HOST_ROOT/robots.txt) — a subpath robots.txt is ignored by crawlers; put directives at the user/org root or use a custom domain" ;;
+  esac
+fi
 if [[ -n "$HTML" ]]; then
   if html_has '<meta[^>]+name=["'"'"']?robots["'"'"']?[^>]*noindex'; then
     warn "page has meta robots 'noindex' — intended? it will be kept out of search"

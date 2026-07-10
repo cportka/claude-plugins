@@ -116,6 +116,11 @@ form and are triaged into the items below.
   drops a Pages workflow (+ `.nojekyll`) would round out the "green PR that merges and ships" story.
 - **End-of-run summary**: `--portka-standard` writes across several trees; a one-line "wrote N files
   across settings/version-sync/CI" at the end would confirm scope at a glance.
+- **Seed a minimal language manifest instead of bare `VERSION`** (#86): on a greenfield repo of a
+  recognized language (e.g. a Python repo with no `pyproject.toml`), offer a minimal manifest — more
+  idiomatic *and* it unlocks the native `test_version_sync.py` path, which is currently only emitted
+  when a `package.json`/`pyproject.toml` already exists at bootstrap time. Keep it opt-in so a
+  docs/bash repo still gets the bare `VERSION`.
 
 ## app-website-evaluator
 

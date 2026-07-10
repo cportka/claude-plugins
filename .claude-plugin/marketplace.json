@@ -10,9 +10,9 @@
     {
       "name": "video-bug-analyzer",
       "source": "./plugins/video-bug-analyzer",
-      "description": "Diagnose UI and rendering bugs from a screen recording. Give Claude a video and roughly when the bug happens; the plugin extracts frames — an overview contact sheet, scene-cut detection, per-timestamp zoom with before/after strips, or an ROI time-stack (--stack) — then reasons over them to pinpoint the defect. Also quantifies FPS stutter / dropped frames and freeze gaps (--stutter) and frame-pacing jitter from the real presentation timestamps (--pacing). Runs never overwrite a previous extraction; --check-update spots a stale install. Strong on persistent visual bugs, honest about flicker, timing, and off-screen state. Requires ffmpeg (auto-installs where the sandbox allows).",
+      "description": "Diagnose UI and rendering bugs from a screen recording — and reason over any clip's look + motion. Give Claude a video and roughly when the bug happens; the plugin extracts frames (contact sheet, scene-cut detection, per-timestamp zoom + before/after strips, ROI time-stack --stack) and reasons over them to pinpoint the defect. Quantifies FPS stutter / dropped frames + freeze gaps (--stutter) and frame-pacing jitter (--pacing). Doubles as an art/colour-reference tool: --palette pulls a clip's hex ramp, --palette --over-time emits the colour arc (t,[hex...] per window), and --loop-check reports the first-vs-last seam diff for a seamless loop; GIF input works on every mode. Runs never overwrite a previous extraction; --check-update spots a stale install. Requires ffmpeg (auto-installs where the sandbox allows).",
       "category": "debugging",
-      "tags": ["video", "screen-recording", "debugging", "bug", "stutter", "fps", "pacing", "roi"]
+      "tags": ["video", "screen-recording", "debugging", "bug", "stutter", "fps", "pacing", "roi", "palette", "loop-check"]
     },
     {
       "name": "repo-bootstrap",

@@ -624,6 +624,59 @@ if command -v ffmpeg >/dev/null 2>&1; then
       else
         fail "--palette did not extract a reddish swatch (got '$_hex')"
       fi
+      # 1.8.0 (#85): --palette --over-time prints the colour *arc* — one `t<sec>\t#hex...` line per
+      # window, and distinct windows of a hue-sweeping clip must show DIFFERENT palettes (the -y fix:
+      # a reused win.ppm must not leave a stale first-window frame in every row).
+      if ffmpeg -hide_banner -loglevel error -f lavfi \
+           -i "color=c=red:s=64x64:r=10:d=3,hue=H=2*PI*t/3" "$tmp/arc.mp4" -y 2>/dev/null; then
+        _ot="$(bash "$SCRIPT" --video "$tmp/arc.mp4" --palette --over-time --segments 4 --colors 3 2>/dev/null || true)"
+        _rows="$(grep -cE '^[0-9]' <<<"$_ot")"
+        _w0="$(grep -E '^0\.000' <<<"$_ot" | head -1)"
+        _w2="$(grep -E '^1\.500' <<<"$_ot" | head -1)"
+        if [[ "$_rows" -eq 4 && -n "$_w0" && -n "$_w2" && "$_w0" != "$_w2" ]]; then
+          pass "--palette --over-time prints a colour arc whose windows differ (#85)"
+        else
+          fail "--palette --over-time not a per-window arc (rows=$_rows, w0==w2? '$_w0' vs '$_w2')"
+        fi
+        # --loop-check: a seamless (static) clip reads ~0 diff and 'loops cleanly' + writes a strip;
+        # a hue-sweeping clip reads a clear diff and 'seam visible'.
+        _lcs="$(bash "$SCRIPT" --video "$tmp/red.mp4" --loop-check --out "$tmp/lcS" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
+        _lcn="$(bash "$SCRIPT" --video "$tmp/arc.mp4" --loop-check --out "$tmp/lcN" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
+        if grep -q 'loops cleanly' <<<"$_lcs" && [[ -f "$tmp/lcS/loopcheck.png" ]] \
+           && grep -q 'seam visible' <<<"$_lcn"; then
+          pass "--loop-check: seamless clip loops cleanly (+ strip), a sweeping clip flags a seam (#85)"
+        else
+          fail "--loop-check verdicts/strip not as expected (seamless='$(grep -o 'loops cleanly' <<<"$_lcs")' sweep='$(grep -o 'seam visible' <<<"$_lcn")')"
+        fi
+        # 1.8.0 (#85 review): a clip whose AUDIO outlasts the VIDEO must NOT (a) fabricate stale
+        # colour-arc rows for windows past the video (clamp to the video stream duration + rm win.ppm),
+        # nor (b) false-error in --loop-check by seeking a tail into the audio-only region.
+        if ffmpeg -hide_banner -loglevel error -f lavfi -i "color=c=red:s=48x48:r=10:d=1,hue=H=2*PI*t" \
+             -f lavfi -i "sine=frequency=440:d=6" -map 0:v -map 1:a "$tmp/av.mp4" -y 2>/dev/null; then
+          _av="$(bash "$SCRIPT" --video "$tmp/av.mp4" --palette --over-time --segments 8 --colors 2 2>/dev/null || true)"
+          _avuniq="$(grep -cE '^[0-9]' <<<"$_av")"
+          _avdistinct="$(grep -E '^[0-9]' <<<"$_av" | cut -f2 | sort -u | grep -c .)"
+          _avlc="$(bash "$SCRIPT" --video "$tmp/av.mp4" --loop-check --out "$tmp/lcav" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
+          if [[ "$_avuniq" -eq 8 && "$_avdistinct" -gt 1 ]] && ! grep -q 'could not extract' <<<"$_avlc"; then
+            pass "--over-time/--loop-check survive audio-longer-than-video (no stale rows, no false error) (#85 review)"
+          else
+            fail "audio>video regressed (rows=$_avuniq distinct=$_avdistinct, loopcheck='$(grep -o 'could not extract' <<<"$_avlc")')"
+          fi
+        else
+          skip "could not build an audio>video clip (#85 review)"
+        fi
+      else
+        skip "could not build the arc test clip (--over-time / --loop-check)"
+      fi
+      # --over-time without --palette is a usage error (exit 2); dry-runs print, don't fetch.
+      bash "$SCRIPT" --video "$tmp/red.mp4" --over-time >/dev/null 2>&1; _otrc=$?
+      _otd="$(bash "$SCRIPT" --video "$tmp/red.mp4" --palette --over-time --dry-run 2>/dev/null || true)"
+      _lcd="$(bash "$SCRIPT" --video "$tmp/red.mp4" --loop-check --dry-run 2>/dev/null || true)"
+      if [[ "$_otrc" -eq 2 ]] && grep -q 'over-time' <<<"$_otd" && grep -q 'loopcheck.png' <<<"$_lcd"; then
+        pass "--over-time requires --palette (exit 2); --over-time/--loop-check dry-runs print commands (#85)"
+      else
+        fail "--over-time guard / dry-runs wrong (rc=$_otrc)"
+      fi
     else
       skip "could not build a red test clip (--palette)"
     fi

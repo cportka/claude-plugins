@@ -5,6 +5,54 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.8.0] - 2026-07-10
+
+Triage of #85 — `video-bug-analyzer` as an art/aesthetic-reference tool (mining a library of animated
+GIF loops for palette + motion). `video-bug-analyzer` → 1.8.0 (`repo-bootstrap` and
+`app-website-evaluator` stay 1.7.0, `tab-chord-formatter` 1.2.0). MINOR: two new analysis modes, both
+built on existing plumbing, plus a framing tweak.
+
+### Added (video-bug-analyzer → 1.8.0, #85)
+- **`--palette --over-time` — the colour *arc*, not one flattened ramp.** A seamless art loop often
+  sweeps through very different colour states (powder-blue → magenta/cyan → back); a single dominant
+  palette hides that. `--over-time` splits the clip into N windows (`--segments`, default 8) and prints
+  each window's palette as `t<sec>  #hex #hex …`, so the colour *journey* is visible. Reuses
+  `palettegen` per window + the existing PPM swatch reader; honors `--colors`, `--start`/`--end`.
+- **`--loop-check` — is this a clean *seamless* loop?** Reports the **mean absolute pixel difference**
+  between the first and last frame (0 = identical wrap; <1% "loops cleanly", <4% near-seamless, else a
+  visible seam) and writes a `loopcheck.png` strip (first │ last) so the seam is visible. Built on the
+  PPM reader + the `--strip` hstack. Broadly useful to anyone making loops, GIFs, or shader toys.
+- **"Also useful for" framing (#85 item 5, echoing #14).** The header/README/marketplace now call out
+  the non-bug uses — art/colour reference, asset/QA — and that **GIF input works on every mode**, so
+  the tool surfaces for an aesthetic-reference task, not just "bug/glitch/crash".
+
+### Deferred to [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+- `--montage a.gif,b.gif,…` — an N-way library survey (one representative tile per input), for
+  eyeballing a whole collection at once (distinct from the pairwise `--compare-videos`).
+- `--palette` (and `--over-time`) as an SVG/PNG **swatch sheet** artifact, not just hex text.
+
+### Pre-merge adversarial review hardening
+A multi-agent review of the new ffmpeg/python code caught several real edge cases, all fixed:
+- **A window that decodes zero video frames no longer fabricates a stale palette** (the `-y` fix
+  wasn't enough — ffmpeg's image muxer opens lazily, so the prior window's file survived): the span
+  is clamped to the **video** stream duration and `win.ppm` is removed before each window.
+- **A clip whose audio outlasts its video** no longer sends `--loop-check`'s tail seek into an
+  audio-only region (a false "could not extract" error): both modes use the **video** stream
+  duration, not `format=duration`.
+- **A 10-bit/HDR source** (ffmpeg emits a 16-bit `rgb48be` PPM) is read correctly — `-pix_fmt rgb24`
+  on frame grabs plus a parser that takes the high byte of each 16-bit sample — instead of garbage
+  hex / a diff that ignores half the frame.
+- A first/last frame **size mismatch** (a mid-clip resize) is reported as such rather than diffing
+  misaligned pixels; a truncated/malformed PPM header no longer crashes the parser; `--segments` is
+  capped at 200; and every ffmpeg write uses `-y -nostdin`.
+
+### Tests
+- New coverage: `--palette --over-time` prints a per-window arc whose windows genuinely **differ** (a
+  regression guard for the stale-frame bug); `--loop-check` calls a static clip a clean loop (+ writes
+  the strip) and a hue-sweeping clip a seam; a clip whose **audio outlasts its video** survives both
+  modes (no stale rows, no false error); `--over-time` without `--palette` exits 2; and both dry-runs
+  print their commands. Suite: 217 passed, 0 failed, 1 skipped.
+
 ## [1.7.0] - 2026-07-10
 
 Triage of #86 (two independent cold-start field reports on the Portka standard). `repo-bootstrap` →

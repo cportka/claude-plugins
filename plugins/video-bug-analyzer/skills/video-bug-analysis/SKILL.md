@@ -71,6 +71,8 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 | How big / where is a feature, over time | `--measure W:H:X:Y` → diameter + center (% of viewport) |
 | Capture size / aspect / orientation | `--probe` (also: which axis CSS `vmin` is) |
 | Dominant colours (palette) | `--palette [--colors n]` → hex swatches |
+| Colour *arc* over the clip (art reference) | `--palette --over-time [--segments n]` → `t,[hex…]` per window |
+| Does this GIF/video loop seamlessly? | `--loop-check` → first-vs-last-frame seam diff + a strip |
 | Two captures of the same thing differ where | `--ab other.mov` → `t,ssim` divergence timeline |
 | Two clips side-by-side, phase-aligned | `--compare-videos a,b` → one stacked sheet (row per clip) |
 

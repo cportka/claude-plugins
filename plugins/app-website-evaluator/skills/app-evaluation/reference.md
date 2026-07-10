@@ -8,6 +8,11 @@ community** (see SKILL.md §1) — these are defaults, not a one-size checklist.
 
 ### Crawlability / indexing
 - `robots.txt` present, not accidentally `Disallow: /`; references the sitemap.
+- **Host-root only:** crawlers read `robots.txt`/`sitemap.xml` from the **host root**
+  (`https://host/robots.txt`), never a subpath. A GitHub **project** Pages site
+  (`https://user.github.io/repo/`) therefore can't ship effective crawl directives from `repo/robots.txt`
+  — only `https://user.github.io/robots.txt` (the *user/org* Pages root) is honored, or move to a custom
+  domain. `evaluate-site.sh --url` detects a subpath deploy and probes the host root for you.
 - XML **sitemap** present, listed in robots.txt and Search Console; URLs canonical and 200.
 - One **canonical** URL per page (`<link rel="canonical">`); no duplicate http/https/www variants.
 - No accidental `<meta name="robots" content="noindex">` on pages meant to rank.

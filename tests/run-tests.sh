@@ -1082,11 +1082,32 @@ if [[ -f "$BOOTSTRAP" ]]; then
     fail "portka-standard CLAUDE.md missing the feedback-funnel guidance"
   fi
   if grep -q "Releasing is the user's manual step" "$_cm" \
-     && grep -qi 'do \*\*not\*\* create or push a git tag' "$_cm" \
+     && grep -q 'create or push a git tag' "$_cm" \
      && grep -q 'Branch-pinned session' "$_cm"; then
     pass "portka-standard CLAUDE.md keeps releasing manual + handles branch-pinned sessions"
   else
     fail "portka-standard CLAUDE.md missing manual-release / branch-pinned guidance"
+  fi
+  # 1.7.0 (#86): the standard must resolve the PR-gate + who-merges contradiction — the committed
+  # file IS the "explicit ask" to open the PR, the agent merges on green, and the old self-contradicting
+  # "stop at step 3; a human merges" is gone. (Match on the flattened file; phrases wrap across lines.)
+  _cmflat="$(tr '\n' ' ' < "$_cm")"
+  if grep -qF 'this file is the "explicit ask' <<<"$_cmflat" \
+     && grep -q 'merge it yourself once CI is green' <<<"$_cmflat" \
+     && ! grep -q 'a human merges' <<<"$_cmflat" \
+     && ! grep -q 'stop at step 3' <<<"$_cmflat"; then
+    pass "portka-standard CLAUDE.md authorizes proactive PR + agent-merge-on-green, no self-contradiction (#86)"
+  else
+    fail "portka-standard CLAUDE.md still ambiguous about opening/merging the PR (#86)"
+  fi
+  # 1.7.0 (#86 review): robustness the adversarial pass surfaced — a merge can be legitimately refused
+  # (branch protection / token scope), and "green" requires checks to have actually registered + finished.
+  if grep -q 'attempt the merge; if GitHub refuses' <<<"$_cmflat" \
+     && grep -q 'registered and finished' <<<"$_cmflat" \
+     && grep -q 'pushing directly to' <<<"$_cmflat"; then
+    pass "portka-standard CLAUDE.md handles a refused merge + a not-yet-registered CI (#86 review)"
+  else
+    fail "portka-standard CLAUDE.md missing merge-refused / checks-registered robustness (#86 review)"
   fi
   # Permissions merge into BOTH settings; the marketplace + plugins survive in the project one.
   if python3 - "$ps/.claude/settings.json" "$ph/.claude/settings.json" <<'PY'
@@ -1490,6 +1511,32 @@ H
     pass "evaluate-site.sh warns when --dir points at a source tree, not the build (#79)"
   else
     fail "--dir source-tree foot-gun warning missing (#79)"
+  fi
+  # 1.7.0 (#86): --url on a subpath deploy (GitHub *project* Pages) flags that crawlers read
+  # robots.txt only from the HOST ROOT, and probes it. Fake curl: page/headers ok, host-root
+  # robots.txt = 404 (ineffective), subpath robots.txt = 200. Assert the caveat + the host-root warn.
+  _cbin="$ev/curlbin"; mkdir -p "$_cbin"
+  cat > "$_cbin/curl" <<'CURL'
+#!/usr/bin/env bash
+url="${@: -1}"
+case "$*" in
+  *"-o /dev/null"*)   # http_code probe (root_has / root_url_has)
+    case "$url" in
+      https://user.github.io/robots.txt) echo 404 ;;   # HOST-ROOT robots MISSING (what crawlers read)
+      *robots.txt) echo 200 ;;                          # subpath robots.txt present (ignored by crawlers)
+      *) echo 404 ;;
+    esac ;;
+  *-sSI*) printf 'HTTP/2 200\n' ;;
+  *) printf '<!doctype html><html lang="en"><head><title>t</title><meta name="viewport" content="x"><meta name="description" content="y"><meta property="og:image" content="x"><link rel="canonical" href="x"></head><body><h1>h</h1></body></html>\n' ;;
+esac
+CURL
+  chmod +x "$_cbin/curl"
+  _sub="$(PATH="$_cbin:$PATH" bash "$EVAL" --url https://user.github.io/repo/ 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if grep -q 'served under a subpath (/repo/)' <<<"$_sub" \
+     && grep -q 'no robots.txt at the host root' <<<"$_sub"; then
+    pass "evaluate-site.sh --url flags a subpath deploy and probes host-root robots.txt (#86)"
+  else
+    fail "--url project-Pages subpath robots.txt caveat missing (#86)"
   fi
   rm -rf "$ev"
 else

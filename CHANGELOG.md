@@ -5,6 +5,51 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.7.0] - 2026-07-10
+
+Triage of #86 (two independent cold-start field reports on the Portka standard). `repo-bootstrap` →
+1.7.0 and `app-website-evaluator` → 1.7.0 (`video-bug-analyzer` stays 1.6.0, `tab-chord-formatter`
+1.2.0). MINOR: a load-bearing standard-text fix + a new crawlability caveat, both backward-compatible.
+
+### Fixed (repo-bootstrap → 1.7.0, #86) — the standard now drives the PR → merge flow hands-off
+1.6.0's branch-pinned note (*"open the PR … and stop at step 3; a human merges"*) both **contradicted
+step 4** (*"merge the PR automatically"*) and left the hosted harness's *"don't open a pull request
+unless the user explicitly asks"* default un-defused — so in two separate cold-start web sessions the
+agent stalled at "branch pushed" and asked whether to open a PR at all. The `--portka-standard`
+`CLAUDE.md` template (and this repo's own copy) now resolves both:
+- **This committed file is the "explicit ask."** A new note states plainly that the standard's
+  presence *is* the repo owner's standing instruction to open a PR — so open it **proactively** at
+  step 3 for every change, never stop at "pushed" and ask.
+- **The agent merges on green.** Merging happens through GitHub, not a local push to `main`, so a
+  branch-pin doesn't block it; the branch-pinned modification is now **only** skipping the step-1
+  `main` checkout. The self-contradicting "a human merges" is gone. An adversarial review of the new
+  wording hardened three seams: the verb now matches ("forbids **pushing** directly to `main`" ↔ "not
+  a local push"); a merge that GitHub legitimately **refuses** (branch protection, a required review
+  the author can't give, token scope) falls back to handing back the green PR — *never* self-approve
+  or admin/force-merge around it; and "green" now requires checks to have **registered and finished**
+  (an empty/still-populating check list is not green). "Merging the PR is not releasing" is called out
+  so it doesn't collide with the manual-tag/release rule.
+- **A discoverable onboarding entry point.** The README now has an *"Onboard a new repo onto the
+  Portka standard"* section pointing at `repo-bootstrap --portka-standard` as the one command that
+  scaffolds the whole setup (#86 item 3).
+
+### Fixed (app-website-evaluator → 1.7.0, #86 item 5) — project-Pages robots.txt is host-root-only
+A GitHub **project** Pages site (`https://user.github.io/repo/`) serves `robots.txt`/`sitemap.xml`
+from a subpath that crawlers never read — only the **host root** (`https://user.github.io/robots.txt`)
+is honored. `evaluate-site.sh --url` now detects a subpath deploy, says so, and **probes the host
+root** for `robots.txt`, warning when a subpath robots.txt would be silently ignored. Documented in
+`reference.md`.
+
+### Deferred to [IMPROVEMENTS.md](./IMPROVEMENTS.md)
+- Offer a minimal language manifest (e.g. `pyproject.toml` for a detected Python repo) instead of a
+  bare `VERSION` on greenfield bootstrap — it would unlock the native version-sync test path (#86 item 4).
+
+### Tests
+- New coverage: the standard's `CLAUDE.md` authorizes a proactive PR + agent-merge-on-green with no
+  self-contradiction (the old "a human merges"/"stop at step 3" wording is asserted **gone**); and
+  `--url` on a subpath deploy flags the caveat and probes the host-root robots.txt (via a fake `curl`).
+  Suite: 212 passed, 0 failed, 1 skipped.
+
 ## [1.6.0] - 2026-07-08
 
 Triage round: `repo-bootstrap` #81 + a mis-filed field report, and `video-bug-analyzer` #83.

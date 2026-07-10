@@ -1,6 +1,6 @@
 {
   "name": "app-website-evaluator",
-  "version": "1.4.0",
+  "version": "1.7.0",
   "description": "Evaluate an app or website and produce a prioritized, evidence-backed report with a standardized, coverage-honest scorecard: each dimension scored 0-100 with a letter grade and a weight-averaged overall that is starred when part of the weight could not be assessed, plus optional --json. Scores three input sources — a live --url, a local --dir build, or pre-fetched --html (a file or stdin, optionally with --headers) so an agent behind a sandbox egress proxy can still get the full scorecard without curl reaching the origin. Security credits source-visible controls a static host can ship (a <meta> CSP, a shipped security.txt, zero third-party <script> origins), so it is no longer a blanket n/a off the network. AI-readiness parse-validates JSON-LD (an invalid block FAILs) and credits rich schema types (FAQPage/Review/Article/HowTo). Covers SEO and crawlability, AI-readiness, social/sharing assets, security and standards best-practices, performance/load-time, and growth — which communities to join or submit to, and concrete PR/advertising wins — all tailored to the specific type of app/website and its community.",
   "author": {
     "name": "Chris Portka"

@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 1.6.0 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md) · **Privacy:** [PRIVACY.md](./PRIVACY.md) · **Security:** [SECURITY.md](./SECURITY.md)
+> **Version:** 1.7.0 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md) · **Privacy:** [PRIVACY.md](./PRIVACY.md) · **Security:** [SECURITY.md](./SECURITY.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -12,8 +12,8 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 | Plugin | Version | What it does |
 | :-- | :-- | :-- |
 | [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.6.0 | Analyze a screen recording — extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips, ROI time-stack `--stack`) and reason over them, plus analysis modes: black-screen detection, ROI OCR, feature measurement, palettes, cross-clip diff/compare, stutter / dropped-frame + freeze gaps (`--stutter`), frame-pacing jitter (`--pacing`), motion, swirl-vs-suck flow (`--flow`), subject extent (`--occupancy`) & saturation timelines. Runs never overwrite a previous extraction; `--check-update` spots a stale install. |
-| [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.6.0 | Onboard a repo to this marketplace — safely merge `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run`/`--print-only` and a one-paste `/plugin` CLI fallback. With `--portka-standard`, also install the Portka standard: a workflow `CLAUDE.md` (branch-per-change, releases left to a human, tool feedback funneled to the marketplace's **issues** not stray branches), a git/`gh` permissions allowlist, and an enforced SemVer version sync bound to the repo's existing version + a basic test suite (its CHANGELOG check anchored to a real release heading, and `npm test` wired up) — plus a native `node:test`/`unittest` version-sync test for JS/Python repos. |
-| [`app-website-evaluator`](./plugins/app-website-evaluator) | 1.4.0 | Evaluate an app/website with a standardized, coverage-honest scorecard — each dimension 0–100 + letter grade, a weighted overall that's **starred** when unassessed weight is excluded, and optional `--json`. Scores a live `--url`, a local `--dir` build, or **pre-fetched `--html`** (a file or stdin, optionally `--headers`) so an agent behind a sandbox egress proxy still gets the full scorecard without curl reaching the origin. Security now credits **source-visible controls** a static host can ship (a `<meta>` CSP, `security.txt`, zero third-party `<script>` origins). AI-readiness parse-validates JSON-LD and credits rich schema types. Covers SEO, crawlability, AI-readiness, social/sharing, security, performance, and growth — tailored to the site's type and community. |
+| [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.7.0 | Onboard a repo to this marketplace — safely merge `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run`/`--print-only` and a one-paste `/plugin` CLI fallback. With `--portka-standard`, also install the Portka standard: a workflow `CLAUDE.md` (branch-per-change, releases left to a human, tool feedback funneled to the marketplace's **issues** not stray branches), a git/`gh` permissions allowlist, and an enforced SemVer version sync bound to the repo's existing version + a basic test suite (its CHANGELOG check anchored to a real release heading, and `npm test` wired up) — plus a native `node:test`/`unittest` version-sync test for JS/Python repos. |
+| [`app-website-evaluator`](./plugins/app-website-evaluator) | 1.7.0 | Evaluate an app/website with a standardized, coverage-honest scorecard — each dimension 0–100 + letter grade, a weighted overall that's **starred** when unassessed weight is excluded, and optional `--json`. Scores a live `--url`, a local `--dir` build, or **pre-fetched `--html`** (a file or stdin, optionally `--headers`) so an agent behind a sandbox egress proxy still gets the full scorecard without curl reaching the origin. Security now credits **source-visible controls** a static host can ship (a `<meta>` CSP, `security.txt`, zero third-party `<script>` origins). AI-readiness parse-validates JSON-LD and credits rich schema types. Covers SEO, crawlability, AI-readiness, social/sharing, security, performance, and growth — tailored to the site's type and community. |
 | [`tab-chord-formatter`](./plugins/tab-chord-formatter) | 1.2.0 | Format a messy guitar tab/chord sheet into a clean, readable layout for screen, or render a consistent monospace **PDF songbook** (one or many songs, a target songs-per-page) — standardized `[Section]` labels, chords aligned over the right lyrics, a tidy metadata header, and well-formed 6-line ASCII tab blocks. |
 
 ## Add a plugin
@@ -43,6 +43,21 @@ plugins/repo-bootstrap/skills/repo-bootstrap/scripts/bootstrap-repo.sh --plugin 
 
 Onboarding another repo or session? Drop in **[docs/INTEGRATE.md](./docs/INTEGRATE.md)** —
 a portable guide with enable steps, verification, and ffmpeg troubleshooting.
+
+### Onboard a new repo onto the Portka standard
+
+Cold-starting a fresh repo? **Run `repo-bootstrap --portka-standard`** — it's the one entry point
+that scaffolds the whole standard in a single command: the marketplace + enabled plugins, a workflow
+`CLAUDE.md` (branch-per-change → PR → merge-on-green, with tool feedback funneled to *issues*), a
+git/`gh` permissions allowlist, and an enforced SemVer version-sync suite + CI.
+
+```
+plugins/repo-bootstrap/skills/repo-bootstrap/scripts/bootstrap-repo.sh \
+  --portka-standard --scope project --plugin video-bug-analyzer   # add --dry-run to preview
+```
+
+Add `--print-only` for a classifier-safe manual paste when a hosted session blocks the settings
+write. See the [`repo-bootstrap`](#usage) usage below for every flag.
 
 ## Usage
 

@@ -60,6 +60,10 @@ form and are triaged into the items below.
   phase-aligned `--compare-videos`; overlaps the multi-clip batch idea above (shape here is survey).
 - **Palette as a swatch artifact** (#85) — `--palette`/`--palette --over-time` emit hex text; a small
   SVG/PNG swatch sheet would be a drop-in reference asset, closing "analyze → usable design artifact".
+- **`--track-color <hue> --tol <n>`** (#89) — emit `t,x,y,r` for a colour-matched feature so two-feature
+  relative offsets ("is the selection ring centered on the body?") compose from `--measure` + this,
+  instead of hand-rolled circle-fit scripts. See the annulus-constraint recipe in `reference.md`
+  (unrelated same-hue pixels — lensed star arcs, UI accents — otherwise poison the fit).
 - **Machine-readable freeze gaps** (#70) — the freeze-gap list is human-readable on stderr; a
   `t_start,dur_ms` CSV would let it be plotted against an app's own timing marks. Deferred over an
   output-shape choice: the `--cadence` stdout is already the `t,unique_frames,fps` CSV, so a second
@@ -151,6 +155,11 @@ form and are triaged into the items below.
   a11y contrast scan yet. Dimension **weights are fixed**; could auto-tune them by site type.
 - **Sitemap freshness** (#63's remaining ask): the sitemap check is presence-only; could parse
   `<lastmod>` recency and reward a fresh sitemap as an AI-readiness/crawlability signal.
+- **"Snippet-hijack" check** (#91): Google's live snippet can ignore a present, passing meta
+  description and stitch together hidden a11y text (a visually-hidden `<h1>` + boilerplate) — common
+  on full-canvas apps whose visible DOM is thin. A heuristic (meta description present + `<h1>`
+  carrying an sr-only/clip class + little visible text) could INFO-flag the risk. Needs design so it
+  doesn't false-positive ordinary sr-only headings on content-rich pages.
 
 ## tab-chord-formatter
 

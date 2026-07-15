@@ -63,7 +63,7 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 | Before/after of two frames I have | `--strip a.png,b.png` |
 | Did it move / which direction? | `--diff` (bright = changed pixels) |
 | Is it moving, and *how much* over time? | `--motion` → `t,motion` (mean inter-frame delta) |
-| Is it choppy, and *where*? | `--cadence` (nominal vs real fps + per-window unique frames) |
+| Is it choppy, and *where*? | `--stutter` (alias `--cadence`) — verdict (worst freeze) + per-window unique fps; `--freeze-min` tunes |
 | Too vivid / "clownish" vs muted? | `--saturation` → `t,saturation` (per-frame colour intensity) |
 | Read a tiny region (FPS/HUD/label) | `--crop W:H:X:Y` (crop+zoom; combines with any mode) |
 | Black / blank screen | `--blackdetect` (spans, flags PERMANENT vs transient) |

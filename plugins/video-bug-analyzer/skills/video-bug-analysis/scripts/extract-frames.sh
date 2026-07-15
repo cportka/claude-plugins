@@ -133,16 +133,18 @@
 #                       moments. Both are sampled at --fps and scaled to the primary's size, so
 #                       it answers "these intros differ most at 0.20-0.28s". --start/--end align
 #                       the window on both. The cross-browser-bug tool. (Uses ffmpeg ssim.)
-#   --cadence           Stutter timeline (aliases: --stutter, --fps-drops): report the nominal
-#                       frame rate vs the real average (dropped/duplicated frames = choppiness),
-#                       then a per-window count of UNIQUE frames so you see WHEN it stutters. Prints
+#   --stutter           Stutter timeline (aliases: --cadence, --fps-drops — one mode, --stutter is
+#                       the primary name): leads with a one-line VERDICT (worst freeze + median
+#                       window fps — the actionable read), then the nominal-vs-real rates and a
+#                       per-window count of UNIQUE frames so you see WHEN it stutters. Prints
 #                       t,unique_frames,fps and headlines the choppiest windows; also lists the
-#                       longest FREEZE GAPS (sustained frozen spans, e.g. "@1.4s frozen for 633 ms")
-#                       — the multi-hundred-ms stalls. A static/near-black pre-roll (recording
-#                       lead-in / splash) is detected and kept out of the choppiest-windows ranking.
-#                       --window sets the bin (default 0.5s); honors --start/--end. Measures
-#                       UNIQUE-content cadence, so a static scene also reads low. (ffmpeg mpdecimate +
-#                       freezedetect + ffprobe; python3.)
+#                       longest FREEZE GAPS (sustained frozen spans, e.g. "@1.4s frozen for 633 ms").
+#                       A static/near-black pre-roll is detected and kept out of the ranking; a VFR
+#                       capture's high nominal (macOS: 240) is flagged as a timebase, not a target
+#                       (#89). --window sets the bin (default 0.5s); --freeze-min <sec> tunes the
+#                       freeze-gap threshold (default 0.1 — raise to 0.2 to mute ~100ms VFR noise);
+#                       honors --start/--end. Measures UNIQUE-content cadence, so a static scene
+#                       also reads low. (ffmpeg mpdecimate + freezedetect + ffprobe; python3.)
 #   --pacing            Frame-PACING timeline (a from-scratch counterpart to --cadence): read the
 #                       actual per-frame presentation timestamps and print t,interval_ms — the time
 #                       between consecutive DISPLAYED frames. Catches uneven timing / jank / VFR / a
@@ -230,7 +232,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.8.0"
+VBA_VERSION="1.9.0"
 
 VIDEO=""
 START=""
@@ -288,6 +290,7 @@ OCC_DARK=""    # --occupancy-dark measures a dark subject on a light background 
 OVER_TIME=""   # --over-time: with --palette, emit a per-window colour arc (t,[hex...]) (1.8.0, #85)
 SEGMENTS=""    # --segments N: how many time windows --palette --over-time samples (default 8)
 LOOP_CHECK=""  # --loop-check: compare frame@0 vs frame@last (seam diff + strip) for a loop (1.8.0, #85)
+FREEZE_MIN="0.1" # --freeze-min <sec>: min frozen span --stutter reports as a freeze gap (1.9.0, #89)
 FPS_SET=""     # track whether --fps was passed (so presets don't override it)
 
 usage() {
@@ -471,6 +474,7 @@ while [[ $# -gt 0 ]]; do
     --ab) AB="${2:-}"; shift 2 ;;                      # A/B divergence vs <other>
     --cadence) CADENCE=1; shift ;;                    # frame-cadence timeline
     --stutter|--fps-drops) CADENCE=1; shift ;;       # ADDED (1.1.2, #56): aliases for --cadence
+    --freeze-min) FREEZE_MIN="${2:-}"; shift 2 ;;    # ADDED (1.9.0, #89): freeze-gap threshold (sec)
     --motion) MOTION=1; shift ;;                      # inter-frame motion timeline
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
     --intro) INTRO=1; shift ;;                        # first-seconds load preset
@@ -550,6 +554,12 @@ fi
 # (e.g. --over-time alone) doesn't silently run a plain extraction (#85).
 if [[ -n "$OVER_TIME$SEGMENTS" && -z "$PALETTE" ]]; then
   echo "Error: --over-time / --segments only apply to --palette (the colour arc). Add --palette." >&2
+  exit 2
+fi
+# ...and --segments without --over-time would be silently ignored by the flat palette — the same
+# wrong-mode footgun from the other direction (#85 review). Say so instead of dropping the intent.
+if [[ -n "$SEGMENTS" && -n "$PALETTE" && -z "$OVER_TIME" ]]; then
+  echo "Error: --segments needs --over-time (did you mean: --palette --over-time --segments $SEGMENTS?)." >&2
   exit 2
 fi
 
@@ -684,6 +694,12 @@ print_smoothness() {
         if (R >= 90 && (near(A,60) || near(A,30))) {
           cad = near(A,60) ? 60 : 30;
           printf "  (~%.0f fps content on a %.0f Hz capture — normal for a %d fps app, not choppy; --motion/--pacing to check for real stutter)", A, R, cad;
+        } else if (R >= 200 && A >= 15) {
+          # VFR screen recordings (macOS: r_frame_rate 240/1, some muxers 600/1000) use nominal as
+          # a TIMEBASE, not a target — comparing against it called a healthy ~47fps control clip
+          # "80% dropped — likely choppy" (#89). Real display refreshes (90/120/144/165) stay under
+          # the branches above/below, so genuine high-refresh jank is still flagged (#83 contract).
+          printf "  (VFR/high-refresh capture: nominal %.0f is the container timebase, not a target — effective ~%.0f fps; --stutter/--pacing for real stutter)", R, A;
         } else if (d>=5) {
           printf "  (~%.0f%% frames dropped/duplicated — likely choppy; --cadence/--motion to localize)", d;
         }
@@ -1344,12 +1360,18 @@ run_cadence() {
     afr="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
     dur="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
   fi
+  # Validate the freeze-gap threshold (1.9.0, #89): 100–113ms gaps are borderline noise on a
+  # healthy 40–50fps VFR capture — tune with --freeze-min (seconds).
+  if ! awk -v v="$FREEZE_MIN" 'BEGIN{exit !(v+0>0 && v==v+0)}' 2>/dev/null || ! [[ "$FREEZE_MIN" =~ ^[0-9.]+$ ]]; then
+    echo "Error: --freeze-min must be a positive number of seconds (got '$FREEZE_MIN')." >&2
+    exit 2
+  fi
   if [[ -n "$DRY_RUN" ]]; then
     printf 'ffmpeg'; printf ' %q' -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "mpdecimate,showinfo" -an -f null -
     printf '\n'
     echo "# + ffprobe r_frame_rate/avg_frame_rate; bucket unique-frame pts_time into --window bins"
-    echo "# -> CSV t,unique_frames,fps; headline nominal-vs-effective + choppiest windows"
-    echo "# + ffmpeg -vf freezedetect=d=0.1 -> longest frozen spans (freeze gaps, #56)"
+    echo "# -> CSV t,unique_frames,fps; headline verdict (worst freeze first) + choppiest windows"
+    echo "# + ffmpeg -vf freezedetect=d=${FREEZE_MIN} -> longest frozen spans (freeze gaps, #56; --freeze-min tunes)"
     return 0
   fi
   if ! command -v python3 >/dev/null 2>&1; then
@@ -1357,13 +1379,22 @@ run_cadence() {
     exit 2
   fi
   local base; base="$(to_seconds "${START:-0}")"
+  # Freeze-gap pass FIRST (#89): the worst freeze is the most actionable single number, so it now
+  # leads the report as a one-line verdict instead of living at the bottom.
+  local fd; fd="$(ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "freezedetect=d=${FREEZE_MIN}" -an -f null - 2>&1 || true)"
+  local gaps; gaps="$(printf '%s\n' "$fd" | awk -v base="$base" '
+    /freeze_start:/    { s=$NF }
+    /freeze_duration:/ { if (s!="") { printf "%.3f\t%.3f\n", s+base, $NF; s="" } }
+  ' | sort -t"$(printf '\t')" -k2 -nr)"
+  local worst_gs="0" worst_gd="0"
+  if [[ -n "$gaps" ]]; then IFS="$(printf '\t')" read -r worst_gs worst_gd <<<"$(head -1 <<<"$gaps")"; fi
   # mpdecimate drops near-duplicate frames; showinfo logs the surviving (unique) frames' times.
   # Write them to a temp file and pass its PATH to python — a `python3 - <<'PY'` heredoc already
   # uses stdin for the program, so the frame times can't also come in on stdin.
   local tf; tf="$(mktemp)"
   ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "mpdecimate,showinfo" -an -f null - 2>&1 \
     | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' > "$tf" || true
-  python3 - "${WINDOW}" "$base" "${rfr:-0}" "${afr:-0}" "${dur:-0}" "$tf" "${START:+1}${END:+1}" <<'PY'
+  python3 - "${WINDOW}" "$base" "${rfr:-0}" "${afr:-0}" "${dur:-0}" "$tf" "${START:+1}${END:+1}" "$worst_gs" "$worst_gd" <<'PY'
 import sys, math
 window=float(sys.argv[1]) or 0.5
 base=float(sys.argv[2])
@@ -1414,10 +1445,32 @@ if not scoped and rows:
         if any(r[1]==0 for r in lead) and max(r[1] for r in lead) <= max(1.0, 0.5*content_med):
             lead_dead=k; content_start=rows[k][0]
 e=sys.stderr
-e.write("Cadence: nominal %.2f fps (r_frame_rate); container avg %.2f fps; unique %.2f fps over %.2fs (%d unique frames).\n"
-        % (nominal, avg, eff, span, uniq))
+# One-line verdict FIRST (1.9.0, #89): worst freeze + window stability are the actionable reads —
+# nominal is a red herring on VFR captures (macOS r_frame_rate=240 is a timebase, not a target).
+worst_gs=float(sys.argv[8]) if len(sys.argv)>8 and sys.argv[8] else 0.0
+worst_gd=float(sys.argv[9]) if len(sys.argv)>9 and sys.argv[9] else 0.0
+worst_ms=worst_gd*1000
+content=rows[lead_dead:] if rows else []
+cfps=sorted(r[2] for r in content)
+med=cfps[len(cfps)//2] if cfps else 0.0
+low=cfps[0] if cfps else 0.0
+if worst_ms >= 500:
+    verdict="%.0f ms freeze @%.2fs; ~%.0f fps median otherwise" % (worst_ms, worst_gs, med)
+elif med>0 and low < 0.5*med:
+    verdict="uneven — median ~%.0f fps, dips to ~%.0f fps; worst freeze %.0f ms" % (med, low, worst_ms)
+elif worst_ms>0:
+    verdict="steady ~%.0f fps, worst freeze %.0f ms" % (med, worst_ms)
+else:
+    verdict="steady ~%.0f fps, no sustained freezes" % med
+e.write("verdict: %s\n" % verdict)
+vfr_note=" (VFR capture: nominal is the container timebase, not a target — #89)" if nominal>=200 else ""
+e.write("Stutter (cadence): nominal %.2f fps (r_frame_rate)%s; container avg %.2f fps; unique %.2f fps over %.2fs (%d unique frames).\n"
+        % (nominal, vfr_note, avg, eff, span, uniq))
 if nominal>0 and eff>0 and eff < 0.85*nominal:
-    e.write("Effective cadence is well below nominal -> dropped/duplicated frames (stutter). Choppiest windows:\n")
+    if nominal>=120:
+        e.write("Unique-content rate is far below the (VFR) timebase — judge by the verdict/window stability, not nominal. Choppiest windows:\n")
+    else:
+        e.write("Effective cadence is well below nominal -> dropped/duplicated frames (stutter). Choppiest windows:\n")
     content_rows = rows[lead_dead:] if lead_dead else rows
     for ws,cnt,fps in sorted(content_rows, key=lambda r:r[2])[:3]:
         e.write("  @%.2fs: %.1f fps (%d unique in %.2fs)\n" % (ws, fps, cnt, window))
@@ -1429,20 +1482,15 @@ if nominal>0 and eff>0 and eff < 0.85*nominal:
 else:
     e.write("Cadence looks steady (effective near nominal).\n")
 PY
-  # Freeze-gap pass (issue #56): freezedetect flags sustained frozen spans — the "multi-hundred-ms
-  # gaps" of a stutter — as start+duration, complementing the windowed effective-fps above.
-  local fd; fd="$(ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "freezedetect=d=0.1" -an -f null - 2>&1 || true)"
-  local gaps; gaps="$(printf '%s\n' "$fd" | awk -v base="$base" '
-    /freeze_start:/    { s=$NF }
-    /freeze_duration:/ { if (s!="") { printf "%.3f\t%.3f\n", s+base, $NF; s="" } }
-  ' | sort -t"$(printf '\t')" -k2 -nr)"
+  # Freeze-gap detail (issue #56; the pass itself ran up top so the verdict could lead with the
+  # worst gap): sustained frozen spans as start+duration, complementing the windowed fps above.
   if [[ -n "$gaps" ]]; then
-    echo "Freeze gaps (frame unchanged >= 0.1s; longest first):" >&2
+    echo "Freeze gaps (frame unchanged >= ${FREEZE_MIN}s — tune with --freeze-min; longest first):" >&2
     printf '%s\n' "$gaps" | head -3 | while IFS="$(printf '\t')" read -r gs gd; do
       awk -v s="$gs" -v d="$gd" 'BEGIN{ printf "  @%.2fs frozen for %d ms\n", s, d*1000 }' >&2
     done
   else
-    echo "No sustained freeze gaps (>= 0.1s) detected." >&2
+    echo "No sustained freeze gaps (>= ${FREEZE_MIN}s) detected — tune with --freeze-min." >&2
   fi
   rm -f "$tf"
 }

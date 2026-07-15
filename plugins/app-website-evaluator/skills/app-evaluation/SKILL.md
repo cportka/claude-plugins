@@ -45,8 +45,13 @@ curl -sSL https://example.com | "$S" --html -           # score pre-fetched HTML
 proxy 403s arbitrary hosts. When that happens, fetch the page some other way (an MCP fetch tool, a
 headless browser, `web_fetch`) and feed it to **`--html`** (a file, or `-` for stdin); add
 **`--headers`** (e.g. `curl -sSI` output, or an MCP fetch's response headers) to still score the live
-HSTS / CSP / X-Content-Type-Options / Referrer-Policy checks. Exactly one of `--url` / `--dir` /
-`--html`; `--headers` only pairs with `--html`.
+HSTS / CSP / X-Content-Type-Options / Referrer-Policy checks. Better yet, **combine `--url` with
+`--html`** (the hybrid, #91): your HTML is scored while the live origin probes (headers,
+robots/sitemap/security.txt) still run — one run, one honest scorecard. When the page GET fails but
+probes run, origin-file *misses* are reported as INFO "could not verify" rather than FAIL — behind a
+filter a non-200 is ambiguous, and the tool says so instead of sending you to chase a robots.txt the
+repo actually ships. `--headers` only pairs with `--html` (without `--url`); `--dir` combines with
+neither.
 
 **Point `--dir` at the built/deployed output, not source.** Many sites generate `robots.txt`,
 `sitemap.xml`, and `.well-known/security.txt` **at build time** (e.g. a `build-web.js`), so scanning

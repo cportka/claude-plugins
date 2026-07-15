@@ -13,16 +13,21 @@
 #   evaluate-site.sh --dir <path-to-built-site-or-repo>
 #   evaluate-site.sh --html page.html [--headers resp-headers.txt]   # analyze already-fetched HTML
 #   curl -sSL <url> | evaluate-site.sh --html -                      # ...or from stdin
+#   evaluate-site.sh --url <url> --html page.html   # HYBRID: your HTML + live origin probes (#91)
 #   evaluate-site.sh --url <url> --dry-run     # print what it would fetch, no network
 #
 # Options:
 #   --url <url>    Evaluate a live site (fetches the page, headers, robots.txt, sitemap, llms.txt).
+#                  When the page GET itself fails (a filtering proxy), origin-file probe misses are
+#                  reported as INFO "could not verify", not FAIL — a non-200 is ambiguous there (#91).
 #   --dir <path>   Evaluate a local directory (an index.html / built site, or a repo).
 #   --html <f|->   Score HTML you already fetched (a file, or - for stdin) WITHOUT curl reaching the
 #                  origin — for sandboxes whose egress proxy blocks arbitrary hosts. Pair with
-#                  --headers to also run the live security-header checks (#79).
-#   --headers <f|-> Response headers (e.g. `curl -sSI` output, or an MCP fetch's headers) to feed the
-#                  Security header checks in --html mode. Optional; only meaningful with --html.
+#                  --headers to also run the live security-header checks (#79). COMBINE with --url to
+#                  score your HTML while still running the live origin probes — one honest card (#91).
+#   --headers <f|-> Response headers to feed the Security header checks in --html mode. The exact
+#                  fetch this script uses (its UA often passes filters a bare curl doesn't):
+#                    curl -sSI --max-time 20 -A "Mozilla/5.0 (compatible; portka-app-evaluator/1.0)" <url>
 #   --dry-run      Print the requests/files that would be checked, without doing network I/O.
 #   --json         Emit a machine-readable JSON scorecard on stdout (human report -> stderr).
 #   -h, --help     Show this help.
@@ -57,21 +62,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Exactly one input source.
-_n_src=0
-[[ -n "$URL" ]] && _n_src=$((_n_src+1))
-[[ -n "$DIR" ]] && _n_src=$((_n_src+1))
-[[ -n "$HTMLIN" ]] && _n_src=$((_n_src+1))
-if [[ "$_n_src" -eq 0 ]]; then
+# Input sources: --url, --dir, --html — one of them, EXCEPT --url + --html together, which is the
+# hybrid for filtered sandboxes (#91): score the HTML you provide, but still run the live origin
+# probes (headers, robots/sitemap/security.txt) so one run yields one honest scorecard.
+if [[ -z "$URL$DIR$HTMLIN" ]]; then
   echo "Error: pass one of --url <url>, --dir <path>, or --html <file|->. See --help." >&2
   exit 2
 fi
-if [[ "$_n_src" -gt 1 ]]; then
-  echo "Error: use exactly one of --url / --dir / --html, not several." >&2
+if [[ -n "$DIR" && ( -n "$URL" || -n "$HTMLIN" ) ]]; then
+  echo "Error: --dir can't combine with --url/--html (use --url [--html] for live, --dir for local)." >&2
   exit 2
 fi
 if [[ -n "$HEADIN" && -z "$HTMLIN" ]]; then
   echo "Error: --headers is only meaningful with --html (--url fetches its own headers)." >&2
+  exit 2
+fi
+if [[ -n "$HEADIN" && -n "$URL" ]]; then
+  echo "Error: --headers can't combine with --url (--url fetches the live headers itself)." >&2
   exit 2
 fi
 if [[ "$HTMLIN" == "-" && "$HEADIN" == "-" ]]; then
@@ -79,7 +86,8 @@ if [[ "$HTMLIN" == "-" && "$HEADIN" == "-" ]]; then
   exit 2
 fi
 
-# Input mode: url (live fetch) | dir (local build/repo) | html (pre-fetched HTML, optional headers).
+# Input mode: url (live fetch; with --html = hybrid, your HTML + live probes) |
+# dir (local build/repo) | html (pre-fetched HTML only, optional --headers).
 if   [[ -n "$URL" ]];    then MODE=url
 elif [[ -n "$HTMLIN" ]]; then MODE=html
 else                          MODE=dir
@@ -140,7 +148,11 @@ hdr()   { if grep -qi "$1" <<<"$HEADERS"; then ok "$2"; else "$3" "$4"; fi; }
 if [[ -n "$DRY_RUN" ]]; then
   if [[ "$MODE" == url ]]; then
     echo "Dry run — would fetch (no network performed):"
-    echo "  curl -fsSL $URL                 # page HTML"
+    if [[ -n "$HTMLIN" ]]; then
+      echo "  (hybrid: page HTML read from ${HTMLIN}, not fetched)"
+    else
+      echo "  curl -fsSL $URL                 # page HTML"
+    fi
     echo "  curl -sSI  $URL                 # response headers (HTTPS, security)"
     echo "  curl -fsS  ${URL%/}/robots.txt"
     echo "  curl -fsS  ${URL%/}/sitemap.xml"
@@ -157,6 +169,7 @@ fi
 # --- acquire the page HTML + a way to test root files ---------------------------------
 HTML=""
 ROOT_DESC=""
+NET_UNRELIABLE=""   # set in URL mode when the page itself is unreachable (probe misses -> INFO, #91)
 # root_has <relpath>: is this site-root file present/reachable? Echoes "yes"/"no" (and "unknown"
 # from the URL branch when a request can't be made). Defined per-mode just below; one of the two
 # branches always runs (we already errored if neither --url nor --dir was given).
@@ -174,21 +187,56 @@ if [[ -n "$URL" ]]; then
   URL_PATH="$(sed -E 's#^https?://[^/]+##' <<<"$URL")"
   IS_SUBPATH=""; [[ -n "$URL_PATH" && "$URL_PATH" != "/" ]] && IS_SUBPATH=1
   UA="Mozilla/5.0 (compatible; portka-app-evaluator/1.0)"
-  HTML="$(curl -fsSL --max-time 20 -A "$UA" "$URL" 2>/dev/null || true)"
-  if [[ -z "$HTML" ]]; then
-    warn "could not fetch page HTML from $URL (network blocked, redirect, or non-200) — header/file checks still attempted"
+  if [[ -n "$HTMLIN" ]]; then
+    # Hybrid (#91): score HTML you already fetched (a proxy blocked the page GET), but still run the
+    # live origin probes below — one run, one honest scorecard, instead of two mentally merged.
+    if [[ "$HTMLIN" == "-" ]]; then
+      HTML="$(cat 2>/dev/null || true)"
+    else
+      [[ -f "$HTMLIN" ]] || { echo "Error: --html file not found: $HTMLIN" >&2; exit 2; }
+      HTML="$(cat "$HTMLIN" 2>/dev/null || true)"
+    fi
+    ROOT_DESC="$URL (HTML from ${HTMLIN})"
+    [[ -z "$HTML" ]] && warn "--html input is empty — nothing to score (check the file / the fetch that produced it)"
+  else
+    HTML="$(curl -fsSL --max-time 20 -A "$UA" "$URL" 2>/dev/null || true)"
+    if [[ -z "$HTML" ]]; then
+      warn "could not fetch page HTML from $URL (network blocked, redirect, or non-200) — header/file checks still attempted"
+    fi
   fi
   HEADERS="$(curl -sSI --max-time 20 -A "$UA" "$URL" 2>/dev/null || true)"
+  # Probe reliability (#91): when the page itself isn't reachable, a root-file probe's non-200 is
+  # ambiguous — a genuine 404 or the filtering proxy. Downgrade those misses from FAIL/WARN to INFO
+  # so nobody burns time chasing a robots.txt the repo actually ships.
+  NET_UNRELIABLE=""
+  if [[ -z "$HTMLIN" ]]; then
+    [[ -z "$HTML" ]] && NET_UNRELIABLE=1
+  else
+    _pg_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "$URL" 2>/dev/null || true)"
+    [[ "$_pg_code" == "200" ]] || NET_UNRELIABLE=1
+  fi
+  if [[ -n "$NET_UNRELIABLE" ]]; then
+    if [[ -n "$HEADERS" ]]; then
+      info "page GET blocked but the header fetch worked — reuse it offline: curl -sSI -A '$UA' '$URL' > headers.txt; evaluate-site.sh --html page.html --headers headers.txt"
+    fi
+    info "origin-file probes are unreliable behind this network — misses below report as 'could not verify', not FAIL"
+  fi
+  # A 200 is trustworthy even behind a filter; a non-200 is only a real miss when the network is
+  # reliable — otherwise answer "unknown" so the check sites report INFO, not FAIL (#91).
   root_has() {
     local code
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${base}/$1" 2>/dev/null || true)"
-    if [[ "$code" == "200" ]]; then echo "yes"; else echo "no"; fi
+    if [[ "$code" == "200" ]]; then echo "yes"
+    elif [[ -n "$NET_UNRELIABLE" ]]; then echo "unknown"
+    else echo "no"; fi
   }
   # Probe a file at the HOST ROOT (what crawlers actually read), independent of any subpath.
   root_url_has() {
     local code
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${HOST_ROOT}/$1" 2>/dev/null || true)"
-    if [[ "$code" == "200" ]]; then echo "yes"; else echo "no"; fi
+    if [[ "$code" == "200" ]]; then echo "yes"
+    elif [[ -n "$NET_UNRELIABLE" ]]; then echo "unknown"
+    else echo "no"; fi
   }
 elif [[ -n "$HTMLIN" ]]; then
   # Pre-fetched HTML (a file, or - for stdin) — for sandboxes whose egress proxy blocks arbitrary
@@ -261,7 +309,7 @@ HTML_FLAT="$(tr -s '[:space:]' ' ' <<<"$HTML")"
 
 say "App / website evaluation — $ROOT_DESC"
 case "$MODE" in
-  url)  info "URL mode (live fetch)" ;;
+  url)  if [[ -n "$HTMLIN" ]]; then info "hybrid mode (your HTML + live origin probes)"; else info "URL mode (live fetch)"; fi ;;
   html) info "HTML mode (pre-fetched HTML${HEADERS:+ + response headers}; no origin fetch)" ;;
   dir)  info "directory mode (local files)" ;;
 esac
@@ -277,12 +325,12 @@ sec "Crawlability / indexing"
 case "$(root_has robots.txt)" in
   yes) ok "robots.txt present" ;;
   no)  bad "robots.txt missing — add one (and point it at your sitemap)" ;;
-  *)   info "robots.txt: could not determine" ;;
+  *)   info "robots.txt: could not verify (no origin access, or the network is filtered)" ;;
 esac
 case "$(root_has sitemap.xml)" in
   yes) ok "sitemap.xml present" ;;
   no)  warn "sitemap.xml not found at root — add one and list it in robots.txt" ;;
-  *)   info "sitemap.xml: could not determine" ;;
+  *)   info "sitemap.xml: could not verify (no origin access, or the network is filtered)" ;;
 esac
 # Project-Pages / subpath caveat (#86): a site served under a path (e.g. GitHub *project* Pages,
 # https://user.github.io/repo/) has its robots.txt checked above at the subpath — but crawlers honor
@@ -292,6 +340,7 @@ if [[ "$MODE" == url && -n "${IS_SUBPATH:-}" ]]; then
   case "$(root_url_has robots.txt)" in
     yes) ok "host-root robots.txt reachable ($HOST_ROOT/robots.txt) — crawl directives are honored" ;;
     no)  warn "no robots.txt at the host root ($HOST_ROOT/robots.txt) — a subpath robots.txt is ignored by crawlers; put directives at the user/org root or use a custom domain" ;;
+    *)   info "host-root robots.txt: could not verify (network filtered)" ;;
   esac
 fi
 if [[ -n "$HTML" ]]; then
@@ -501,7 +550,10 @@ fi
 # Per-dimension score = 100*(pass + 0.5*warn)/(scored checks); overall = weighted average.
 printf '\n\033[1mScorecard\033[0m\n' >&"$RFD"
 printf '  %-27s %6s  %5s  %s\n' "dimension" "weight" "score" "grade" >&"$RFD"
-declare -a OUT_SCORE OUT_GRADE OUT_WEIGHT UNSCORED
+# Initialize as empty-but-SET arrays: `declare -a` alone leaves them unset, and on a run where every
+# dimension scores, UNSCORED never gains an element — then `${#UNSCORED[@]}` under `set -u` errors
+# "UNSCORED: unbound variable" (bash 5.2, #90). The others always get elements, but same hygiene.
+declare -a OUT_SCORE=() OUT_GRADE=() OUT_WEIGHT=() UNSCORED=()
 tot_w=0; tot_ws=0; all_w=0
 for i in "${!SEC_NAME[@]}"; do
   sp=${SEC_P[i]}; sw=${SEC_W[i]}; sf=${SEC_F[i]}

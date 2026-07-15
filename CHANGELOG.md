@@ -5,6 +5,76 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.9.0] - 2026-07-15
+
+Triage of four field reports (#89, #90, #91, #92 + the kevin-website default-branch finding) and one
+review nit carried from 1.8.0. `app-website-evaluator`, `video-bug-analyzer`, and `repo-bootstrap`
+all → 1.9.0 (`tab-chord-formatter` stays 1.2.0). MINOR: fixes + additive behavior, all
+backward-compatible.
+
+### Fixed (app-website-evaluator → 1.9.0, #90)
+- **"UNSCORED: unbound variable" on a fully-scored run.** The scorecard arrays were `declare -a`'d
+  but `UNSCORED` only ever gained elements when a dimension was *n/a* — on a fully-assembled site
+  where every dimension scores, `${#UNSCORED[@]}` under `set -u` errored (bash 5.2). All four arrays
+  are now initialized empty-but-set. Every prior test fixture left ≥1 dimension unscored, which is
+  how it slipped through — a fully-scored regression fixture now guards it.
+
+### Added (app-website-evaluator → 1.9.0, #91)
+- **Filtered-proxy honesty: probe misses downgrade to INFO.** When the page GET itself fails (the
+  "network is filtered" signal), a non-200 on robots.txt/sitemap.xml is ambiguous — a genuine 404 or
+  the proxy — so those misses now report `INFO could not verify` instead of FAIL, and a note says
+  why. A 200 still credits (a filter can't fake it). No more chasing a robots.txt the repo ships.
+- **`--url` + `--html` hybrid.** Score the HTML you already fetched *while* running the live origin
+  probes (headers, robots/sitemap/security.txt) — one run, one honest scorecard, instead of two runs
+  mentally merged. `--headers` still pairs with `--html`-only; `--dir` combines with neither.
+- **The header-fetch recipe is surfaced.** The script's UA'd `curl -sSI` often passes filters a bare
+  curl doesn't; when the page GET fails but the header fetch worked, the exact reusable command is
+  printed (and documented in `--help`) for `--html --headers` composition.
+- Docs: a template-vs-built nuance note (evaluate `dist/`, not a Vite/webpack source template).
+  Deferred → IMPROVEMENTS: the "snippet-hijack" heuristic (#91 item 5).
+
+### Fixed (video-bug-analyzer → 1.9.0, #89)
+- **VFR nominal-fps red herring.** macOS screen recordings carry `r_frame_rate` 240/1 as a
+  *timebase*; the smoothness banner compared against it and called a healthy ~47 fps control clip
+  "~80% dropped — likely choppy". A nominal ≥ 200 with plausible content fps now reads *"VFR/high-
+  refresh capture: nominal 240 is the container timebase, not a target"* — while real display
+  refreshes (90/120/144) keep the existing jank warnings (#83's contract is regression-tested).
+- **`--stutter` now leads with a one-line verdict** — the worst freeze + median window fps (the
+  actionable read), e.g. `verdict: 1133 ms freeze @2.85s; ~44 fps median otherwise` — instead of
+  burying the freeze list at the bottom. The cadence headline flags a VFR timebase too.
+- **`--freeze-min <sec>`** tunes the freeze-gap threshold (default 0.1s) — raise it to mute the
+  ~100 ms borderline gaps a healthy 40–50 fps VFR capture produces.
+- **Naming aligned:** `--stutter` is the primary name everywhere (README, SKILL table, report
+  header "Stutter (cadence):"); `--cadence`/`--fps-drops` remain aliases.
+- `reference.md` gains the **two-feature offset recipe** (constrain the second fit to an annulus
+  around the first feature — unrelated same-hue pixels otherwise poison it); a built-in
+  `--track-color` is deferred → IMPROVEMENTS.
+
+### Fixed (video-bug-analyzer → 1.9.0, #85 review nit)
+- `--palette --segments N` **without** `--over-time` now errors with the correct invocation instead
+  of silently ignoring `--segments` (the wrong-mode footgun from the other direction).
+
+### Added (repo-bootstrap → 1.9.0, kevin-website field report)
+- **Default-branch normalization.** The standard assumes `main` (the workflow says "Update `main`
+  first"), but a fresh `git init` can leave a repo on `master` — and the standard silently never
+  engages. `--portka-standard` now renames the branch to `main` when it can't break anything (an
+  unborn branch, or a repo with no remote), prints the exact migration commands when a remote
+  exists (`git branch -m` + `git push -u` + `gh repo edit --default-branch main`), and hints
+  `git init -b main` for a non-git dir. Dry-run aware.
+
+### Changed (feedback form, #92)
+- The **Plugin feedback** dropdown gains *"multiple plugins / cross-cutting"* so a field report
+  spanning plugins doesn't have to mis-file under one (the form's one-plugin limit was itself the
+  #92 meta-feedback). The form-sync test knows both escape options.
+
+### Tests
+- New coverage: the fully-scored #90 fixture (no unbound error, unstarred grade); filtered-proxy
+  INFO downgrade + header-recipe hint; the `--url --html` hybrid; input-combo guards; the VFR
+  240-timebase banner (with the #83 120 Hz contract still asserted); the `--stutter` verdict-first
+  ordering; `--freeze-min` (raises threshold, rejects non-numbers); the `--segments` guard; and
+  branch normalization (unborn `master` renamed; pushed `master` untouched + exact commands).
+  Suite: 227 passed, 0 failed, 1 skipped.
+
 ## [1.8.0] - 2026-07-10
 
 Triage of #85 — `video-bug-analyzer` as an art/aesthetic-reference tool (mining a library of animated

@@ -259,9 +259,9 @@ for ln in open(form).read().splitlines():
         elif s:               # a non-list line (e.g. validations:) ends the options block
             break
 assert opts, "no `plugin` dropdown options found in the feedback form"
-ESCAPE = {"other / not sure"}
+ESCAPE = {"other / not sure", "multiple plugins / cross-cutting"}   # cross-cutting reports (#92)
 listed = set(opts) - ESCAPE
-assert ESCAPE <= set(opts), "feedback form is missing the 'other / not sure' escape option"
+assert ESCAPE <= set(opts), "feedback form is missing an escape option (other / multiple plugins)"
 assert listed == plugins, (
     f"feedback form plugin dropdown {sorted(listed)} != marketplace plugins {sorted(plugins)} "
     "— update .github/ISSUE_TEMPLATE/plugin-feedback.yml")
@@ -760,8 +760,40 @@ if command -v ffmpeg >/dev/null 2>&1; then
       else
         skip "could not build an early-freeze clip (--cadence #70 review)"
       fi
+      # 1.9.0 (#89): the report leads with a one-line verdict (worst freeze first — the most
+      # actionable number); --freeze-min raises the freeze-gap threshold and rejects non-numbers.
+      if ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=s=160x120:r=25:d=1" \
+           -f lavfi -i "color=blue:s=160x120:r=25:d=1" -f lavfi -i "testsrc=s=160x120:r=25:d=1" \
+           -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1[v]" -map "[v]" "$tmp/vfreeze.mp4" -y 2>/dev/null; then
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --stutter 2>"$tmp/vd.err" >/dev/null || true
+        _vline="$(grep -n 'verdict:' "$tmp/vd.err" | head -1 | cut -d: -f1)"
+        _sline="$(grep -n 'Stutter (cadence):' "$tmp/vd.err" | head -1 | cut -d: -f1)"
+        if [[ -n "$_vline" && -n "$_sline" && "$_vline" -lt "$_sline" ]] \
+           && grep -q 'verdict: .*ms freeze @' "$tmp/vd.err"; then
+          pass "--stutter leads with a verdict line (worst freeze first) (#89)"
+        else
+          fail "--stutter verdict line missing/misplaced (#89)"
+        fi
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --stutter --freeze-min 2.0 2>"$tmp/fm.err" >/dev/null || true
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --stutter --freeze-min banana >/dev/null 2>&1; _fmrc=$?
+        if grep -q 'No sustained freeze gaps (>= 2.0s)' "$tmp/fm.err" && [[ "$_fmrc" -eq 2 ]]; then
+          pass "--freeze-min raises the freeze threshold and rejects non-numeric values (#89)"
+        else
+          fail "--freeze-min knob wrong (rc=$_fmrc)"
+        fi
+      else
+        skip "could not build a freeze clip (--stutter verdict #89)"
+      fi
     else
       skip "could not build a cadence test clip (--cadence)"
+    fi
+    # 1.9.0 (#85 review): --palette --segments without --over-time errors instead of silently
+    # ignoring --segments (the wrong-mode footgun from the other direction).
+    bash "$SCRIPT" --video "$clip" --palette --segments 8 >/dev/null 2>&1; _sgrc=$?
+    if [[ "$_sgrc" -eq 2 ]]; then
+      pass "--palette --segments without --over-time is rejected, not silently ignored (#85 review)"
+    else
+      fail "--segments-without---over-time guard missing (rc=$_sgrc, want 2)"
     fi
     # --stack (1.3.0, #62): crop a band and tile it vertically across time -> stack_0001.png.
     if bash "$SCRIPT" --video "$clip" --stack --crop 80:40:0:0 --fps 4 --out "$tmp/stk" >/dev/null 2>&1 \
@@ -1000,6 +1032,15 @@ FP
     else
       fail "smoothness high-refresh (#83) classification wrong (hi='$_hi' jk='$_jk')"
     fi
+    # 1.9.0 (#89): a VFR macOS capture (r_frame_rate 240/1 timebase, ~47 fps effective — NOT near
+    # 30/60) must read as "timebase, not a target", never "likely choppy"; a real 60Hz shortfall
+    # keeps its warning (asserted above with _jk).
+    _vfr="$(PATH="$_fpbin:$PATH" FAKE_RFR=240/1 FAKE_AFR=473/10 bash "$SCRIPT" --video "$tmp/hi.mp4" --start 0 --end 1 --fps 2 --out "$tmp/vfr.out" 2>&1 >/dev/null || true)"
+    if grep -q 'container timebase, not a target' <<<"$_vfr" && ! grep -q 'likely choppy' <<<"$_vfr"; then
+      pass "smoothness: VFR capture (240 timebase, ~47fps) isn't called choppy (#89)"
+    else
+      fail "smoothness VFR classification wrong (#89): $_vfr"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true
@@ -1162,6 +1203,31 @@ if [[ -f "$BOOTSTRAP" ]]; then
   else
     fail "portka-standard CLAUDE.md missing merge-refused / checks-registered robustness (#86 review)"
   fi
+  # 1.9.0 (kevin-website): the standard assumes `main` — a fresh repo on `master` is normalized
+  # when safe (unborn/local-only) and gets explicit fix commands when a remote exists.
+  db1="$(mktemp -d)"; db1h="$(mktemp -d)"
+  git -C "$db1" init -q -b master 2>/dev/null || git -C "$db1" init -q
+  git -C "$db1" symbolic-ref HEAD refs/heads/master 2>/dev/null || true
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$db1" --home "$db1h" >/dev/null 2>&1
+  if [[ "$(git -C "$db1" symbolic-ref --short HEAD)" == "main" ]]; then
+    pass "portka-standard renames an unborn 'master' to 'main' (kevin-website)"
+  else
+    fail "portka-standard left a fresh repo on '$(git -C "$db1" symbolic-ref --short HEAD)'"
+  fi
+  rm -rf "$db1" "$db1h"
+  db2="$(mktemp -d)"; db2h="$(mktemp -d)"
+  git -C "$db2" init -q -b master 2>/dev/null || git -C "$db2" init -q
+  ( cd "$db2" && git config user.email t@t && git config user.name t \
+    && echo x > f && git add f && git commit -qm x && git remote add origin https://example.com/x.git )
+  _dbo="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$db2" --home "$db2h" 2>&1 || true)"
+  if [[ "$(git -C "$db2" branch --show-current)" == "master" ]] \
+     && grep -q 'git branch -m master main' <<<"$_dbo" \
+     && grep -q 'default-branch main' <<<"$_dbo"; then
+    pass "portka-standard leaves a pushed 'master' alone but prints the exact main-migration commands (kevin-website)"
+  else
+    fail "portka-standard remote-master handling wrong (branch=$(git -C "$db2" branch --show-current))"
+  fi
+  rm -rf "$db2" "$db2h"
   # Permissions merge into BOTH settings; the marketplace + plugins survive in the project one.
   if python3 - "$ps/.claude/settings.json" "$ph/.claude/settings.json" <<'PY'
 import json, sys
@@ -1590,6 +1656,63 @@ CURL
     pass "evaluate-site.sh --url flags a subpath deploy and probes host-root robots.txt (#86)"
   else
     fail "--url project-Pages subpath robots.txt caveat missing (#86)"
+  fi
+  # 1.9.0 (#90): a fully-scored run (every dimension has a scored check) must not emit
+  # "UNSCORED: unbound variable" — the array is empty-but-set now, and the grade is unstarred.
+  mkdir -p "$ev/full/.well-known"
+  cat > "$ev/full/index.html" <<'H'
+<!doctype html><html lang="en"><head>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+<meta name="viewport" content="width=device-width"><title>Full</title>
+<meta name="description" content="d"><link rel="canonical" href="https://f.dev/">
+<link rel="icon" href="/f.ico"><meta property="og:image" content="https://f.dev/og.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[]}</script>
+<img src="x.png" loading="lazy">
+</head><body><h1>f</h1></body></html>
+H
+  printf 'User-agent: *\n' > "$ev/full/robots.txt"; printf '<urlset/>' > "$ev/full/sitemap.xml"
+  printf '# llms\n' > "$ev/full/llms.txt"; printf 'Contact: mailto:x@f.dev\n' > "$ev/full/.well-known/security.txt"
+  _full="$(bash "$EVAL" --dir "$ev/full" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if ! grep -q 'unbound variable' <<<"$_full" && grep -qE 'overall [0-9]+/100 \([A-F]\)\.' <<<"$_full"; then
+    pass "evaluate-site.sh all-scored run: no unbound-variable error, unstarred full-coverage grade (#90)"
+  else
+    fail "all-scored run regressed (#90): $(grep -m1 'unbound' <<<"$_full")"
+  fi
+  # 1.9.0 (#91): behind a filtering proxy (page GET fails), origin-file probe misses downgrade to
+  # INFO "could not verify" (never FAIL), and the header-fetch recipe hint prints when headers worked.
+  _pbin="$ev/proxybin"; mkdir -p "$_pbin"
+  cat > "$_pbin/curl" <<'CURL'
+#!/usr/bin/env bash
+case "$*" in
+  *"-o /dev/null"*) echo 403 ;;
+  *-sSI*) printf 'HTTP/2 200\nstrict-transport-security: max-age=1\n' ;;
+  *) exit 22 ;;
+esac
+CURL
+  chmod +x "$_pbin/curl"
+  _px="$(PATH="$_pbin:$PATH" bash "$EVAL" --url https://blocked.example 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if grep -q 'robots.txt: could not verify' <<<"$_px" \
+     && ! grep -q 'FAIL  robots.txt missing' <<<"$_px" \
+     && grep -q 'reuse it offline' <<<"$_px"; then
+    pass "evaluate-site.sh --url behind a filter: probe misses are INFO not FAIL + header recipe hint (#91)"
+  else
+    fail "--url filtered-network downgrade / header hint missing (#91)"
+  fi
+  # 1.9.0 (#91): hybrid --url + --html scores the provided HTML while running live probes.
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><meta property=og:image content=z><link rel=canonical href=c></head><body><h1>h</h1></body></html>\n' > "$ev/hy.html"
+  _hy="$(PATH="$_pbin:$PATH" bash "$EVAL" --url https://blocked.example --html "$ev/hy.html" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if grep -q 'hybrid mode' <<<"$_hy" && grep -q 'meta description present' <<<"$_hy" \
+     && grep -q 'HSTS header set' <<<"$_hy"; then
+    pass "evaluate-site.sh --url --html hybrid: provided HTML + live header probes in one card (#91)"
+  else
+    fail "hybrid --url --html mode not as expected (#91)"
+  fi
+  bash "$EVAL" --url http://x --dir . >/dev/null 2>&1; _g1=$?
+  bash "$EVAL" --url http://x --html "$ev/hy.html" --headers h.txt >/dev/null 2>&1; _g2=$?
+  if [[ "$_g1" -eq 2 && "$_g2" -eq 2 ]]; then
+    pass "evaluate-site.sh rejects --url+--dir and --url+--headers combos (#91)"
+  else
+    fail "input-combo guards wrong (url+dir=$_g1 url+headers=$_g2, want 2/2)"
   fi
   rm -rf "$ev"
 else

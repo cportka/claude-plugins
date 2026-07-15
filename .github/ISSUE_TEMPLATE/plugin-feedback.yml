@@ -9,18 +9,20 @@ body:
         Thanks for the feedback! The more concrete the detail, the faster it turns into a fix.
         For ffmpeg problems (video-bug-analyzer), please paste the `ffmpeg: ...` line the
         extractor prints at start.
-  # NOTE: the options below (minus "other / not sure") must match the plugins in
+  # NOTE: the options below (minus the two escape options at the end) must match the plugins in
   # .claude-plugin/marketplace.json — a test in tests/run-tests.sh enforces this, so adding a
   # plugin without updating this list fails CI. Keep them in marketplace order.
   - type: dropdown
     id: plugin
     attributes:
       label: Plugin
+      description: Cross-cutting report? Pick "multiple plugins" and name them in the summary/body (#92).
       options:
         - video-bug-analyzer
         - repo-bootstrap
         - app-website-evaluator
         - tab-chord-formatter
+        - multiple plugins / cross-cutting
         - other / not sure
     validations:
       required: true

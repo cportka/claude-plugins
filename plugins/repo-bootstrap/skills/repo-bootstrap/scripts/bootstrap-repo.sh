@@ -458,6 +458,33 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
     both) WANT_USER="1"; WANT_PROJECT="1" ;;
   esac
 
+  # Default-branch normalization (1.9.0, kevin-website field report): the standard assumes `main`
+  # (the workflow CLAUDE.md says "Update main first"; PRs merge to main), but a fresh `git init`
+  # can default to `master` — and then the standard silently never engages. Rename when it can't
+  # break anything (unborn branch, or no remote); otherwise print the exact fix.
+  if git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    _cur_branch="$(git -C "$DIR" symbolic-ref --short HEAD 2>/dev/null || true)"
+    if [[ -n "$_cur_branch" && "$_cur_branch" != "main" ]]; then
+      if [[ -n "$NO_WRITE" ]]; then
+        echo "[dry-run] repo is on '$_cur_branch', not 'main' — would rename it (unborn/local-only) or print the fix commands"
+      elif ! git -C "$DIR" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+        git -C "$DIR" symbolic-ref HEAD refs/heads/main
+        echo "Renamed the unborn branch '$_cur_branch' -> 'main' (the standard's default branch)."
+      elif [[ -z "$(git -C "$DIR" remote 2>/dev/null)" ]]; then
+        git -C "$DIR" branch -m "$_cur_branch" main
+        echo "Renamed local branch '$_cur_branch' -> 'main' (the standard's default branch; no remote yet)."
+      else
+        echo "NOTE: this repo is on '$_cur_branch', but the Portka standard workflow assumes 'main'." >&2
+        echo "      Fix (safe order):" >&2
+        echo "        git branch -m $_cur_branch main && git push -u origin main" >&2
+        echo "        gh repo edit --default-branch main   # or GitHub Settings -> General -> Default branch" >&2
+        echo "        git push origin --delete $_cur_branch  # after the default flips" >&2
+      fi
+    fi
+  else
+    echo "NOTE: $DIR isn't a git repo yet — init it with 'git init -b main' (the standard assumes 'main')." >&2
+  fi
+
   # STD_PERMS_JSON, STD_CLAUDE_BLOCK, BEGIN_MARK and END_MARK are defined once near the top (so
   # --print-only can reuse the same content); this block just writes them.
 

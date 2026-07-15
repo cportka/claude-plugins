@@ -1,6 +1,6 @@
 {
   "name": "video-bug-analyzer",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Diagnose UI and rendering bugs from a screen recording — and, more broadly, reason over any clip's look + motion. Give Claude a video and roughly when the bug happens; the plugin extracts frames — an overview contact sheet, scene-cut detection, per-timestamp zoom with before/after strips, or an ROI time-stack (--stack) — then reasons over them to pinpoint the defect. Quantifies FPS stutter / dropped frames and freeze gaps (--stutter) and frame-pacing jitter (--pacing). Doubles as an art/aesthetic-reference tool: --palette pulls a clip's dominant hex ramp, --palette --over-time emits the colour *arc* (t,[hex...] per window) so a loop's colour journey is visible, and --loop-check reports the first-vs-last-frame seam diff (+ a strip) for a seamless loop; GIF input works on every mode. Runs never overwrite a previous extraction, and --check-update compares the installed version against the marketplace. Strong on persistent visual bugs, honest about flicker, timing, and off-screen state. Requires ffmpeg (auto-installs where the sandbox allows).",
   "author": {
     "name": "Chris Portka"
@@ -8,5 +8,15 @@
   "homepage": "https://github.com/cportka/claude-plugins/tree/main/plugins/video-bug-analyzer",
   "repository": "https://github.com/cportka/claude-plugins",
   "license": "MIT",
-  "keywords": ["video", "bug", "screen-recording", "debugging", "claude-code-plugin", "ffmpeg", "frames", "contact-sheet", "portka-tools"]
+  "keywords": [
+    "video",
+    "bug",
+    "screen-recording",
+    "debugging",
+    "claude-code-plugin",
+    "ffmpeg",
+    "frames",
+    "contact-sheet",
+    "portka-tools"
+  ]
 }

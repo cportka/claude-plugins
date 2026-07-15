@@ -115,6 +115,16 @@ columns are dpr-independent. This is the tool for "splash core ≈ 12% vs real s
 measurements; for a two-feature comparison, measure each and compare the percentages (or stitch
 the frames with `--strip`).
 
+**Two-feature relative offset (recipe, #89):** "is the selection ring centered on the body?" needs
+the offset *between two features in the same frame* — beyond `--measure`'s single thresholded
+feature. The working recipe (from a real session that found a 20–70 px lensing drift): extract
+full-res frames, locate feature A with `--measure` (or a centroid of its luma class), then fit
+feature B (e.g. a hue-filtered circle fit) and subtract centers. **The trap:** a naive hue filter
+ingests *unrelated same-hue pixels* (lensed background-star arcs, UI accents) and the fit returns
+garbage — **constrain the second fit to an annulus around the first feature's center** (inner/outer
+radius bracketing where B can legitimately be) before fitting. A built-in `--track-color` mode is on
+the roadmap (IMPROVEMENTS.md); until then this recipe composes with `--measure` output.
+
 **Palette / dominant colours (`--palette`):** print the clip's dominant colours as a hex swatch
 list (`#rrggbb  rgb(r,g,b)`), `--colors <n>` for how many (default 8). When a clip is an
 *art-direction reference*, the palette is part of the deliverable — read the exact ring/flash

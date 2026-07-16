@@ -145,6 +145,12 @@
 #                       freeze-gap threshold (default 0.1 — raise to 0.2 to mute ~100ms VFR noise);
 #                       honors --start/--end. Measures UNIQUE-content cadence, so a static scene
 #                       also reads low. (ffmpeg mpdecimate + freezedetect + ffprobe; python3.)
+#   --marks <file>      (with --stutter) Correlate the app's own instrumentation with the freeze
+#                       timeline: a JSON array of performance.mark-style entries
+#                       [{"name":"fullCompile","tMs":2000,"durMs":330}, ...] (times in ms, video
+#                       clock). The verdict and each freeze-gap line note the best-aligned mark —
+#                       "freeze 970 ms @2.10s — aligns with mark 'fullCompile' (starts 2.00s,
+#                       330 ms)" — collapsing the diagnose-verify loop to one read. (1.10.0, #94.)
 #   --pacing            Frame-PACING timeline (a from-scratch counterpart to --cadence): read the
 #                       actual per-frame presentation timestamps and print t,interval_ms — the time
 #                       between consecutive DISPLAYED frames. Catches uneven timing / jank / VFR / a
@@ -232,7 +238,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.9.0"
+VBA_VERSION="1.10.0"
 
 VIDEO=""
 START=""
@@ -291,6 +297,7 @@ OVER_TIME=""   # --over-time: with --palette, emit a per-window colour arc (t,[h
 SEGMENTS=""    # --segments N: how many time windows --palette --over-time samples (default 8)
 LOOP_CHECK=""  # --loop-check: compare frame@0 vs frame@last (seam diff + strip) for a loop (1.8.0, #85)
 FREEZE_MIN="0.1" # --freeze-min <sec>: min frozen span --stutter reports as a freeze gap (1.9.0, #89)
+MARKS=""       # --marks <file>: app performance.mark JSON to correlate with freezes (1.10.0, #94)
 FPS_SET=""     # track whether --fps was passed (so presets don't override it)
 
 usage() {
@@ -475,6 +482,7 @@ while [[ $# -gt 0 ]]; do
     --cadence) CADENCE=1; shift ;;                    # frame-cadence timeline
     --stutter|--fps-drops) CADENCE=1; shift ;;       # ADDED (1.1.2, #56): aliases for --cadence
     --freeze-min) FREEZE_MIN="${2:-}"; shift 2 ;;    # ADDED (1.9.0, #89): freeze-gap threshold (sec)
+    --marks) MARKS="${2:-}"; shift 2 ;;              # ADDED (1.10.0, #94): perf-mark sidecar JSON
     --motion) MOTION=1; shift ;;                      # inter-frame motion timeline
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
     --intro) INTRO=1; shift ;;                        # first-seconds load preset
@@ -560,6 +568,11 @@ fi
 # wrong-mode footgun from the other direction (#85 review). Say so instead of dropping the intent.
 if [[ -n "$SEGMENTS" && -n "$PALETTE" && -z "$OVER_TIME" ]]; then
   echo "Error: --segments needs --over-time (did you mean: --palette --over-time --segments $SEGMENTS?)." >&2
+  exit 2
+fi
+# --marks correlates app instrumentation with the stutter timeline — only --stutter/--cadence reads it (#94).
+if [[ -n "$MARKS" && -z "$CADENCE" ]]; then
+  echo "Error: --marks only applies to --stutter/--cadence (the freeze/jank timeline it annotates)." >&2
   exit 2
 fi
 
@@ -1063,40 +1076,18 @@ run_palette() {
     exit 2
   fi
   local d; d="$(mktemp -d)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v 1 "$d/palette.ppm" >/dev/null 2>&1 || true
-  python3 - "$d/palette.ppm" "$COLORS" <<'PY'
-import sys
-p, k = sys.argv[1], int(sys.argv[2])
-try:
-    data = open(p, 'rb').read()
-except OSError:
-    sys.exit(0)
-if data[:2] != b'P6':
-    sys.exit(0)
-i=2; vals=[]
-while len(vals) < 3:                          # parse width, height, maxval (skip ws/comments)
-    while i < len(data) and data[i:i+1].isspace(): i+=1
-    if data[i:i+1] == b'#':
-        while i < len(data) and data[i:i+1] != b'\n': i+=1
-        continue
-    j=i
-    while j < len(data) and not data[j:j+1].isspace(): j+=1
-    vals.append(int(data[i:j])); i=j
-w,h,_mx = vals; i+=1
-px = data[i:i+w*h*3]
-seen=[]; s=set()
-for o in range(0, len(px), 3):                 # unique colours, first-seen order
-    c=(px[o], px[o+1], px[o+2])
-    if c not in s:
-        s.add(c); seen.append(c)
-for (r,g,b) in seen[:k]:
-    print("#%02x%02x%02x  rgb(%d,%d,%d)" % (r,g,b,r,g,b))
-PY
+  ffmpeg -y -nostdin -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v 1 "$d/palette.ppm" >/dev/null 2>&1 || true
+  # Read swatches via _ppm_hexes (the single hardened parser: 16-bit PPMs, truncated headers — #85
+  # review), then expand each hex to the documented `#rrggbb  rgb(r,g,b)` line format here.
+  local _hexes _h
+  _hexes="$(_ppm_hexes "$d/palette.ppm" "$COLORS")"
+  for _h in $_hexes; do
+    printf '%s  rgb(%d,%d,%d)\n' "$_h" "$((16#${_h:1:2}))" "$((16#${_h:3:2}))" "$((16#${_h:5:2}))"
+  done
   rm -rf "$d"
   echo "Palette: up to ${COLORS} dominant colours${START:+ from ${START}}${END:+ to ${END}} (sampled at ${FPS} fps)." >&2
 }
 
-# read up to k dominant colours from a P6 PPM as space-joined #rrggbb (empty if unreadable).
 # Duration of the VIDEO stream. NOT format=duration — that's the longest stream, and an audio track
 # can outlast the video, sending a tail seek into an audio-only region (no frame -> false errors).
 # Falls back to the format duration only when the stream duration is unavailable (#85 review).
@@ -1295,6 +1286,10 @@ PY
   fi
   local mad_abs mad_pct dims verdict
   IFS=$'\t' read -r mad_abs mad_pct dims <<<"$mad"
+  # Verdict bands are empirical, not principled: <1% absorbs codec/I-vs-P quantization noise on a
+  # genuinely identical wrap; >=4% was a clearly visible seam on the #85 test loops. A *localized*
+  # seam can hide under a low global mean — read the strip, not just the number. Docs quote these
+  # bands (reference.md, CHANGELOG 1.8.0) — change all three together.
   if awk -v p="$mad_pct" 'BEGIN{exit !(p<1.0)}'; then verdict="loops cleanly (first ~= last)"
   elif awk -v p="$mad_pct" 'BEGIN{exit !(p<4.0)}'; then verdict="near-seamless (small first/last drift)"
   else verdict="seam visible — the last frame differs from the first"; fi
@@ -1372,6 +1367,7 @@ run_cadence() {
     echo "# + ffprobe r_frame_rate/avg_frame_rate; bucket unique-frame pts_time into --window bins"
     echo "# -> CSV t,unique_frames,fps; headline verdict (worst freeze first) + choppiest windows"
     echo "# + ffmpeg -vf freezedetect=d=${FREEZE_MIN} -> longest frozen spans (freeze gaps, #56; --freeze-min tunes)"
+    [[ -n "$MARKS" ]] && echo "# + overlay app perf marks from ${MARKS} on the freeze timeline (--marks, #94)"
     return 0
   fi
   if ! command -v python3 >/dev/null 2>&1; then
@@ -1379,6 +1375,17 @@ run_cadence() {
     exit 2
   fi
   local base; base="$(to_seconds "${START:-0}")"
+  # --marks sidecar (1.10.0, #94): app performance.mark JSON ([{name,tMs,durMs?},...]) to correlate
+  # with the freeze timeline — validate up front so a bad file is a clean exit 2, not broken output.
+  if [[ -n "$MARKS" ]]; then
+    [[ -f "$MARKS" ]] || { echo "Error: --marks file not found: $MARKS" >&2; exit 2; }
+    if ! python3 -c 'import json,sys
+d=json.load(open(sys.argv[1]))
+assert isinstance(d,list) and all(isinstance(m,dict) and "name" in m and "tMs" in m for m in d)' "$MARKS" 2>/dev/null; then
+      echo "Error: --marks must be a JSON array of {name, tMs, durMs?} objects (times in ms): $MARKS" >&2
+      exit 2
+    fi
+  fi
   # Freeze-gap pass FIRST (#89): the worst freeze is the most actionable single number, so it now
   # leads the report as a one-line verdict instead of living at the bottom.
   local fd; fd="$(ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "freezedetect=d=${FREEZE_MIN}" -an -f null - 2>&1 || true)"
@@ -1388,13 +1395,14 @@ run_cadence() {
   ' | sort -t"$(printf '\t')" -k2 -nr)"
   local worst_gs="0" worst_gd="0"
   if [[ -n "$gaps" ]]; then IFS="$(printf '\t')" read -r worst_gs worst_gd <<<"$(head -1 <<<"$gaps")"; fi
+  local gf; gf="$(mktemp)"; printf '%s\n' "$gaps" > "$gf"
   # mpdecimate drops near-duplicate frames; showinfo logs the surviving (unique) frames' times.
   # Write them to a temp file and pass its PATH to python — a `python3 - <<'PY'` heredoc already
   # uses stdin for the program, so the frame times can't also come in on stdin.
   local tf; tf="$(mktemp)"
   ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "mpdecimate,showinfo" -an -f null - 2>&1 \
     | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' > "$tf" || true
-  python3 - "${WINDOW}" "$base" "${rfr:-0}" "${afr:-0}" "${dur:-0}" "$tf" "${START:+1}${END:+1}" "$worst_gs" "$worst_gd" <<'PY'
+  python3 - "${WINDOW}" "$base" "${rfr:-0}" "${afr:-0}" "${dur:-0}" "$tf" "${START:+1}${END:+1}" "$worst_gs" "$worst_gd" "$gf" "$MARKS" "$FREEZE_MIN" <<'PY'
 import sys, math
 window=float(sys.argv[1]) or 0.5
 base=float(sys.argv[2])
@@ -1450,12 +1458,38 @@ e=sys.stderr
 worst_gs=float(sys.argv[8]) if len(sys.argv)>8 and sys.argv[8] else 0.0
 worst_gd=float(sys.argv[9]) if len(sys.argv)>9 and sys.argv[9] else 0.0
 worst_ms=worst_gd*1000
+# --marks sidecar (1.10.0, #94): app performance.mark entries ({name,tMs,durMs?}, ms -> s). A mark
+# "aligns" with a freeze if its span overlaps the freeze span, or it starts within 0.5s before the
+# freeze (a compile that kicks off just before the frames stop). Best = most overlap, then nearest.
+import json
+marks=[]
+marks_path=sys.argv[11] if len(sys.argv)>11 else ""
+if marks_path:
+    for m in json.load(open(marks_path)):
+        t=float(m["tMs"])/1000.0; d=float(m.get("durMs") or 0)/1000.0
+        marks.append((m["name"], t, d))
+def aligned_mark(gs, gd):
+    best=None; best_key=(-1.0, float("inf"))
+    for (name, t, d) in marks:
+        overlap=min(gs+gd, t+d)-max(gs, t)
+        near=(t <= gs and gs-(t+d) <= 0.5)          # starts before, ends within 0.5s of the freeze
+        if overlap > 0 or near:
+            key=(overlap, abs(t-gs))
+            if key[0] > best_key[0] or (key[0]==best_key[0] and key[1] < best_key[1]):
+                best=(name, t, d); best_key=key
+    return best
+def mark_note(gs, gd):
+    m=aligned_mark(gs, gd)
+    if not m: return ""
+    name, t, d = m
+    return " — aligns with mark '%s' (starts %.2fs, %.0f ms)" % (name, t, d*1000) if d>0 \
+        else " — aligns with mark '%s' (@%.2fs)" % (name, t)
 content=rows[lead_dead:] if rows else []
 cfps=sorted(r[2] for r in content)
 med=cfps[len(cfps)//2] if cfps else 0.0
 low=cfps[0] if cfps else 0.0
 if worst_ms >= 500:
-    verdict="%.0f ms freeze @%.2fs; ~%.0f fps median otherwise" % (worst_ms, worst_gs, med)
+    verdict="%.0f ms freeze @%.2fs%s; ~%.0f fps median otherwise" % (worst_ms, worst_gs, mark_note(worst_gs, worst_gd), med)
 elif med>0 and low < 0.5*med:
     verdict="uneven — median ~%.0f fps, dips to ~%.0f fps; worst freeze %.0f ms" % (med, low, worst_ms)
 elif worst_ms>0:
@@ -1463,6 +1497,8 @@ elif worst_ms>0:
 else:
     verdict="steady ~%.0f fps, no sustained freezes" % med
 e.write("verdict: %s\n" % verdict)
+if marks:
+    e.write("(%d app marks loaded from %s — freeze gaps below are annotated where one aligns)\n" % (len(marks), marks_path))
 vfr_note=" (VFR capture: nominal is the container timebase, not a target — #89)" if nominal>=200 else ""
 e.write("Stutter (cadence): nominal %.2f fps (r_frame_rate)%s; container avg %.2f fps; unique %.2f fps over %.2fs (%d unique frames).\n"
         % (nominal, vfr_note, avg, eff, span, uniq))
@@ -1481,18 +1517,24 @@ if nominal>0 and eff>0 and eff < 0.85*nominal:
         e.write("(Whole clip scanned - pre-roll like URL-bar typing can rank here; re-run with --start/--end to scope to the suspect window.)\n")
 else:
     e.write("Cadence looks steady (effective near nominal).\n")
+# Freeze-gap detail (issue #56; the pass ran up top so the verdict could lead with the worst gap).
+# Printed here (1.10.0, #94) so each line can carry its aligned-mark annotation.
+fm=sys.argv[12] if len(sys.argv)>12 else "0.1"
+gap_rows=[]
+if len(sys.argv)>10 and sys.argv[10]:
+    for ln in open(sys.argv[10]):
+        parts=ln.split()
+        if len(parts)>=2:
+            try: gap_rows.append((float(parts[0]), float(parts[1])))
+            except ValueError: pass
+if gap_rows:
+    e.write("Freeze gaps (frame unchanged >= %ss — tune with --freeze-min; longest first):\n" % fm)
+    for gs, gd in gap_rows[:3]:
+        e.write("  @%.2fs frozen for %d ms%s\n" % (gs, gd*1000, mark_note(gs, gd)))
+else:
+    e.write("No sustained freeze gaps (>= %ss) detected — tune with --freeze-min.\n" % fm)
 PY
-  # Freeze-gap detail (issue #56; the pass itself ran up top so the verdict could lead with the
-  # worst gap): sustained frozen spans as start+duration, complementing the windowed fps above.
-  if [[ -n "$gaps" ]]; then
-    echo "Freeze gaps (frame unchanged >= ${FREEZE_MIN}s — tune with --freeze-min; longest first):" >&2
-    printf '%s\n' "$gaps" | head -3 | while IFS="$(printf '\t')" read -r gs gd; do
-      awk -v s="$gs" -v d="$gd" 'BEGIN{ printf "  @%.2fs frozen for %d ms\n", s, d*1000 }' >&2
-    done
-  else
-    echo "No sustained freeze gaps (>= ${FREEZE_MIN}s) detected — tune with --freeze-min." >&2
-  fi
-  rm -f "$tf"
+  rm -f "$tf" "$gf"
 }
 
 # frame-PACING timeline (1.2.0) — a from-scratch mode distinct from --cadence. --cadence counts
@@ -2116,7 +2158,10 @@ if [[ -n "$TIMESTAMPS" ]]; then
     # Before/after strip from the first and last frame of the burst. (Skipped in --dry-run,
     # since it depends on the frames the burst above would have written.)
     [[ -n "$DRY_RUN" ]] && continue
-    mapfile -t _f < <(find "$OUT" -maxdepth 1 -type f -name "ts${idx}_[0-9]*.png" | sort)
+    # while-read, not mapfile: this script must run on macOS system bash 3.2 (mapfile is bash 4+),
+    # and this was its only bash-4 construct (handoff review).
+    _f=()
+    while IFS= read -r _fp; do _f+=("$_fp"); done < <(find "$OUT" -maxdepth 1 -type f -name "ts${idx}_[0-9]*.png" | sort)
     if (( ${#_f[@]} >= 2 )); then
       run_ff -hide_banner -loglevel error \
         -i "${_f[0]}" -i "${_f[$(( ${#_f[@]} - 1 ))]}" \

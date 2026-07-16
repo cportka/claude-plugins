@@ -74,9 +74,12 @@ Boosts discoverability (Settings / the repo sidebar):
 Get the plugins listed where Claude Code users browse:
 1. Read the current submission process at **https://code.claude.com/docs** (plugins /
    marketplaces section) — it has evolved, so follow the live docs rather than a cached process.
-2. Typically: ensure `.claude-plugin/marketplace.json` is valid (it is — CI validates it), then
-   open a PR/issue to the community marketplace registry pointing at `cportka/claude-plugins`, or
-   submit via the documented form. Include the Pages URL and a one-line pitch per plugin.
+2. Submit **via the form only** (platform.claude.com → plugins → submit): one submission per
+   PLUGIN, with the "Link to plugin" being the subdirectory URL
+   `github.com/cportka/claude-plugins/tree/main/plugins/<name>`. Do NOT open a PR/issue on
+   `anthropics/claude-plugins-community` — it's a read-only mirror that auto-closes PRs. Once
+   approved, the catalog pins a commit SHA but re-syncs from `main` nightly, so later releases
+   flow out on their own. (All four plugins were submitted 2026-07; check status on the platform.)
 3. After listing, verify a clean install end-to-end:
    ```
    /plugin marketplace add cportka/claude-plugins

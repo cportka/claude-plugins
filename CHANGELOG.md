@@ -5,6 +5,64 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.10.0] - 2026-07-16
+
+The handoff release: triage of #94 plus a whole-repo handoff-readiness review (a multi-agent pass
+over every plugin, the suite, CI, and docs — findings verified against the code before applying).
+**All four plugins → 1.10.0.** MINOR: one new feature, three real bug fixes the review surfaced,
+and comment/test/doc tightening throughout.
+
+### Added (video-bug-analyzer → 1.10.0, #94)
+- **`--marks <file>` — correlate the app's own instrumentation with the freeze timeline.** The one
+  manual step left in every real triage round was matching analyzer-detected freezes against the
+  app's `performance.mark` data by hand. `--stutter --marks perf.json` takes a JSON array of
+  `{name, tMs, durMs?}` entries (ms, video clock) and annotates both the verdict and each freeze-gap
+  line with the best-aligned mark — *"1000 ms freeze @1.00s — aligns with mark 'fullCompile'
+  (starts 0.95s, 330 ms)"* — collapsing the diagnose-verify loop to a single read. A mark aligns
+  when its span overlaps the freeze or ends within 0.5s of its start; best = most overlap, then
+  nearest. Malformed/missing sidecars are a clean exit 2; `--marks` without `--stutter` errors.
+
+### Fixed (handoff review — real bugs it surfaced)
+- **tab-chord-formatter: the paste-from-web tag strip ate `<12>` guitar harmonic notation** (any
+  `<...>` was treated as HTML). Tag names must start with a letter — harmonics now survive, real
+  HTML still strips.
+- **tab-chord-formatter: the documented form-feed songbook separator never worked in the print
+  pipeline** — cleanup's `rstrip()` ate the lone `\f` (form feed is whitespace to Python) before
+  `split_songs` ran, so a two-song book rendered as one. Preserved now; also `--mode` typos error
+  instead of silently switching modes, and the duplicate `("prechorus", "prechorus")` literal is
+  gone.
+- **video-bug-analyzer: `run_palette` still used a stale pre-1.8.0 PPM parser** (no 16-bit
+  handling — a 10-bit source printed garbage hexes). Deduplicated onto the hardened `_ppm_hexes`;
+  output format unchanged.
+- **Portability:** the last `mapfile` in each of `extract-frames.sh` and `bootstrap-repo.sh`
+  replaced with `while read` (macOS system bash is 3.2), and the evaluator's `<title>` extraction
+  no longer uses sed's GNU-only `I` flag (BSD sed errored).
+
+### Changed (CI)
+- **`validate.yml`'s `push` trigger is restricted to `main`.** An unrestricted `push:` ran every
+  PR twice (both events) and made `version-bump-guard`'s push-event base (`HEAD^`) go red on any
+  multi-commit PR whose later commit touched a plugin without re-bumping — the false positive that
+  forced branch squashing. PR branches now run once (the thorough diff-vs-base check); pushes to
+  `main` keep post-merge validation.
+
+### Added (repo)
+- **[docs/HANDOFF.md](./docs/HANDOFF.md)** — the read-this-first maintainer handoff: what the repo
+  is, how work flows (the Portka standard), the versioning invariant and where it's enforced, test
+  conventions, the sharp edges (Pages flakes, the egress proxy, bash 3.2/`set -u` array gotchas,
+  the ffmpeg subtleties), and the state at handoff.
+- Why-comments at every spot the review flagged as session-history-only knowledge: the evaluator's
+  `weight_for`↔`sec` byte-match contract (now also CI-enforced by a test), the suite's deliberate
+  no-`set -e` and the bash-3.2 exit-0 guard, `--loop-check`'s verdict bands, bootstrap's twin
+  `detect_version` implementations, `NO_WRITE` vs `DRY_RUN` convention, the `VBA_MARKETPLACE_JSON`
+  name, and the title-regex looseness in the tab formatter. The suite header now describes the
+  whole suite; the dogfood gate fails (not vanishes) if the evaluator moves.
+
+### Tests
+- New coverage: `--marks` alignment (right mark chosen, unrelated one ignored; guards); the
+  form-feed songbook split; `<12>` harmonic preservation; `--no-dedent` + `--mode` validation;
+  `--auto-update`'s merge invariant; `--scope user` scoping; and the evaluator label↔weight sync.
+  Suite: 234 passed, 0 failed, 1 skipped.
+
 ## [1.9.0] - 2026-07-15
 
 Triage of four field reports (#89, #90, #91, #92 + the kevin-website default-branch finding) and one

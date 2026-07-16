@@ -167,8 +167,11 @@ the known gap a future `--align-on scene`/`--t0` would close.
 
 **Smoothness header (automatic):** every real run prints one line — `smoothness: effective <avg>
 fps vs nominal <r> fps` and, when the average trails the nominal rate, a `~N% frames
-dropped/duplicated` estimate. It's the single quickest "is it choppy?" read (one `ffprobe` call,
-on by default); `--cadence` and `--motion` localize *when/where*.
+dropped/duplicated` estimate. Two carve-outs keep it honest: ~30/60 fps content on a ≥90 Hz
+capture is named as expected frame duplication, not choppiness (#83), and a nominal ≥ 200 (a VFR
+timebase — macOS records `r_frame_rate` 240/1) is flagged as "a timebase, not a target" (#89).
+It's the single quickest "is it choppy?" read (one `ffprobe` call, on by default); `--stutter`
+and `--motion` localize *when/where*.
 
 **Cadence / stutter timeline (`--cadence`):** localizes choppiness in time. It reports the
 container's nominal rate (`r_frame_rate`) vs its real average (`avg_frame_rate`) — a large gap

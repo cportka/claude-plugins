@@ -64,8 +64,8 @@ security, and performance hints, then a **standardized Scorecard**: each dimensi
 **0–100** (PASS=1, WARN=0.5, FAIL=0; INFO unscored) with a **letter grade** (A ≥90, B ≥80, C ≥70,
 D ≥60, F <60), and a **weight-averaged overall** grade (starred when part of the weight is
 unassessed). Add **`--json`** for a machine-readable scorecard (stdout; human report → stderr). It
-needs `curl` for `--url` (degrades to base checks if absent) and only `grep`/`sed`/`python3` for
-`--dir` / `--html`. **Security scores even off the network:** live HTTPS + response headers need
+needs `curl` for `--url` (a clean error points you at `--dir`/`--html` if it's missing) and only
+`grep`/`sed`/`python3` for `--dir` / `--html`. **Security scores even off the network:** live HTTPS + response headers need
 `--url` (or `--html --headers`), but source-visible controls — a `<meta http-equiv>` CSP, a shipped
 `security.txt`, and zero third-party `<script>` origins — are credited in every mode, so Security
 isn't a blanket `n/a` for a static build. Don't stop at the script: read `robots.txt`, the sitemap,

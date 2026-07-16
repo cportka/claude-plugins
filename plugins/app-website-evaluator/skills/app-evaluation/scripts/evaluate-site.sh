@@ -112,6 +112,9 @@ bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1" >&"$RFD"; F=$((F+1)); [[ $CUR
 info() { printf '  \033[36mINFO\033[0m  %s\n' "$1" >&"$RFD"; _rec info "$1"; }
 
 # weight per dimension (sums to 100); grade band for a 0-100 score.
+# CAUTION: these case keys must BYTE-MATCH the sec "..." labels below — a renamed dimension
+# silently falls to the `*` default (10) and desyncs the published weights. The test suite
+# cross-checks every sec() label against this table, so a rename fails CI, not a user's scorecard.
 weight_for() {
   case "$1" in
     "Crawlability / indexing")  echo 15 ;;
@@ -157,6 +160,8 @@ if [[ -n "$DRY_RUN" ]]; then
     echo "  curl -fsS  ${URL%/}/robots.txt"
     echo "  curl -fsS  ${URL%/}/sitemap.xml"
     echo "  curl -fsS  ${URL%/}/llms.txt"
+    echo "  curl -fsS  ${URL%/}/.well-known/security.txt"
+    echo "  (+ the HOST-ROOT robots.txt when the URL is a subpath deploy, #86)"
   elif [[ "$MODE" == html ]]; then
     echo "Dry run — would read HTML from: ${HTMLIN} ${HEADIN:+(+ response headers from $HEADIN)}"
     echo "  (no network; robots.txt/sitemap.xml/llms.txt/security.txt can't be probed from HTML alone)"
@@ -281,12 +286,12 @@ else
   HEADERS=""
   # For a local dir, look for the file at the dir root (or common build subdirs).
   root_has() {
+    # Callers pass root-relative paths (robots.txt, .well-known/security.txt); the loop's $DIR arm
+    # already resolves .well-known/* — the common build subdirs are checked for flat files only.
     local rel="$1" d
     for d in "$DIR" "$DIR/public" "$DIR/dist" "$DIR/static" "$DIR/.well-known"; do
       [[ -f "$d/$rel" ]] && { echo "yes"; return; }
     done
-    # .well-known/security.txt special-case
-    [[ "$rel" == "security.txt" && -f "$DIR/.well-known/security.txt" ]] && { echo "yes"; return; }
     echo "no"
   }
   # Foot-gun guard (#79): --dir should point at the BUILT/deployed output, not a source tree. Many
@@ -356,7 +361,8 @@ fi
 sec "SEO"
 if [[ -n "$HTML" ]]; then
   if html_has '<title>[^<]'; then
-    tlen="$(sed -n 's/.*<title>\([^<]*\)<\/title>.*/\1/Ip' <<<"$(tr -d '\n' <<<"$HTML")" | head -n1 | wc -c)"
+    # grep -io (portable) rather than sed's GNU-only `I` substitute flag — BSD/macOS sed errors on it.
+    tlen="$(tr -d '\n' <<<"$HTML" | grep -io '<title>[^<]*</title>' | head -n1 | sed 's/<[^>]*>//g' | wc -c)"
     ok "<title> present (~$((tlen-1)) chars)"
     [[ "$tlen" -gt 70 ]] && warn "title is long (>70 chars) — search may truncate it"
   else
@@ -607,9 +613,6 @@ if [[ -n "$JSON" ]]; then
   WEIGHTS="$(printf '%s\n' "${OUT_WEIGHT[@]:-}")" \
   python3 <<'PY' 2>/dev/null || echo '{"error":"--json needs python3"}'
 import json, os
-def lines(k):
-    v = os.environ.get(k, "")
-    return v.split("\n")[:-1] if v.endswith("\n") else ([x for x in v.split("\n") if x != ""] if v else [])
 names = [n for n in os.environ.get("NAMES","").split("\n") if n != ""]
 scores = os.environ.get("SCORES","").split("\n")
 grades = os.environ.get("GRADES","").split("\n")

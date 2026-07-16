@@ -74,3 +74,16 @@ fixes. Keep one source of truth and the other places in agreement, and bump the 
 `tests/run-tests.sh` checks the version is valid SemVer and that these agree; CI runs it on every
 push/PR, so they can't drift.
 <!-- END portka-standard -->
+
+# This repo's specifics (outside the managed block, so a bootstrap refresh keeps them)
+
+The block above is the generic Portka standard. Two points differ **in this repository**:
+
+- **Version source of truth is per-plugin:** each `plugins/<name>/.claude-plugin/plugin.json`
+  `version` — not a root manifest. A plugin's version = the marketplace release in which its files
+  last changed; the README header tracks the repo release; `CHANGELOG.md` has one `## [x.y.z]`
+  section per release with per-plugin notes inside. The suite + the CI `version-bump-guard`
+  enforce all of it. Full model: `RELEASING.md`; maintainer map: `docs/HANDOFF.md`.
+- **Feedback lands HERE:** this repo *is* the marketplace, so plugin feedback arrives as GitHub
+  issues on this repo (the "Plugin feedback" form, `feedback` label). Triage each into fixes or an
+  `IMPROVEMENTS.md` entry, release, then close the issue with a shipped/deferred comment.

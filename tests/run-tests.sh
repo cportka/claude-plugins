@@ -2,9 +2,11 @@
 #
 # run-tests.sh — self-contained, verifiable test suite for the claude-plugins repo.
 #
-# Validates the marketplace + plugin manifests, skill frontmatter, and the bundled
-# extraction script (syntax, CLI behavior), then — when the tools are available — lints
-# the scripts with shellcheck and runs a real end-to-end ffmpeg frame extraction.
+# Validates the marketplace + plugin manifests, skill frontmatter, the version/CHANGELOG/README
+# sync, the GitHub Pages site (incl. a dogfood run of the evaluator against it), and the behavior
+# of every bundled script — extract-frames.sh (incl. real ffmpeg e2e), evaluate-site.sh,
+# bootstrap-repo.sh (incl. the scaffolds it generates), format-tab.py, and publish.sh — then lints
+# everything with shellcheck when available.
 #
 # Steps that require a missing tool report SKIP instead of failing, so the suite runs
 # anywhere. CI installs ffmpeg + shellcheck so every check runs for real.
@@ -12,6 +14,9 @@
 # Usage:  bash tests/run-tests.sh
 # Exit:   0 if no test FAILed, 1 otherwise.
 #
+# NOTE: deliberately NOT `set -e` — the suite must keep running after a failing check; the
+# pass()/fail() counters do the accounting and the final exit reflects FAIL>0. Adding -e would
+# abort at the first expected-failure probe. `set -u` IS on: unset variables are real bugs here.
 set -uo pipefail
 
 # Resolve repo root as the parent of this script's directory, regardless of CWD.
@@ -19,9 +24,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT" || { echo "cannot cd to repo root: $ROOT" >&2; exit 1; }
 
-# macOS still ships bash 3.2 (2007); this suite and several plugin scripts use bash 4+ features
-# (mapfile, safe empty-array expansion under `set -u`). Fail fast with ONE clear message instead of
-# a wall of confusing failures. Install a modern bash and re-run under it.
+# macOS still ships bash 3.2 (2007); this suite uses bash 4+ features (safe empty-array expansion
+# under `set -u`, ${var,,}). Print ONE clear message and exit 0 — deliberately NOT a failure: this
+# suite runs as an advisory pre-flight inside publish.sh on maintainer laptops (#74/#75), and a
+# hard red there blocked publishing from macOS. CI runs on Linux bash 5, so nothing real is masked
+# — but note a macOS "Summary: 0 passed" IS a skipped suite, not a green one.
 if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
   echo "This test suite needs bash 4+ (you have ${BASH_VERSION:-unknown}); macOS ships 3.2 from 2007." >&2
   echo "Install a modern bash and re-run under it, e.g.:" >&2
@@ -342,6 +349,9 @@ if [[ -x "$_self_eval" ]]; then
   else
     fail "dogfood: app-website-evaluator reports FAILs on our own site"
   fi
+else
+  # No silent pass: if the evaluator moves or loses +x, the dogfood gate must go red, not vanish.
+  fail "dogfood evaluator missing or not executable: $_self_eval"
 fi
 
 # --- 5. extraction script present + executable ----------------------------------------
@@ -780,6 +790,21 @@ if command -v ffmpeg >/dev/null 2>&1; then
           pass "--freeze-min raises the freeze threshold and rejects non-numeric values (#89)"
         else
           fail "--freeze-min knob wrong (rc=$_fmrc)"
+        fi
+        # 1.10.0 (#94): --marks correlates app performance.mark entries with the freeze timeline —
+        # the verdict + freeze lines name the best-aligned mark (and ignore an unrelated one).
+        printf '[{"name":"init","tMs":100,"durMs":50},{"name":"fullCompile","tMs":950,"durMs":330}]\n' > "$tmp/marks.json"
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --stutter --marks "$tmp/marks.json" 2>"$tmp/mk.err" >/dev/null || true
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --marks "$tmp/marks.json" >/dev/null 2>&1; _mk1=$?
+        printf 'not json\n' > "$tmp/bad.json"
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --stutter --marks "$tmp/bad.json" >/dev/null 2>&1; _mk2=$?
+        if grep -q "verdict: .*aligns with mark 'fullCompile'" "$tmp/mk.err" \
+           && ! grep -q "aligns with mark 'init'" "$tmp/mk.err" \
+           && grep -q "frozen for .*aligns with mark 'fullCompile'" "$tmp/mk.err" \
+           && [[ "$_mk1" -eq 2 && "$_mk2" -eq 2 ]]; then
+          pass "--marks aligns the right app mark with the freeze (verdict + gap list); guards clean (#94)"
+        else
+          fail "--marks correlation wrong (guards: no-stutter=$_mk1 badjson=$_mk2)"
         fi
       else
         skip "could not build a freeze clip (--stutter verdict #89)"
@@ -1283,6 +1308,35 @@ PY
     fail "portka-standard --dry-run wrote files"
   fi
   rm -rf "$ps" "$ph" "$pd" "$phd"
+  # 1.10.0 (handoff review): --auto-update sets autoUpdate on the marketplace entry WITHOUT
+  # disturbing the rest of the settings merge (the P1-1 merge invariant the code promises).
+  au="$(mktemp -d)"; auh="$(mktemp -d)"
+  bash "$BOOTSTRAP" --plugin video-bug-analyzer --auto-update --dir "$au" --home "$auh" >/dev/null 2>&1
+  if python3 - "$au/.claude/settings.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+mk = d["extraKnownMarketplaces"]["portka-tools"]
+assert mk.get("autoUpdate") is True, mk
+assert mk["source"]["repo"] == "cportka/claude-plugins"     # merge kept the source intact
+assert d["enabledPlugins"]["video-bug-analyzer@portka-tools"] is True
+PY
+  then
+    pass "--auto-update sets autoUpdate=true while preserving the marketplace source + plugins (handoff)"
+  else
+    fail "--auto-update merge broke the settings entry"
+  fi
+  rm -rf "$au" "$auh"
+  # 1.10.0 (handoff review): --scope user writes the standard ONLY under --home; the repo still
+  # gets the version/sync scaffold (a property of the repo, not a scope) but no project settings.
+  su="$(mktemp -d)"; suh="$(mktemp -d)"
+  bash "$BOOTSTRAP" --portka-standard --scope user --dir "$su" --home "$suh" >/dev/null 2>&1
+  if [[ -f "$suh/.claude/CLAUDE.md" && ! -f "$su/.claude/CLAUDE.md" \
+        && -x "$su/tests/run-tests.sh" ]]; then
+    pass "--scope user: workflow lands under --home only; repo keeps the sync scaffold (handoff)"
+  else
+    fail "--scope user scoping wrong (home CLAUDE.md: $(test -f "$suh/.claude/CLAUDE.md" && echo yes || echo no), project CLAUDE.md: $(test -f "$su/.claude/CLAUDE.md" && echo yes || echo no))"
+  fi
+  rm -rf "$su" "$suh"
 else
   fail "bootstrap script not found: $BOOTSTRAP"
 fi
@@ -1657,6 +1711,24 @@ CURL
   else
     fail "--url project-Pages subpath robots.txt caveat missing (#86)"
   fi
+  # 1.10.0 (handoff review): weight_for()'s case keys must byte-match every sec "..." label — a
+  # renamed dimension silently falls to the default weight and desyncs the published weights.
+  if python3 - "$EVAL" <<'PY'
+import re, sys
+src = open(sys.argv[1]).read()
+labels = set(re.findall(r'^sec "([^"]+)"$', src, re.M))
+case_block = src.split("weight_for() {", 1)[1].split("}", 1)[0]
+keys = set(re.findall(r'"([^"]+)"\)\s+echo\s+\d+', case_block))
+weights = [int(w) for w in re.findall(r'"\S[^"]*"\)\s+echo\s+(\d+)', case_block)]
+assert labels, "no sec labels found"
+assert labels == keys, f"sec labels {sorted(labels)} != weight_for keys {sorted(keys)}"
+assert sum(weights) == 100, f"explicit weights sum to {sum(weights)}, expected 100"
+PY
+  then
+    pass "evaluate-site.sh dimension labels byte-match weight_for keys; weights sum to 100 (handoff)"
+  else
+    fail "evaluate-site.sh weight_for/sec label desync (a rename fell to the default weight)"
+  fi
   # 1.9.0 (#90): a fully-scored run (every dimension has a scored check) must not emit
   # "UNSCORED: unbound variable" — the array is empty-but-set now, and the grade is unstarred.
   mkdir -p "$ev/full/.well-known"
@@ -1724,7 +1796,7 @@ section "ffmpeg static fallback"
 # the static download now lives ONLY in extract-frames.sh (the hook defers it to
 # first use to avoid its 120s timeout). So check the extractor for the installer, and the
 # hook for its immediate degraded-path message instead.
-EXTRACT="plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh"
+EXTRACT="$SCRIPT"   # same file as SCRIPT (top of suite) — one source of truth for the path
 HOOK="plugins/video-bug-analyzer/hooks/ensure-ffmpeg.sh"
 if grep -q 'install_ffmpeg_static' "$EXTRACT"; then
   pass "static ffmpeg fallback present: $EXTRACT"
@@ -2100,6 +2172,31 @@ else
     pass "format-tab.py --print dedents each song (default on)"
   else
     fail "format-tab.py --print did not dedent the indented song"
+  fi
+  # 1.10.0 (handoff review): the form-feed songbook separator is documented in three places but the
+  # cleanup's rstrip() was eating the lone \f before split_songs ran — a 2-song book rendered as 1.
+  printf 'Alpha - One\nline one\n\f\nBeta - Two\nline two\n' > "$_ftmp/ffbook.txt"
+  python3 "$FMT" --print --html "$_ftmp/ff.html" "$_ftmp/ffbook.txt" 2>/dev/null
+  if [[ "$(grep -c 'class="song"' "$_ftmp/ff.html")" -eq 2 ]]; then
+    pass "format-tab.py splits a songbook on a form-feed separator (handoff review)"
+  else
+    fail "form-feed songbook split broken (got $(grep -c 'class="song"' "$_ftmp/ff.html") songs, want 2)"
+  fi
+  # ...and the paste-from-web tag strip must NOT eat guitar harmonic notation like <12> (tag names
+  # start with a letter), while real HTML still strips.
+  _harm="$(printf 'e|--<12>--|\n<b>bold</b>\n' | python3 "$FMT" 2>/dev/null)"
+  if grep -q -- '--<12>--' <<<"$_harm" && ! grep -q '<b>' <<<"$_harm"; then
+    pass "format-tab.py keeps <12> harmonic notation but strips real HTML tags (handoff review)"
+  else
+    fail "tag-strip regex wrong (harmonic eaten or HTML kept): $_harm"
+  fi
+  # --no-dedent opt-out + --mode typo rejection (was a silent print-mode switch).
+  python3 "$FMT" --print --no-dedent --html "$_ftmp/nd.html" "$_ftmp/book.txt" 2>/dev/null
+  python3 "$FMT" --mode banana "$_ftmp/ffbook.txt" >/dev/null 2>&1; _mdrc=$?
+  if grep -q '^        indented lyric line' "$_ftmp/nd.html" && [[ "$_mdrc" -ne 0 ]]; then
+    pass "format-tab.py --no-dedent preserves indent; --mode typo errors instead of silently switching"
+  else
+    fail "--no-dedent/--mode validation wrong (mode rc=$_mdrc)"
   fi
   # PDF e2e — run ONLY against a known-good headless Chromium from a Playwright browsers dir.
   # We deliberately do NOT use any chrome on $PATH: a generic CI runner's browser may not be

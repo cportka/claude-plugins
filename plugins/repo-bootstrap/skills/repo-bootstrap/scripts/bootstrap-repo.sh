@@ -77,6 +77,8 @@ usage() {
 }
 
 # locate marketplace.json (env override, the target repo, or this repo checkout).
+# The override is named VBA_MARKETPLACE_JSON for historical reasons (the video plugin's VBA_* env
+# family came first and shares it) — kept as-is for back-compat with existing docs/tests.
 locate_marketplace() {
   local c
   for c in \
@@ -114,6 +116,10 @@ PY
 # (package.json, pyproject.toml, Cargo.toml, a bare VERSION, or a README **Version:** line), or
 # nothing. Lets --portka-standard bind the sync check to an existing version instead of seeding a
 # conflicting bare VERSION on a mature repo (#59).
+# NOTE: the GENERATED run-tests.sh scaffold (heredoc further down) carries its own bash
+# detect_version with the SAME source-priority order — python3 here (JSON/TOML parsing at
+# bootstrap time), pure bash there (the scaffold must run dependency-light in the target repo).
+# If you change the priority order, change BOTH.
 detect_version() {
   TARGET="$1" python3 <<'PY'
 import json, os, re
@@ -187,7 +193,10 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
   esac
 fi
 
-# --print-only and --dry-run are both no-write modes.
+# --print-only and --dry-run are both no-write modes. Convention for which flag to test:
+# helpers that would WRITE gate on $NO_WRITE (either mode must suppress the write); code that
+# NARRATES what would happen gates on $DRY_RUN alone, because --print-only wants the file
+# CONTENTS on stdout, not "[dry-run] would write..." chatter (handoff review).
 NO_WRITE=""
 [[ -n "$DRY_RUN" || -n "$PRINT_ONLY" ]] && NO_WRITE="1"
 
@@ -301,7 +310,10 @@ fi
 # warn (non-fatal) about --plugin names that aren't in the marketplace, when we can
 # see it. A user may legitimately bootstrap before a plugin exists locally, so don't fail.
 if [[ ${#PLUGINS[@]} -gt 0 ]] && _mj="$(locate_marketplace)"; then
-  mapfile -t _known < <(known_plugin_names "$_mj")
+  # while-read, not mapfile: macOS system bash is 3.2 and mapfile is bash 4+ — this was the
+  # script's only bash-4 construct, and it killed --plugin runs mid-script there (handoff review).
+  _known=()
+  while IFS= read -r _kn; do _known+=("$_kn"); done < <(known_plugin_names "$_mj")
   for _p in "${PLUGINS[@]}"; do
     _hit=0
     for _k in "${_known[@]:-}"; do [[ "$_p" == "$_k" ]] && { _hit=1; break; }; done
@@ -657,6 +669,8 @@ pass() { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 # Find the version source of truth, preferring a project manifest over a bare VERSION / README.
+# (Bash twin of bootstrap-repo.sh's python detect_version — same priority order by design; if you
+# change one, change both. Pure bash here so the scaffold runs dependency-light in the target repo.)
 detect_version() {
   local v=""
   if [[ -f package.json ]]; then

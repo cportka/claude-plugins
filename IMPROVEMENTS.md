@@ -190,9 +190,13 @@ form and are triaged into the items below.
 - Markdown link-lint; an optional macOS CI leg for the `brew` install path.
 
 ## Discoverability
-The marketplace now has a **GitHub Pages** site (`cportka.github.io/claude-plugins`) and enriched
-`plugin.json` keywords. Remaining (manual, no MCP tool exposed here):
-- Submit to the **Anthropic community marketplace** (see RELEASING.md).
-- Set the GitHub repo **description** + **topics** (`claude-code`, `claude-plugin`, `video`,
-  `debugging`, `ffmpeg`, `seo`, `audit`) and ensure **Pages** is enabled (Settings → Pages →
-  deploy from `main`).
+Done: the **GitHub Pages** site (`cportka.github.io/claude-plugins`), enriched `plugin.json`
+keywords, repo description/topics, and **all four plugins submitted to the Anthropic community
+directory** (pending review as of 2026-07-16; the catalog re-syncs from `main` nightly once
+approved — nothing to maintain). Remaining ideas: the announcement channels in
+[docs/DISTRIBUTION.md](./docs/DISTRIBUTION.md) (awesome-lists, posts) as releases warrant.
+
+## Repo / CI (ideas)
+- **Run the `--pdf` e2e in CI**: `validate.yml` never installs a Playwright Chromium, so the
+  format-tab PDF test always SKIPs there (it runs locally where `PLAYWRIGHT_BROWSERS_PATH` is
+  set). A pinned `npx playwright install chromium` step would cover it, at the cost of CI time.

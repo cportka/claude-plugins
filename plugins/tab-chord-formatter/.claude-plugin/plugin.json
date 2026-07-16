@@ -1,6 +1,6 @@
 {
   "name": "tab-chord-formatter",
-  "version": "1.2.0",
+  "version": "1.10.0",
   "description": "Format a messy guitar tab or chord sheet into a clean, standard, readable layout — for screen or print. Paste a tab copied from anywhere and get back a normalized chord sheet: standardized [Section] labels, chords aligned over the right lyric syllables, a tidy metadata header (Title/Artist/Capo/Key/Tuning), and well-formed 6-line ASCII tab blocks. Print mode renders a consistent monospace PDF songbook (one or many songs, a target number of songs per page) via headless Chromium. A bundled script does the deterministic cleanup and rendering; the skill applies judgment to re-align chords and infer structure.",
   "author": {
     "name": "Chris Portka"
@@ -8,5 +8,16 @@
   "homepage": "https://github.com/cportka/claude-plugins/tree/main/plugins/tab-chord-formatter",
   "repository": "https://github.com/cportka/claude-plugins",
   "license": "MIT",
-  "keywords": ["tab", "tablature", "chords", "chord-sheet", "guitar", "music", "formatter", "lyrics", "claude-code-plugin", "portka-tools"]
+  "keywords": [
+    "tab",
+    "tablature",
+    "chords",
+    "chord-sheet",
+    "guitar",
+    "music",
+    "formatter",
+    "lyrics",
+    "claude-code-plugin",
+    "portka-tools"
+  ]
 }

@@ -65,7 +65,9 @@ _SEC_RE = re.compile(
 
 def _norm_section(m):
     name = re.sub(r"\s+", "", m.group("name")).lower()
-    if name in ("prechorus", "prechorus"):
+    # "pre chorus"/"prechorus" both collapse to "prechorus" via the re.sub above; "pre-chorus"
+    # keeps its hyphen and is handled by the next branch.
+    if name == "prechorus":
         name = "pre-chorus"
     if name == "pre-chorus":
         label = "Pre-Chorus"
@@ -80,9 +82,15 @@ def _norm_section(m):
 
 def format_tab(text):
     # Paste-from-web safety: drop HTML tags, then decode entities (&#39; -> ', &amp; -> & …).
-    text = html.unescape(re.sub(r"<[^>]+>", "", text))
+    # Tag names must start with a letter (or / for closers) — a bare "<12>" is guitar harmonic
+    # notation inside a tab line, NOT markup, and must survive untouched (handoff review).
+    text = html.unescape(re.sub(r"</?[a-zA-Z][^>]*>", "", text))
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    raw = [ln.replace("\t", "    ").rstrip() for ln in text.split("\n")]
+    # rstrip() would also eat a lone form feed (\f is whitespace to Python) — but \f-on-its-own-line
+    # is the documented songbook separator split_songs() keys on, and this cleanup runs first in the
+    # print pipeline. Preserve it (handoff review).
+    raw = ["\f" if ln.strip(" \t") == "\f" else ln.replace("\t", "    ").rstrip()
+           for ln in text.split("\n")]
 
     out = []
     for ln in raw:
@@ -109,6 +117,9 @@ def format_tab(text):
 # --- print/render layer (1.2.0) -------------------------------------------------------------------
 
 # A title line: text, spaced dash (en/em/hyphen), text — e.g. "Animals – House of the Rising Sun".
+# Deliberately loose (a plain hyphen matches too — real pasted songbooks use it far more often than
+# an en dash), so an un-indented "word - word" lyric after a blank line can false-start a song in
+# print mode; each side needs >= 2 chars (\S.*\S). Use a form-feed separator for unambiguous splits.
 _TITLE_RE = re.compile(r"^\S.*\S\s+[–—-]\s+\S.*$")
 
 
@@ -256,6 +267,8 @@ def _parse_args(argv):
             opts["mode"] = "print"
         elif a == "--mode":
             opts["mode"] = next(it, "screen")
+            if opts["mode"] not in ("screen", "print"):
+                raise SystemExit(f"--mode must be 'screen' or 'print', got {opts['mode']!r}")
         elif a == "--pdf":
             opts["pdf"] = next(it, None); opts["mode"] = "print"
         elif a == "--html":

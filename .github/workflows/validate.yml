@@ -1,7 +1,12 @@
 name: validate
 
+# push is restricted to main (post-merge validation): an unrestricted `push:` made every PR-branch
+# push run BOTH events (duplicate checks), and version-bump-guard's push-event base (HEAD^) went
+# red on any multi-commit PR whose later commit touched a plugin without re-bumping — a false
+# positive the pull_request run (which diffs against the base branch) doesn't have.
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -32,6 +37,8 @@ jobs:
             base="origin/${GITHUB_BASE_REF}"
             git fetch -q origin "${GITHUB_BASE_REF}"
           else
+            # push to main only (see `on:`): HEAD^ is the pre-merge tip, correct for the
+            # squash-merges this repo uses. The PR event is the thorough diff-vs-base check.
             base="${GITHUB_SHA}^"
           fi
           fail=0

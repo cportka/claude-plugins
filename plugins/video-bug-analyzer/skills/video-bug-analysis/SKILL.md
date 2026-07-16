@@ -64,6 +64,11 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 | Did it move / which direction? | `--diff` (bright = changed pixels) |
 | Is it moving, and *how much* over time? | `--motion` → `t,motion` (mean inter-frame delta) |
 | Is it choppy, and *where*? | `--stutter` (alias `--cadence`) — verdict (worst freeze) + per-window unique fps; `--freeze-min` tunes |
+| Does a freeze match the app's own timing marks? | `--stutter --marks perf.json` — overlays `performance.mark` entries; verdict names the aligned mark |
+| Uneven frame *timing* (content changes every frame)? | `--pacing` → `t,interval_ms` from real presentation timestamps; median/p95/max + worst hitches |
+| Spinning in place vs spiralling inward? | `--flow` → `t,speed,curl,div` (swirl vs suck decomposition; `--flow-center fx:fy`) |
+| How much of the frame does the subject fill? | `--occupancy` → `t,coverage_pct,bbox` (the "present but too small" case) |
+| One region's evolution in a single image | `--stack --crop W:H:X:Y` → vertical ROI time-stack |
 | Too vivid / "clownish" vs muted? | `--saturation` → `t,saturation` (per-frame colour intensity) |
 | Read a tiny region (FPS/HUD/label) | `--crop W:H:X:Y` (crop+zoom; combines with any mode) |
 | Black / blank screen | `--blackdetect` (spans, flags PERMANENT vs transient) |

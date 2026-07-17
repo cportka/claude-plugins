@@ -542,6 +542,18 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "--label broke extraction"
     fi
+    # 1.11.0 (#96 review): the --timestamps on-frame label must burn SESSION time under --t0 (the docs
+    # list it as a --t0 surface). The burst seeks to its own bstart (video-absolute), so the label
+    # origin is bstart + T0 — NOT LBL_OFF (which folds in --start). Trace the emitted drawtext offset;
+    # only assert when --label is actually supported here (a font resolved), else skip.
+    _lbltrace="$(bash -x "$SCRIPT" --video "$clip" --timestamps 2.0 --label --t0 30 --out "$tmp/tslab" 2>&1 >/dev/null | grep -oE 'hms..[0-9]+\.[0-9]+' | head -1)"
+    if [[ -z "$_lbltrace" ]]; then
+      skip "--label not supported here (no font) — skipping --timestamps --t0 burn-in check"
+    elif [[ "$_lbltrace" == 'hms\:31.500' ]]; then
+      pass "--timestamps --label --t0 burns session time (bstart + T0) into the frame (#96 review)"
+    else
+      fail "--timestamps --label --t0 burned '$_lbltrace' (want hms\\:31.500 = bstart 1.5 + T0 30)"
+    fi
     # --crop: crop a region before scaling — frames are produced and zoomed (issue #23).
     if bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 3 --crop 120:80:10:10 --out "$tmp/crop" >/dev/null 2>&1 \
        && [[ "$(find "$tmp/crop" -name 'frame_*.png' | wc -l)" -gt 0 ]]; then
@@ -806,6 +818,21 @@ if command -v ffmpeg >/dev/null 2>&1; then
         else
           fail "--marks correlation wrong (guards: no-stutter=$_mk1 badjson=$_mk2)"
         fi
+        # 1.11.0 (#96): --t0 offsets EVERY reported timestamp into a multi-part session's own clock.
+        # The same freeze reads +30s under --t0 30, and marks given in session time then still align;
+        # a non-numeric --t0 is rejected. It relabels times only — the ffmpeg seek is unchanged.
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --stutter --t0 30 2>"$tmp/t0.err" >/dev/null || true
+        printf '[{"name":"fullCompile","tMs":30950,"durMs":330}]\n' > "$tmp/m30.json"
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --stutter --t0 30 --marks "$tmp/m30.json" 2>"$tmp/t0m.err" >/dev/null || true
+        bash "$SCRIPT" --video "$tmp/vfreeze.mp4" --stutter --t0 abc >/dev/null 2>&1; _t0rc=$?
+        if grep -q 'verdict: .*freeze @31\.[0-9]' "$tmp/t0.err" \
+           && ! grep -q 'freeze @1\.[0-9]' "$tmp/t0.err" \
+           && grep -q "@31\.[0-9]*s frozen for .*aligns with mark 'fullCompile'" "$tmp/t0m.err" \
+           && [[ "$_t0rc" -eq 2 ]]; then
+          pass "--t0 offsets reported timestamps into session time; session-time marks still align; rejects non-numeric (#96)"
+        else
+          fail "--t0 offset/marks/guard wrong (rc=$_t0rc)"
+        fi
       else
         skip "could not build a freeze clip (--stutter verdict #89)"
       fi
@@ -905,6 +932,17 @@ if command -v ffmpeg >/dev/null 2>&1; then
         pass "--pacing emits a t,interval_ms timeline + median/p95/max headline"
       else
         fail "--pacing timeline not as expected"
+      fi
+      # 1.11.0 (#96 review): --t0 must relabel --pacing times into session time (the docs promise it).
+      # --pacing reads whole-file pts (ignores --start), so the shift is T0-only. First CSV row and the
+      # "max @" headline both move by +30; the interval durations (deltas) are unchanged.
+      _p0="$(bash "$SCRIPT" --video "$clip" --pacing 2>/dev/null | sed -n '2p' | cut -d, -f1)"
+      _pt="$(bash "$SCRIPT" --video "$clip" --pacing --t0 30 2>/dev/null | sed -n '2p' | cut -d, -f1)"
+      if [[ -n "$_p0" && -n "$_pt" ]] \
+         && awk -v a="$_p0" -v b="$_pt" 'BEGIN{exit !(b-a > 29.9 && b-a < 30.1)}'; then
+        pass "--pacing --t0 shifts reported times into session time (#96 review)"
+      else
+        fail "--pacing --t0 did not offset times (t0=0 row=$_p0, t0=30 row=$_pt)"
       fi
     else
       skip "ffprobe/python3 not available (--pacing e2e)"
@@ -1228,6 +1266,53 @@ if [[ -f "$BOOTSTRAP" ]]; then
   else
     fail "portka-standard CLAUDE.md missing merge-refused / checks-registered robustness (#86 review)"
   fi
+  # 1.11.0 (#97 retrospective): the standard now documents the three hosted-session seams — greenfield
+  # `main` must exist + be default (a human Settings step), the pinned-branch restart-per-cycle pattern
+  # with --force-with-lease, the confirmation-signal degradation, and the `gh`-less feedback fallback.
+  if grep -q 'Greenfield repo?' <<<"$_cmflat" \
+     && grep -q 'Settings-only, human step' <<<"$_cmflat" \
+     && grep -q 'restart the pinned branch from' <<<"$_cmflat" \
+     && grep -q 'force-with-lease' <<<"$_cmflat" \
+     && grep -q 'Branch-pinned caveat' <<<"$_cmflat" \
+     && grep -q 'No .gh. in a hosted/web session' <<<"$_cmflat"; then
+    pass "portka-standard CLAUDE.md documents greenfield-main / pinned-branch restart / gh fallback (#97)"
+  else
+    fail "portka-standard CLAUDE.md missing 1.11.0 hosted-session doc seams (#97)"
+  fi
+  # 1.11.0 (#98): commit identity is a declared, onboarded convention — a "Commit identity" section
+  # tells agents to configure user.name/email up front and NOT to rewrite GitHub's squash-merge commit.
+  if grep -q '## Commit identity' <<<"$_cmflat" \
+     && grep -q 'git config user.name' <<<"$_cmflat" \
+     && grep -q 'squash-merge commit' <<<"$_cmflat"; then
+    pass "portka-standard CLAUDE.md declares a commit-identity convention (#98)"
+  else
+    fail "portka-standard CLAUDE.md missing the commit-identity section (#98)"
+  fi
+  # 1.11.0 (#97 con 5): --dry-run must state what the real run would DO, not always "would write". On a
+  # repo that already has tests/run-tests.sh, the dry-run reports it would leave it as-is.
+  dr="$(mktemp -d)"; drh="$(mktemp -d)"
+  mkdir -p "$dr/tests"; printf '#!/usr/bin/env bash\n' > "$dr/tests/run-tests.sh"
+  _drout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$dr" --home "$drh" --dry-run 2>&1 || true)"
+  if grep -q 'run-tests.sh already exists — would leave it as-is' <<<"$_drout" \
+     && ! grep -q 'would write .*run-tests.sh (version-sync suite)' <<<"$_drout"; then
+    pass "bootstrap --dry-run reflects the real skip for an existing tests/run-tests.sh (#97 con 5)"
+  else
+    fail "bootstrap --dry-run still claims it would write an existing test runner (#97 con 5)"
+  fi
+  rm -rf "$dr" "$drh"
+  # 1.11.0 (#97 con 5 review): with BOTH --ci and --portka-standard, the real run writes validate.yml
+  # first, so the standard's CI-collision guard then skips portka-standard.yml. The dry-run must say so
+  # ("would NOT add portka-standard.yml"), not over-promise "would write portka-standard.yml".
+  dc="$(mktemp -d)"; dch="$(mktemp -d)"
+  _dcout="$(bash "$BOOTSTRAP" --ci --portka-standard --scope project --dir "$dc" --home "$dch" --dry-run 2>&1 || true)"
+  if grep -q 'would write .*validate.yml' <<<"$_dcout" \
+     && grep -q 'would NOT add portka-standard.yml' <<<"$_dcout" \
+     && ! grep -q 'would write .*portka-standard.yml' <<<"$_dcout"; then
+    pass "bootstrap --dry-run with --ci counts the validate.yml it would add, so it skips portka-standard.yml (#97 con 5 review)"
+  else
+    fail "bootstrap --dry-run over-promises portka-standard.yml when --ci is combined (#97 con 5 review)"
+  fi
+  rm -rf "$dc" "$dch"
   # 1.9.0 (kevin-website): the standard assumes `main` — a fresh repo on `master` is normalized
   # when safe (unborn/local-only) and gets explicit fix commands when a remote exists.
   db1="$(mktemp -d)"; db1h="$(mktemp -d)"
@@ -1598,6 +1683,34 @@ H
     pass "evaluate-site.sh counts a classic <script src=/js/defer.min.js> as render-blocking (URL keyword ≠ attribute)"
   else
     fail "evaluate-site.sh mis-read 'defer' in a src URL as a defer attribute (#67 review)"
+  fi
+  # 1.11.0 (#97): a render-blocking STYLESHEET is flagged too, not just scripts. A cross-origin
+  # <link rel=stylesheet> (e.g. Google Fonts — the reporter's largest first-paint risk) warns; a
+  # media="print" swap does not; and "render-blocking" stays out of the non-blocking/no-CSS paths so
+  # the #67 module test (which asserts NO 'render-blocking') keeps holding.
+  mkdir -p "$ev/gfont"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter"></head><body><h1>h</h1></body></html>\n' > "$ev/gfont/index.html"
+  _gf="$(bash "$EVAL" --dir "$ev/gfont" 2>/dev/null || true)"
+  mkdir -p "$ev/pcss"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><link rel="stylesheet" href="https://cdn.example/a.css" media="print"></head><body><h1>h</h1></body></html>\n' > "$ev/pcss/index.html"
+  _pc="$(bash "$EVAL" --dir "$ev/pcss" 2>/dev/null || true)"
+  if grep -qi 'cross-origin render-blocking stylesheet' <<<"$_gf" \
+     && ! grep -qi 'render-blocking stylesheet' <<<"$_pc"; then
+    pass "evaluate-site.sh flags a cross-origin render-blocking stylesheet; skips a media=print swap (#97)"
+  else
+    fail "evaluate-site.sh stylesheet render-block detection wrong (#97)"
+  fi
+  # 1.11.0 (#97 review): a rel="preload" async-CSS swap carries `this.rel='stylesheet'` inside onload="";
+  # that literal must NOT be read as a render-blocking stylesheet (rel is matched as a real attribute,
+  # led by whitespace — the in-JS occurrence is preceded by `.`). The link is genuinely non-blocking.
+  mkdir -p "$ev/swap"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><link rel="preload" as="style" href="/a.css" onload="this.rel=%s"></head><body><h1>h</h1></body></html>\n' "'stylesheet'" > "$ev/swap/index.html"
+  _sw="$(bash "$EVAL" --dir "$ev/swap" 2>/dev/null || true)"
+  if ! grep -qi 'render-blocking stylesheet' <<<"$_sw" \
+     && grep -qi 'no <link rel="stylesheet"> in the source' <<<"$_sw"; then
+    pass "evaluate-site.sh treats a rel=preload onload async-CSS swap as non-blocking (#97 review)"
+  else
+    fail "evaluate-site.sh mis-read this.rel='stylesheet' in onload as a render-blocking stylesheet (#97 review)"
   fi
   # 1.4.0 (#79): --html scores pre-fetched HTML with no origin fetch (for sandbox egress proxies).
   # A file, or - for stdin; --headers feeds the live security-header checks without curl.

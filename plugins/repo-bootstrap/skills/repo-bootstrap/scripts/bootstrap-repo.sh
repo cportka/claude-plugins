@@ -217,10 +217,18 @@ For each change you make **in this repository**:
 
 1. **Update `main` first.** Begin by switching to `main` and pulling the latest. A previous
    change's branch being gone is the user's confirmation that they saw it (see step 5).
+   *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
+   anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
+   signal (step 5) all assume `main` exists and is the repo's **default** branch. Flipping the default
+   is a GitHub **Settings-only, human step** (no API for typical agent toolsets): create `main`, push
+   it, then hand the default-branch flip back to the owner explicitly.
    *Branch-pinned session?* In a hosted/branch-pinned environment (e.g. Claude Code on the web) the
-   harness assigns you a feature branch and forbids **pushing directly to `main`** — so **skip the
-   `main` checkout** and work on your assigned branch. Nothing else changes: you still open the PR
-   and merge it on green — see the note after step 5.
+   harness assigns you **one** feature branch and forbids **pushing directly to `main`** — so **skip
+   the `main` checkout** and work on that branch. Because the name is reused for the whole session,
+   step 2's "new branch per change" becomes: after each merge, **restart the pinned branch from
+   `origin/main`** (`git fetch origin main && git checkout -B <pinned> origin/main`, matching the
+   harness's own merged-PR guidance), and expect **`git push --force-with-lease`** to be routine.
+   Nothing else changes: you still open the PR and merge it on green — see the note after step 5.
 2. **Branch for everything (in this repo).** Every fix, update, or change goes on a new branch here —
    never commit to `main` directly. If another repo is open in the same session (e.g. a plugin
    marketplace you installed tools from), it is **read-only reference**: do all your branches and PRs
@@ -233,7 +241,9 @@ For each change you make **in this repository**:
    completes.
 5. **Hand back a short PR link.** Give the user a short link to the PR — merged if you were able to,
    otherwise green and ready for them to merge, saying which. They delete the branch when satisfied —
-   which you pick up next time you update `main` (step 1).
+   which you pick up next time you update `main` (step 1). *Branch-pinned caveat:* with a single
+   reused branch name, deletion can't happen mid-session, so this confirmation signal only fires
+   **between** sessions — don't wait on it within one.
 
 **Opening the PR and merging are authorized — this file is the "explicit ask."** Some hosted
 harnesses default to *"don't open a pull request unless the user explicitly asks for one."* The repo
@@ -266,6 +276,10 @@ gh issue create --repo cportka/claude-plugins --label feedback \
   --body "What you ran, expected vs. actual, environment, and a concrete suggestion."
 ```
 
+No `gh` in a hosted/web session? File the same issue through your GitHub tools (an MCP
+`create_issue` / issue-write tool) or the web UI's **New issue → Plugin feedback** form — same repo,
+same `feedback` label, same fields.
+
 Keep *this* repo's branches and PRs about *your* code; route tool feedback to the marketplace's
 issue tracker, where it gets triaged into a fix and a new version.
 
@@ -282,6 +296,23 @@ fixes. Keep one source of truth and the other places in agreement, and bump the 
 
 `tests/run-tests.sh` checks the version is valid SemVer and that these agree; CI runs it on every
 push/PR, so they can't drift.
+
+## Commit identity
+
+Set git's author/committer identity **before your first commit**, from the identity this repo
+declares (see the repo-specific note below; ask the owner if none is set yet):
+
+```
+git config user.name  "<declared name>"
+git config user.email "<declared email>"
+```
+
+Use that same identity for every automated/agent commit so history stays consistent — don't fall
+back to a generic `noreply@` default. Follow any trailer convention the repo names (e.g. a
+`Co-authored-by:` line). In hosted/sandbox environments commit **signing** is often unavailable (an
+empty signing key or a stub signing program), so commits land unsigned — that's expected: don't force
+a signature, and never rewrite already-merged history to "fix" the authorship of GitHub's own
+squash-merge commit (committer `noreply@github.com`, reachable from `main`).
 MD
 fi
 
@@ -424,7 +455,11 @@ else:
 PY
 
 if [[ -n "$ADD_CI" && -n "$DRY_RUN" ]]; then
-  echo "[dry-run] would write $DIR/.github/workflows/validate.yml (runs tests/run-tests.sh)"
+  if [[ -f "$DIR/.github/workflows/validate.yml" && -z "$FORCE" ]]; then
+    echo "[dry-run] $DIR/.github/workflows/validate.yml already exists — would leave it as-is (use --force to overwrite)"
+  else
+    echo "[dry-run] would write $DIR/.github/workflows/validate.yml (runs tests/run-tests.sh)"
+  fi
 elif [[ -n "$ADD_CI" ]]; then
   WF_DIR="$DIR/.github/workflows"
   WF="$WF_DIR/validate.yml"
@@ -647,7 +682,13 @@ EOF
   # VERSION / README) and checks SemVer + CHANGELOG/README agreement.
   RUNTESTS_PATH="$DIR/tests/run-tests.sh"
   if [[ -n "$NO_WRITE" ]]; then
-    echo "[dry-run] would write $RUNTESTS_PATH (version-sync suite)"
+    # Dry-run must mirror what the real run below would actually do — not always claim "would write"
+    # for a file the real run would skip (#97 con 5: the mismatch forced a defensive git-diff pass).
+    if [[ -f "$RUNTESTS_PATH" && -z "$FORCE" ]]; then
+      echo "[dry-run] $RUNTESTS_PATH already exists — would leave it as-is (use --force to overwrite)"
+    else
+      echo "[dry-run] would write $RUNTESTS_PATH (version-sync suite)"
+    fi
   elif [[ -f "$RUNTESTS_PATH" && -z "$FORCE" ]]; then
     echo "test runner already exists (use --force to overwrite): $RUNTESTS_PATH" >&2
   else
@@ -754,7 +795,11 @@ RUNTESTS
     package.json)
       NT="$DIR/tests/version-sync.test.mjs"
       if [[ -n "$NO_WRITE" ]]; then
-        echo "[dry-run] would write $NT (node:test version sync)"
+        if [[ -e "$NT" ]]; then
+          echo "[dry-run] $NT already exists — would leave it as-is"
+        else
+          echo "[dry-run] would write $NT (node:test version sync)"
+        fi
       elif [[ -e "$NT" ]]; then
         echo "exists, leaving as-is: $NT" >&2
       else
@@ -813,14 +858,18 @@ PY
 )"
         case "$_test_wire" in
           wrote) echo "Set package.json scripts.test = 'node --test' (wires up 'npm test')" ;;
-          keep)  echo "package.json already has a test script — leaving it; run the sync test with 'node --test'" >&2 ;;
+          keep)  echo "package.json already has a test script — leaving it as-is. Heads up: the scaffolded tests/version-sync.test.mjs will NOT run via 'npm test' now; either add 'node --test' to your test command, or ignore the .mjs if your existing suite already checks version sync (#97 con 6)." >&2 ;;
         esac
       fi
       ;;
     pyproject.toml)
       NT="$DIR/tests/test_version_sync.py"
       if [[ -n "$NO_WRITE" ]]; then
-        echo "[dry-run] would write $NT (unittest version sync)"
+        if [[ -e "$NT" ]]; then
+          echo "[dry-run] $NT already exists — would leave it as-is"
+        else
+          echo "[dry-run] would write $NT (unittest version sync)"
+        fi
       elif [[ -e "$NT" ]]; then
         echo "exists, leaving as-is: $NT" >&2
       else
@@ -870,7 +919,20 @@ PYT
   _existing_wf=("$DIR"/.github/workflows/*.yml "$DIR"/.github/workflows/*.yaml)
   shopt -u nullglob
   if [[ -n "$NO_WRITE" ]]; then
-    echo "[dry-run] would write $WF_STD (runs tests/run-tests.sh), unless existing CI is detected"
+    # _existing_wf is already computed above, so dry-run can name the real outcome (#97 con 5). One
+    # subtlety (review finding): with BOTH --ci and --portka-standard, the --ci block above would have
+    # written validate.yml BEFORE this detection runs — so in a real run it counts as "existing CI" and
+    # portka-standard.yml is skipped. _existing_wf was globbed before that hypothetical write, so add it
+    # back here for the dry-run count, else dry-run over-promises "would write portka-standard.yml".
+    _eff_wf=${#_existing_wf[@]}
+    if [[ -n "$ADD_CI" && ! -f "$DIR/.github/workflows/validate.yml" ]]; then _eff_wf=$((_eff_wf + 1)); fi
+    if [[ "$_eff_wf" -gt 0 && -z "$FORCE" ]]; then
+      echo "[dry-run] existing CI detected (${_eff_wf} workflow(s)) — would NOT add portka-standard.yml (use --force to add it anyway)"
+    elif [[ -f "$WF_STD" && -z "$FORCE" ]]; then
+      echo "[dry-run] $WF_STD already exists — would leave it as-is (use --force to overwrite)"
+    else
+      echo "[dry-run] would write $WF_STD (runs tests/run-tests.sh)"
+    fi
   elif [[ ${#_existing_wf[@]} -gt 0 && -z "$FORCE" ]]; then
     echo "existing CI detected (${#_existing_wf[@]} workflow(s)); not adding portka-standard.yml — make sure your CI runs 'bash tests/run-tests.sh' (use --force to add it anyway)." >&2
   elif [[ -f "$WF_STD" && -z "$FORCE" ]]; then

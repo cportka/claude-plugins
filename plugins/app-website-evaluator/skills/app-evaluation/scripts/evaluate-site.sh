@@ -547,6 +547,38 @@ if [[ -n "$HTML" ]]; then
       warn "$_nblk render-blocking external <script> (no async/defer/module) — slows first paint"
     fi
   fi
+  # A <link rel="stylesheet"> blocks first paint until it is fetched AND parsed. A cross-origin one
+  # (absolute or protocol-relative href — the classic being a Google Fonts <link>) is the worst case:
+  # it adds DNS+TLS+fetch to another host on the critical path. media="print" (the loadCSS swap) and
+  # preload/prefetch rels don't block, so they're excluded. (#97: a cross-origin font stylesheet was
+  # the reporter's largest first-paint risk and went unflagged — scripts were checked, CSS wasn't.)
+  # NOTE: keep the literal "render-blocking" out of the OK/INFO messages — only the WARN paths should
+  # carry it, so a page with no blocking CSS never trips a grep for that phrase (mirrors the #67 tests).
+  _links="$(grep -oiE '<link[^>]*>' <<<"$HTML_FLAT" || true)"
+  # Match rel="stylesheet" as a real ATTRIBUTE — a `rel=` led by whitespace and a `stylesheet` value
+  # closed by whitespace/quote/`/`/`>`/end — NOT the string `this.rel='stylesheet'` living inside an
+  # onload="" on a `rel="preload"` async-CSS swap (loadCSS), which is genuinely non-blocking and was a
+  # false positive (review finding). The leading `[[:space:]]` is what excludes the in-JS occurrence.
+  _css_links="$(grep -iE '[[:space:]]rel=["'"'"']?stylesheet([[:space:]"'"'"'/>]|$)' <<<"$_links" || true)"
+  if [[ -z "$_css_links" ]]; then
+    info "no <link rel=\"stylesheet\"> in the source (no blocking CSS here)"
+  else
+    # Drop the genuinely non-blocking ones: media="print" is swapped to all via onload after paint.
+    _block_css="$(grep -ivE '[[:space:]]media=["'"'"']?print' <<<"$_css_links" || true)"
+    if [[ -z "$_block_css" ]]; then
+      ok "stylesheets are non-blocking (media=\"print\" swap) — CSS off the critical path"
+    else
+      # Cross-origin = an absolute (http(s)://) or protocol-relative (//) href — an extra connection.
+      _xcss="$(grep -iE 'href=["'"'"']?(https?:)?//' <<<"$_block_css" || true)"
+      if [[ -n "$_xcss" ]]; then
+        _nxc="$(grep -c . <<<"$_xcss")"
+        warn "$_nxc cross-origin render-blocking stylesheet(s) (e.g. web fonts) — each adds DNS+TLS+fetch to first paint; self-host or preconnect + swap in via media=\"print\" onload"
+      else
+        _nbc="$(grep -c . <<<"$_block_css")"
+        warn "$_nbc render-blocking stylesheet(s) — inline critical CSS and defer the rest to speed first paint"
+      fi
+    fi
+  fi
   info "for real numbers (LCP/CLS/INP, payload size) run Lighthouse/PageSpeed on the live URL"
 else
   info "performance hints skipped (no HTML)"

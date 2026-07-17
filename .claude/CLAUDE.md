@@ -8,10 +8,18 @@ For each change you make **in this repository**:
 
 1. **Update `main` first.** Begin by switching to `main` and pulling the latest. A previous
    change's branch being gone is the user's confirmation that they saw it (see step 5).
+   *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
+   anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
+   signal (step 5) all assume `main` exists and is the repo's **default** branch. Flipping the default
+   is a GitHub **Settings-only, human step** (no API for typical agent toolsets): create `main`, push
+   it, then hand the default-branch flip back to the owner explicitly.
    *Branch-pinned session?* In a hosted/branch-pinned environment (e.g. Claude Code on the web) the
-   harness assigns you a feature branch and forbids **pushing directly to `main`** — so **skip the
-   `main` checkout** and work on your assigned branch. Nothing else changes: you still open the PR
-   and merge it on green — see the note after step 5.
+   harness assigns you **one** feature branch and forbids **pushing directly to `main`** — so **skip
+   the `main` checkout** and work on that branch. Because the name is reused for the whole session,
+   step 2's "new branch per change" becomes: after each merge, **restart the pinned branch from
+   `origin/main`** (`git fetch origin main && git checkout -B <pinned> origin/main`, matching the
+   harness's own merged-PR guidance), and expect **`git push --force-with-lease`** to be routine.
+   Nothing else changes: you still open the PR and merge it on green — see the note after step 5.
 2. **Branch for everything (in this repo).** Every fix, update, or change goes on a new branch here —
    never commit to `main` directly. If another repo is open in the same session (e.g. a plugin
    marketplace you installed tools from), it is **read-only reference**: do all your branches and PRs
@@ -24,7 +32,9 @@ For each change you make **in this repository**:
    completes.
 5. **Hand back a short PR link.** Give the user a short link to the PR — merged if you were able to,
    otherwise green and ready for them to merge, saying which. They delete the branch when satisfied —
-   which you pick up next time you update `main` (step 1).
+   which you pick up next time you update `main` (step 1). *Branch-pinned caveat:* with a single
+   reused branch name, deletion can't happen mid-session, so this confirmation signal only fires
+   **between** sessions — don't wait on it within one.
 
 **Opening the PR and merging are authorized — this file is the "explicit ask."** Some hosted
 harnesses default to *"don't open a pull request unless the user explicitly asks for one."* The repo
@@ -57,6 +67,10 @@ gh issue create --repo cportka/claude-plugins --label feedback \
   --body "What you ran, expected vs. actual, environment, and a concrete suggestion."
 ```
 
+No `gh` in a hosted/web session? File the same issue through your GitHub tools (an MCP
+`create_issue` / issue-write tool) or the web UI's **New issue → Plugin feedback** form — same repo,
+same `feedback` label, same fields.
+
 Keep *this* repo's branches and PRs about *your* code; route tool feedback to the marketplace's
 issue tracker, where it gets triaged into a fix and a new version.
 
@@ -73,17 +87,38 @@ fixes. Keep one source of truth and the other places in agreement, and bump the 
 
 `tests/run-tests.sh` checks the version is valid SemVer and that these agree; CI runs it on every
 push/PR, so they can't drift.
+
+## Commit identity
+
+Set git's author/committer identity **before your first commit**, from the identity this repo
+declares (see the repo-specific note below; ask the owner if none is set yet):
+
+```
+git config user.name  "<declared name>"
+git config user.email "<declared email>"
+```
+
+Use that same identity for every automated/agent commit so history stays consistent — don't fall
+back to a generic `noreply@` default. Follow any trailer convention the repo names (e.g. a
+`Co-authored-by:` line). In hosted/sandbox environments commit **signing** is often unavailable (an
+empty signing key or a stub signing program), so commits land unsigned — that's expected: don't force
+a signature, and never rewrite already-merged history to "fix" the authorship of GitHub's own
+squash-merge commit (committer `noreply@github.com`, reachable from `main`).
 <!-- END portka-standard -->
 
 # This repo's specifics (outside the managed block, so a bootstrap refresh keeps them)
 
-The block above is the generic Portka standard. Two points differ **in this repository**:
+The block above is the generic Portka standard. A few points are concrete **in this repository**:
 
 - **Version source of truth is per-plugin:** each `plugins/<name>/.claude-plugin/plugin.json`
   `version` — not a root manifest. A plugin's version = the marketplace release in which its files
   last changed; the README header tracks the repo release; `CHANGELOG.md` has one `## [x.y.z]`
   section per release with per-plugin notes inside. The suite + the CI `version-bump-guard`
   enforce all of it. Full model: `RELEASING.md`; maintainer map: `docs/HANDOFF.md`.
+- **Commit identity for this repo:** author/committer commits as `Chris Portka
+  <chrisportka@gmail.com>` (`git config user.name "Chris Portka"; git config user.email
+  "chrisportka@gmail.com"`) — the concrete value the managed block's *Commit identity*
+  section points at.
 - **Feedback lands HERE:** this repo *is* the marketplace, so plugin feedback arrives as GitHub
   issues on this repo (the "Plugin feedback" form, `feedback` label). Triage each into fixes or an
   `IMPROVEMENTS.md` entry, release, then close the issue with a shipped/deferred comment.

@@ -151,6 +151,13 @@
 #                       clock). The verdict and each freeze-gap line note the best-aligned mark —
 #                       "freeze 970 ms @2.10s — aligns with mark 'fullCompile' (starts 2.00s,
 #                       330 ms)" — collapsing the diagnose-verify loop to one read. (1.10.0, #94.)
+#   --t0 <sec|mm:ss>    Add a session offset to EVERY reported timestamp — the --stutter/--cadence
+#                       verdict, freeze gaps, choppiest windows, --pacing hitches, and the
+#                       --timestamps on-frame label. For multi-part captures: analyze "part 2"
+#                       (which starts at 0) with --t0 30 and its "freeze @14.7s" prints as the
+#                       session's @44.7s, lining up with app perf marks (--marks) — no manual offset
+#                       arithmetic. Relabels times only; does NOT move the seek (--start does that).
+#                       (1.11.0, #96.)
 #   --pacing            Frame-PACING timeline (a from-scratch counterpart to --cadence): read the
 #                       actual per-frame presentation timestamps and print t,interval_ms — the time
 #                       between consecutive DISPLAYED frames. Catches uneven timing / jank / VFR / a
@@ -238,7 +245,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.10.0"
+VBA_VERSION="1.11.0"
 
 VIDEO=""
 START=""
@@ -298,6 +305,7 @@ SEGMENTS=""    # --segments N: how many time windows --palette --over-time sampl
 LOOP_CHECK=""  # --loop-check: compare frame@0 vs frame@last (seam diff + strip) for a loop (1.8.0, #85)
 FREEZE_MIN="0.1" # --freeze-min <sec>: min frozen span --stutter reports as a freeze gap (1.9.0, #89)
 MARKS=""       # --marks <file>: app performance.mark JSON to correlate with freezes (1.10.0, #94)
+T0="0"         # --t0 <sec|mm:ss>: session offset added to every reported timestamp (1.11.0, #96)
 FPS_SET=""     # track whether --fps was passed (so presets don't override it)
 
 usage() {
@@ -307,6 +315,15 @@ usage() {
 # Convert a timestamp (SS | MM:SS | HH:MM:SS[.frac]) to seconds, for window arithmetic.
 to_seconds() {
   awk -F: '{ s=$NF; if (NF>=2) s+=$(NF-1)*60; if (NF>=3) s+=$(NF-2)*3600; printf "%.3f", s }' <<<"$1"
+}
+
+# Display origin for reported timestamps: the --start seek offset PLUS the optional --t0 session
+# offset (#96). --t0 relabels every reported time (the --stutter/--cadence verdict, freeze gaps,
+# choppiest windows, --pacing hitches, and the --timestamps on-frame label) into a multi-part
+# session's own clock, so "freeze @14.7s of part 2" reads as its true session time and lines up with
+# the app's perf marks — WITHOUT moving the ffmpeg seek, which stays --start only (built into PRE_ARGS).
+disp_base() {
+  awk -v s="$(to_seconds "${START:-0}")" -v z="$(to_seconds "${T0:-0}")" 'BEGIN{ printf "%.3f", s+z }'
 }
 
 # read this plugin's version from plugin.json (for --version and the feedback link).
@@ -483,6 +500,7 @@ while [[ $# -gt 0 ]]; do
     --stutter|--fps-drops) CADENCE=1; shift ;;       # ADDED (1.1.2, #56): aliases for --cadence
     --freeze-min) FREEZE_MIN="${2:-}"; shift 2 ;;    # ADDED (1.9.0, #89): freeze-gap threshold (sec)
     --marks) MARKS="${2:-}"; shift 2 ;;              # ADDED (1.10.0, #94): perf-mark sidecar JSON
+    --t0) T0="${2:-}"; shift 2 ;;                    # ADDED (1.11.0, #96): session offset for reported times
     --motion) MOTION=1; shift ;;                      # inter-frame motion timeline
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
     --intro) INTRO=1; shift ;;                        # first-seconds load preset
@@ -525,6 +543,13 @@ fi
 # a raw Python traceback + leaked temp dir later (1.4.0, #69 review).
 if [[ -n "$OCCUPANCY" && ! "$OCC_THRESH" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
   echo "Error: --occupancy-threshold must be a number 0..255 (got '$OCC_THRESH')." >&2
+  exit 2
+fi
+
+# --t0 offsets every reported timestamp into a multi-part session's clock (#96); accept SS | MM:SS |
+# HH:MM:SS[.frac] like --start, and reject garbage up front rather than silently offsetting by 0.
+if [[ "$T0" != "0" && ! "$T0" =~ ^([0-9]+:)?([0-9]+:)?[0-9]+(\.[0-9]+)?$ ]]; then
+  echo "Error: --t0 must be a non-negative offset in seconds or SS/MM:SS/HH:MM:SS (got '$T0')." >&2
   exit 2
 fi
 
@@ -821,7 +846,7 @@ run_ocr_roi() {
   local cfg=()
   # Numeric whitelist for count/speed readouts — cuts OCR noise when --ocr-digits is set.
   [[ -n "$OCR_DIGITS" ]] && cfg=(-c "tessedit_char_whitelist=0123456789.,:/x %-")
-  local base; base="$(to_seconds "${START:-0}")"
+  local base; base="$(disp_base)"
   echo "t,text"
   local i=0 f t txt
   for f in "$d"/f_*.png; do
@@ -870,7 +895,7 @@ run_measure() {
   fi
   local d; d="$(mktemp -d)"
   ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
-  local base; base="$(to_seconds "${START:-0}")"
+  local base; base="$(disp_base)"
   # Threshold + bounding box per PGM frame (P5 is trivially parseable with the stdlib).
   python3 - "$d" "$MEASURE_LIMIT" "$kind" "$mx" "$my" "$FPS" "$base" "${vw:-}" "${vh:-}" <<'PY'
 import sys, os, glob
@@ -957,7 +982,7 @@ run_occupancy() {
   fi
   local d; d="$(mktemp -d)"
   ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
-  local base; base="$(to_seconds "${START:-0}")"
+  local base; base="$(disp_base)"
   python3 - "$d" "$OCC_THRESH" "$kind" "$FPS" "$base" <<'PY'
 import sys, os, glob
 d, thr, kind, fps, base = sys.argv[1:6]
@@ -1323,7 +1348,7 @@ run_ab() {
   # PRE_ARGS (-ss/-to) go before BOTH inputs so the two clips are aligned to the same window.
   ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" "${PRE_ARGS[@]}" -i "$other" \
     -filter_complex "${fc_pre}${sf}" -f null - >/dev/null 2>&1 || true
-  local base; base="$(to_seconds "${START:-0}")"
+  local base; base="$(disp_base)"
   local csv
   csv="$(awk -v fps="$FPS" -v base="$base" '
     { n=""; s="";
@@ -1374,7 +1399,7 @@ run_cadence() {
     echo "Error: --cadence needs python3 to bucket the timeline. Install python3 and re-run." >&2
     exit 2
   fi
-  local base; base="$(to_seconds "${START:-0}")"
+  local base; base="$(disp_base)"
   # --marks sidecar (1.10.0, #94): app performance.mark JSON ([{name,tMs,durMs?},...]) to correlate
   # with the freeze timeline — validate up front so a bad file is a clean exit 2, not broken output.
   if [[ -n "$MARKS" ]]; then
@@ -1561,8 +1586,13 @@ run_pacing() {
   local tf; tf="$(mktemp)"
   ffprobe -v error -select_streams v:0 -show_entries frame=best_effort_timestamp_time \
     -of csv=p=0 "$VIDEO" 2>/dev/null > "$tf" || true
-  python3 - "$tf" <<'PY'
+  # --t0 session offset (1.11.0, #96): --pacing reads the WHOLE file's pts (no seek — --start is
+  # ignored here), so the reported times are already whole-file absolute; the only shift into session
+  # time is T0 (NOT disp_base, which folds in --start and would double-count it in this un-seeked mode).
+  local base; base="$(to_seconds "${T0:-0}")"
+  python3 - "$tf" "$base" <<'PY'
 import sys
+base = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 ts = []
 for line in open(sys.argv[1]):
     line = line.strip()
@@ -1576,7 +1606,8 @@ print("t,interval_ms")
 if len(ts) < 2:
     e.write("Pacing: too few timestamped frames to measure (need >= 2).\n")
     raise SystemExit(0)
-intervals = [(ts[i], (ts[i] - ts[i - 1]) * 1000.0) for i in range(1, len(ts))]
+# Shift the timestamp of each interval into session time; the interval DURATION is a delta, unchanged.
+intervals = [(base + ts[i], (ts[i] - ts[i - 1]) * 1000.0) for i in range(1, len(ts))]
 for t, d in intervals:
     print("%.3f,%.1f" % (t, d))
 vals = sorted(d for _, d in intervals)
@@ -1619,7 +1650,7 @@ run_motion() {
     echo "Error: --motion needs python3 to read the per-frame stats. Install python3 and re-run." >&2
     exit 2
   fi
-  local base; base="$(to_seconds "${START:-0}")"
+  local base; base="$(disp_base)"
   local mfile; mfile="$(mktemp)"
   ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
   python3 - "$mfile" "$base" "$FPS" "${CROP:+1}" <<'PY'
@@ -1702,7 +1733,7 @@ run_flow() {
   if [[ "$(find "$d" -maxdepth 1 -name 'f_*.pgm' | wc -l)" -ge "$flow_max" ]]; then
     echo "Note: --flow analyzed the first ${flow_max} sampled frames (~$(awk "BEGIN{printf \"%.0f\", ${flow_max}/${FPS}}")s at --fps ${FPS}); narrow with --start/--end or lower --fps to cover a different/longer span." >&2
   fi
-  local base; base="$(to_seconds "${START:-0}")"
+  local base; base="$(disp_base)"
   python3 - "$d" "$FPS" "$base" "$FLOW_CENTER" <<'PY'
 import sys, os, glob
 d, fps, base, center = sys.argv[1:5]
@@ -1857,7 +1888,7 @@ run_saturation() {
     echo "Error: --saturation needs python3 to read the per-frame stats. Install python3 and re-run." >&2
     exit 2
   fi
-  local base; base="$(to_seconds "${START:-0}")"
+  local base; base="$(disp_base)"
   local mfile; mfile="$(mktemp)"
   ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
   python3 - "$mfile" "$base" "$FPS" <<'PY'
@@ -1974,7 +2005,8 @@ fi
 # prepare the optional --label timestamp-burn-in segment (probed; empty if unsupported).
 build_label_vf
 # ADDED (1.0.3): offset for absolute-time labels in --start-seeked modes (dense/scene/diff/contact).
-LBL_OFF="$(to_seconds "${START:-0}")"
+# --t0 shifts these on-frame labels into session time too (1.11.0, #96) — disp_base folds in both.
+LBL_OFF="$(disp_base)"
 
 # --compare-videos a,b — ONE stacked contact sheet, a row per clip on a
 # NORMALIZED phase axis (N columns spread across each clip's own duration), so two clips of
@@ -2150,10 +2182,13 @@ if [[ -n "$TIMESTAMPS" ]]; then
     tsec="$(to_seconds "$t")"
     bstart="$(awk -v x="$tsec" -v w="$WINDOW" 'BEGIN{ s=x-w; if (s<0) s=0; printf "%.3f", s }')"
     bend="$(awk -v x="$tsec" -v w="$WINDOW" 'BEGIN{ printf "%.3f", x+w }')"
+    # On-frame label origin (1.11.0, #96): this burst seeks to its OWN bstart (video-absolute — not
+    # --start), so the session-time label is bstart + T0, NOT LBL_OFF/disp_base (which folds in --start).
+    blabel="$(awk -v b="$bstart" -v z="$(to_seconds "${T0:-0}")" 'BEGIN{ printf "%.3f", b+z }')"
     echo "Timestamp $t -> burst [$bstart,$bend] @${FPS}fps -> $OUT/ts${idx}_*" >&2
     run_ff -hide_banner -loglevel error \
       -ss "$bstart" -to "$bend" -i "$VIDEO" "${VFR[@]}" \
-      -vf "fps=${FPS},${CROP_VF}scale=${FRAMEW}:-1$(label_seg "$bstart")" \
+      -vf "fps=${FPS},${CROP_VF}scale=${FRAMEW}:-1$(label_seg "$blabel")" \
       "$OUT/ts${idx}_%03d.png"
     # Before/after strip from the first and last frame of the burst. (Skipped in --dry-run,
     # since it depends on the frames the burst above would have written.)

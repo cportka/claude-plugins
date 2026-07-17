@@ -44,6 +44,17 @@ form and are triaged into the items below.
 - Scene-change is heuristic (threshold per clip); many PNGs cost tokens if the window/fps isn't tight.
 
 **Ideas (not yet built)**
+- **`--app-crop` — mobile-chrome auto-crop** (#96). On portrait phone captures the URL bar + toolbar
+  + status bar eat ~25% of every contact tile, right where legibility is scarcest. Heuristic: find the
+  stable chrome bands (top/bottom) by per-row temporal variance — chrome never changes, the app always
+  does — and crop to the live region, so portrait sheets read as cleanly as desktop with zero manual
+  `--crop` math. Fussier than `--t0` (needs a multi-frame variance pass + a band-continuity rule);
+  the manual `--crop W:H:X:Y` covers it today.
+- **`--concat a.mov,b.mov` — one timeline across split parts** (#96). `--t0` (1.11.0) already removes
+  the *correlation* error for multi-part sessions by relabeling reported times into session time;
+  `--concat` would go further and analyze the parts as a single stream. Fussier — a VFR splice, where
+  each part's timebase differs, so the join needs pts normalization — deferred behind `--t0`, which
+  solves the reported pain (freeze-vs-mark correlation) directly.
 - **Denser / labelled flow** — `--flow` (1.4.0, #69) ships the swirl-vs-suck (curl/divergence) split
   that answers "spinning in place vs spiralling inward". Remaining: a *dense* per-blob trajectory
   overlay (turn count, drift direction), and better handling of pure **expansion** (outward `div` is
@@ -70,8 +81,9 @@ form and are triaged into the items below.
   table needs either a separate `--freeze-csv` sink or a delimiter that won't confuse consumers.
 - **Two-timestamp centered overlay / contour diff** — `--strip` is side-by-side; a matched-scale
   centered overlay (or edge diff) would show whether two features align.
-- **Event alignment for compare** (`--align-on scene` / per-clip `--t0`) — `--compare-videos`
-  aligns by phase fraction; align on a detected cut/event when it lands at a different fraction.
+- **Event alignment for compare** (`--align-on scene`) — `--compare-videos` aligns by phase fraction;
+  align on a detected cut/event when it lands at a different fraction. (The global `--t0` session
+  offset shipped in 1.11.0, #96; this remaining idea is per-clip *event* alignment for the A/B sheet.)
 - **Letterboxed A/B** — `--ab`/`--compare-videos` stretch differing aspect ratios; preserve them.
 - **Automatic phase labeling** — split a reference clip into phases with a one-line label each
   (needs vision beyond ffmpeg; `--list-scenes` + `--palette` are the boundaries + colours today).
@@ -133,6 +145,13 @@ form and are triaged into the items below.
   idiomatic *and* it unlocks the native `test_version_sync.py` path, which is currently only emitted
   when a `package.json`/`pyproject.toml` already exists at bootstrap time. Keep it opt-in so a
   docs/bash repo still gets the bare `VERSION`.
+- **Stop-hook should read the declared commit identity** (#98): the standard now *declares* a "Commit
+  identity" convention (1.11.0), but the enforcement lives in a global `~/.claude/stop-hook-git-check.sh`
+  — out of this repo's scope. Once that hook is maintained here (or shipped by a plugin), teach it three
+  exemptions: skip GitHub's own squash-merge commits (`noreply@github.com`, reachable from
+  `origin/main`); read the expected identity from the repo declaration instead of hardcoding
+  `noreply@anthropic.com`; and report unsigned commits as INFO (not a fix-it) when `user.signingkey`
+  is empty / the signer is a known hosted-env stub, or skip the signature check on squash-merge repos.
 
 ## app-website-evaluator
 
@@ -160,6 +179,13 @@ form and are triaged into the items below.
   on full-canvas apps whose visible DOM is thin. A heuristic (meta description present + `<h1>`
   carrying an sr-only/clip class + little visible text) could INFO-flag the risk. Needs design so it
   doesn't false-positive ordinary sr-only headings on content-rich pages.
+- **AEO `ItemList`/`CreativeWork` for portfolios** (#92/#97): the AI-readiness credit rewards
+  FAQPage/Review/Article/HowTo, but a portfolio or gallery site's natural schema is an `ItemList` of
+  `CreativeWork`s — currently unrewarded. Credit those types (and suggest them for a portfolio-classed
+  target) so the advice fits creative sites, not just content/commerce ones.
+- **Render-blocking CSS shipped in 1.11.0 (#97)** — the Performance section now warns on cross-origin
+  and same-origin render-blocking stylesheets. Remaining: it's source-visible only (no waterfall/size),
+  and it can't see a `@import` chain inside a stylesheet it doesn't fetch.
 
 ## tab-chord-formatter
 

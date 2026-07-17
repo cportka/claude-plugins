@@ -5,6 +5,77 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.11.0] - 2026-07-17
+
+A triage round from three field reports: multi-part session timelines for the video analyzer,
+render-blocking CSS in the evaluator, and the hosted-session documentation seams + commit-identity
+convention the Portka standard was missing. **video-bug-analyzer, app-website-evaluator, and
+repo-bootstrap → 1.11.0** (tab-chord-formatter unchanged at 1.10.0). MINOR: two new features, a
+doc/onboarding pass, and a dry-run correctness fix.
+
+### Added (video-bug-analyzer → 1.11.0, #96)
+- **`--t0 <sec|mm:ss>` — offset every reported timestamp into a session's own clock.** Long captures
+  get split into parts ("first 30s" / "after 30s"), and analyzing part 2 alone prints times relative
+  to *its* start — so correlating "freeze @14.7s of part 2" with the session's perf marks meant manual
+  offset arithmetic (and a mistake risk). `--t0 30` relabels the whole report — the `--stutter`/
+  `--cadence` verdict, freeze gaps, choppiest windows, `--pacing` hitches, and the `--timestamps`
+  on-frame label — into session time (@44.7s), so it lines up with `--marks` given in session time.
+  It relabels only; the ffmpeg seek stays `--start`-driven. Accepts `SS`/`MM:SS`/`HH:MM:SS`; rejects
+  garbage with a clean exit 2.
+
+### Added (app-website-evaluator → 1.11.0, #97)
+- **Render-blocking stylesheets are now flagged, not just scripts.** A `<link rel="stylesheet">`
+  blocks first paint until fetched *and* parsed; a cross-origin one (the classic being a Google Fonts
+  link) is the worst case — it adds DNS+TLS+fetch to another host on the critical path. The
+  Performance section now warns on cross-origin render-blocking stylesheets (self-host or preconnect
+  + `media="print"` swap) and on same-origin blocking CSS (inline critical, defer the rest), while a
+  `media="print"` swap and preload/prefetch rels are correctly treated as non-blocking.
+
+### Changed (repo-bootstrap → 1.11.0, #97/#98) — the Portka standard's hosted-session seams
+- **Greenfield `main` callout (#97).** Step 1 now says `main` must exist and be the *default* branch
+  before anything else — GitHub Pages' environment protection and the delete-the-branch confirmation
+  signal both depend on it — and that flipping the default is a Settings-only, human step.
+- **Pinned-branch restart-per-cycle (#97).** The branch-pinned note now spells out the real pattern:
+  restart the one pinned branch from `origin/main` after each merge, with `--force-with-lease` routine.
+- **Confirmation-signal caveat (#97).** Step 5 notes the delete-the-branch signal only fires *between*
+  sessions when a single branch name is reused — don't wait on it mid-session.
+- **`gh`-less feedback fallback (#97, third occurrence w/ #92).** The feedback snippet now points web
+  sessions at the GitHub MCP tools / the New issue → Plugin feedback form when there's no `gh` CLI.
+- **Commit-identity convention (#98).** A new "Commit identity" section in the standard's template
+  tells agents to configure `user.name`/`user.email` from the repo's declared identity before the
+  first commit, and never to rewrite GitHub's own squash-merge commit to "fix" authorship. This
+  repo's concrete identity (`Chris Portka <chrisportka@gmail.com>`) is declared in its specifics.
+
+### Fixed (repo-bootstrap → 1.11.0, #97 con 5/6)
+- **`--dry-run` now states what the real run would do.** It previously printed "would write
+  `tests/run-tests.sh`" even when the real run would skip an existing file — forcing a defensive
+  git-diff pass. Dry-run now mirrors the real outcome (leave-as-is / skip existing CI / existing-CI
+  detected) across the test runner, `validate.yml`, the native `.mjs`/`.py` sync tests, and
+  `portka-standard.yml`.
+- **Dead `.mjs` artifact note.** On a repo whose `test` script already runs a bash suite, the
+  scaffolded `version-sync.test.mjs` won't run via `npm test`; the "leaving it" message now says so.
+
+### Fixed (pre-merge adversarial review — real gaps it surfaced)
+- **`--t0` now actually relabels `--pacing` and the `--timestamps` on-frame label.** The help/CHANGELOG
+  promised `--t0` covered every reported time, but `run_pacing()` and the `--timestamps` burn-in still
+  printed video-local time. `--pacing` reads whole-file pts (it ignores `--start`), so it shifts by
+  `T0` only; the `--timestamps` label seeks to its own burst start, so it shifts by `bstart + T0` — the
+  seek stays put in both.
+- **Evaluator: a `rel="preload"` async-CSS swap is no longer mis-flagged.** The `this.rel='stylesheet'`
+  inside an `onload=""` was matched as a render-blocking stylesheet; `rel` is now matched as a real
+  attribute (whitespace-led), so the genuinely non-blocking loadCSS pattern is left alone.
+- **Bootstrap `--dry-run` no longer over-promises `portka-standard.yml` when `--ci` is combined.** With
+  both flags, the real run writes `validate.yml` first and then skips `portka-standard.yml`; the dry-run
+  now counts that and says "would NOT add portka-standard.yml" to match.
+
+### Deferred to IMPROVEMENTS.md
+- video `--app-crop` (mobile-chrome auto-crop via per-row temporal variance) and `--concat`
+  (multi-part single timeline, VFR splice) — #96.
+- evaluator AEO `ItemList`/`CreativeWork` suggestions for portfolio sites — #97.
+- stop-hook exemptions (squash-merge commits, declared-identity read, unsigned-as-INFO) — #98: the
+  hook is a global `~/.claude/` file, out of this repo's scope; the standard now documents the
+  intent so an agent declines the hook's bad suggestions even before the hook itself is updated.
+
 ## [1.10.0] - 2026-07-16
 
 The handoff release: triage of #94 plus a whole-repo handoff-readiness review (a multi-agent pass

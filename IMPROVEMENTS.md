@@ -145,6 +145,16 @@ form and are triaged into the items below.
   idiomatic *and* it unlocks the native `test_version_sync.py` path, which is currently only emitted
   when a `package.json`/`pyproject.toml` already exists at bootstrap time. Keep it opt-in so a
   docs/bash repo still gets the bare `VERSION`.
+- **Cross-check an in-code `VERSION` export** (#100): many JS libraries export a `VERSION`/`version`
+  constant from their entry module (`main`/`module`); the sync binds to `package.json`/`CHANGELOG`/`README`
+  only, so an in-code constant can silently drift. Optionally detect and compare it for JS/Python repos.
+  Fussy (parsing an arbitrary entry module for a constant); the scaffolded native `node --test`/`pytest`
+  run (1.12.0, #100) already lets a repo add its own assertion in the meantime.
+- **GitHub Pages branch-deploy vs Actions-deploy is an unflagged fork** (#100): the standard (and the
+  deferred `--pages` scaffold above) assume an **Actions-based** Pages pipeline, but a repo can be
+  configured to **deploy from a branch root** instead — the two conflict (an Actions workflow fights a
+  branch deploy). When `--pages` lands, detect which Pages mode the repo uses; for branch-deploy, skip the
+  Actions workflow and just guarantee `.nojekyll` + root-served files.
 - **Stop-hook should read the declared commit identity** (#98): the standard now *declares* a "Commit
   identity" convention (1.11.0), but the enforcement lives in a global `~/.claude/stop-hook-git-check.sh`
   — out of this repo's scope. Once that hook is maintained here (or shipped by a plugin), teach it three
@@ -186,6 +196,12 @@ form and are triaged into the items below.
 - **Render-blocking CSS shipped in 1.11.0 (#97)** — the Performance section now warns on cross-origin
   and same-origin render-blocking stylesheets. Remaining: it's source-visible only (no waterfall/size),
   and it can't see a `@import` chain inside a stylesheet it doesn't fetch.
+- **More source-derivable perf signals to lift `--dir` Perf off `n/a`** (#101): the Performance dimension
+  reads `n/a` (starred) when a minimal site has no external scripts/stylesheets/images to score. Crediting
+  more *source-level* signals — `loading="lazy"` (already), `async`/`defer` (already), plus a new
+  **oversized-inline-data** check (a very large inline `<script>`/`<style>` block or `data:` URI that bloats
+  first paint) — would let `--dir` mode earn a non-starred Perf grade on its own. Needs a size heuristic
+  that doesn't false-positive on a legitimately self-contained single-file app.
 
 ## tab-chord-formatter
 

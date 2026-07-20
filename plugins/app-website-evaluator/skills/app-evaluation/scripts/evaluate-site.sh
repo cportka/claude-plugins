@@ -329,7 +329,10 @@ fi
 sec "Crawlability / indexing"
 case "$(root_has robots.txt)" in
   yes) ok "robots.txt present" ;;
-  no)  bad "robots.txt missing — add one (and point it at your sitemap)" ;;
+  # A missing robots.txt is advisory, not a broken-site failure — crawlers default to allow-all, and a
+  # 2-page static site is fine without one. WARN (like sitemap.xml), not FAIL, so a tiny site isn't
+  # graded down as if crawling were blocked (#101). Still worth adding + pointing at your sitemap.
+  no)  warn "no robots.txt — add one (advisory; point it at your sitemap)" ;;
   *)   info "robots.txt: could not verify (no origin access, or the network is filtered)" ;;
 esac
 case "$(root_has sitemap.xml)" in
@@ -382,6 +385,10 @@ if [[ -n "$HTML" ]]; then
   htest '<meta[^>]+property=["'"'"']?og:description' ok "og:description present" warn "no og:description"
   htest '<meta[^>]+property=["'"'"']?og:image'       ok "og:image present"       bad  "no og:image — shared links show no preview image (big CTR loss)"
   htest '<meta[^>]+name=["'"'"']?twitter:card'       ok "twitter:card present"   warn "no twitter:card — add summary_large_image"
+  # Offline modes see the TAGS, not the assets: og:image and canonical are checked for presence, not
+  # that their URLs actually resolve. Say so, so a present-but-404 image/canonical isn't read as fine
+  # (#101). URL mode fetches the page but still doesn't chase these sub-resources.
+  [[ "$MODE" != url ]] && info "og:image and canonical are checked for PRESENCE, not reachability — the URLs aren't fetched in --dir/--html mode; re-run with --url after deploy to confirm they resolve (200)"
 else
   info "social tag checks skipped (no HTML)"
 fi
@@ -487,6 +494,22 @@ if [[ -n "$HTML" ]]; then
     htest '<meta[^>]+http-equiv=["'"'"']?content-security-policy' \
       ok "CSP declared via <meta http-equiv> (source-visible; a response header is stronger)" \
       info "no Content-Security-Policy (no response-header CSP and no <meta http-equiv> CSP)"
+  fi
+  # A CSP with 'unsafe-inline' in script-src (or default-src, which script-src falls back to) re-opens
+  # much of the XSS hole the CSP is meant to close — credit the CSP, but flag this so a present-but-weak
+  # policy isn't mistaken for a strong one (#101). Reads whichever CSP exists (response header or <meta>).
+  _csp_raw=""
+  [[ -n "$HEADERS" ]] && _csp_raw="$(grep -i '^content-security-policy:' <<<"$HEADERS" || true)"
+  [[ -z "$_csp_raw" ]] && _csp_raw="$(grep -oiE '<meta[^>]+content-security-policy[^>]*>' <<<"$HTML_FLAT" || true)"
+  if [[ -n "$_csp_raw" ]]; then
+    _csplc="$(tr '[:upper:]' '[:lower:]' <<<"$_csp_raw")"
+    # Scripts can run inline ONLY when script-src itself carries 'unsafe-inline', or — because script-src
+    # falls back to default-src *only when absent* — when there's no script-src and default-src has it.
+    # A loose default-src with a locked-down script-src does NOT weaken scripts, so don't over-warn there.
+    if grep -qE "script-src[^;]*unsafe-inline" <<<"$_csplc" \
+       || { ! grep -qE "script-src" <<<"$_csplc" && grep -qE "default-src[^;]*unsafe-inline" <<<"$_csplc"; }; then
+      warn "CSP allows inline scripts ('unsafe-inline' in script-src, or a default-src fallback with no script-src) — that defeats much of its XSS protection; move to hashes or nonces"
+    fi
   fi
   # Third-party <script src> origins widen the supply-chain/exfil surface. Absolute-URL scripts only
   # (relative srcs are same-origin); exclude the site's own host in URL mode. Zero third-party

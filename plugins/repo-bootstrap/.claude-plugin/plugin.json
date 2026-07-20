@@ -1,6 +1,6 @@
 {
   "name": "repo-bootstrap",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "Bootstrap a repository to use Claude Code plugins from a marketplace: safely merges .claude/settings.json (idempotent, never clobbers), optional CI, --list, --dry-run, --print-only (manual/classifier-safe mode), and a one-paste /plugin CLI fallback. With --portka-standard it also installs the Portka standard setup — a workflow CLAUDE.md (branch-per-change, releases left to a human, and tool feedback funneled to the marketplace's issues rather than stray branches), a git/gh permissions allowlist, and an enforced SemVer version sync that binds to the repo's existing version (package.json / pyproject.toml / Cargo.toml / VERSION / README) with a basic test suite whose CHANGELOG check anchors to a real release heading, plus a native version-sync test (node:test / unittest) — and a wired-up npm test — for JS/Python repos.",
   "author": {
     "name": "Chris Portka"

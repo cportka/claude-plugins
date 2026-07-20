@@ -5,6 +5,69 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.12.0] - 2026-07-20
+
+A triage round from four field reports: two new video failure-mode detectors, a production-cutover
+carve-out for the standard, a JS-repo test-drift fix, and evaluator grading nuance. **video-bug-analyzer,
+repo-bootstrap, and app-website-evaluator → 1.12.0** (tab-chord-formatter unchanged at 1.10.0). MINOR:
+two new features, a standard/onboarding pass, and scoring refinements.
+
+### Added (video-bug-analyzer → 1.12.0, #102)
+- **`--stall` — hang / loop / dead-canvas detector.** The counterpart to `--stutter`: where `--stutter`
+  finds freezes *during* motion, `--stall` finds the opposite — a span where *nothing* changes for
+  `>= --stall-min` seconds (a boot hang, a dead canvas, an infinite splash/CSS-overlay loop). A fully
+  static clip reads as "smooth" to a jank detector but is actually hung; this pass names it with a
+  one-line `STALL` verdict. Reuses the `--motion` machinery (per-frame inter-frame delta); `--stall-thresh`
+  tunes the near-identical cutoff. Honors `--crop`/`--start`/`--end`/`--t0`.
+- **`--whiteout` — blown-highlight (+ black-dropout) detector.** The companion to `--blackdetect` for the
+  bright extreme: reads each frame's mean luma and reports spans at/above `--white-thresh` (a merge/flash
+  whiteout that blows out a small viewport) or at/below the black cutoff (a dropout), each with
+  start/end/duration/peak. `--white-min` tunes the span. Honors `--crop`/`--start`/`--end`/`--t0`.
+
+### Changed (repo-bootstrap → 1.12.0, #103/#100) — the Portka standard + JS-repo scaffold
+- **Production-cutover carve-out to step 4 (#103).** "Merge on green" now carves out
+  **outward-facing/irreversible** merges — a first prod release, an auth/provider cutover, a coupled
+  multi-service deploy: hand back the green PR for the owner's go/no-go instead of auto-merging. This
+  mirrors the harness's "confirm first for hard-to-reverse/outward-facing actions" rule and any repo
+  `HANDOFF.md` asking for preview validation.
+- **Multi-repo-session note (#103).** Step 2 now spells out that the per-repo steps apply per repo when a
+  session spans several repos you own — each gets its own branch/PR, and merges are coordinated, not fired
+  the instant each is green.
+- **Scaffolded `run-tests.sh` runs the native suite fail-closed (#100).** For a JS/Python repo, the
+  generated bash suite (what CI invokes) now also runs `node --test` / `pytest` and fails closed — so the
+  bash suite is a *superset* of `npm test` and the two can't drift green-here / red-there. Skipped with a
+  note when the toolchain isn't installed, so a docs/bash-only repo is unaffected.
+- **Pre-1.0 cadence one-liner (#100).** The SemVer section now explains the `0.MINOR.PATCH` phase and that
+  `1.0.0` marks the first stable/published release.
+
+### Changed (app-website-evaluator → 1.12.0, #101) — grading nuance
+- **CSP `'unsafe-inline'` is flagged.** A `<meta>`/header CSP is still credited, but a `script-src`/
+  `default-src` with `'unsafe-inline'` now warns — present-but-weak isn't mistaken for strong.
+- **Reachability honesty in offline modes.** An INFO notes that `og:image`/`canonical` are checked for
+  *presence*, not that their URLs resolve — re-run with `--url` after deploy to confirm.
+- **A missing `robots.txt` is now WARN, not FAIL.** It's advisory (crawlers default to allow-all), so a
+  2-page static site is no longer graded down as if crawling were blocked — matching `sitemap.xml`.
+
+### Fixed (pre-merge adversarial review — caught before this shipped)
+- **Scaffolded native Python runner no longer false-greens a pytest-style suite.** When `pytest` wasn't
+  installed, the fallback `unittest discover` silently ignored bare `def test_*()` functions and printed
+  "OK" on 0 collected — a green-here/red-there hole in the very drift-guard #100 added. It now prefers a
+  real `pytest` (via the module), and the `unittest` fallback only counts as a pass when it actually ran a
+  test; otherwise it emits a visible note. JS discovery was likewise widened to let `node --test` find
+  tests beyond `tests/*.mjs`.
+- **`--stall`/`--motion` no longer drop the first inter-frame delta.** `tblend` on modern ffmpeg emits
+  `N-1` frames whose first output *is* a real difference (not a passthrough), so the old `n==0` skip lost a
+  sample — starting a stall a frame late and undercounting it at the `--stall-min` boundary. Fixed in both.
+- **CSP `unsafe-inline` warning is now script-src-aware.** `script-src` falls back to `default-src` only
+  when absent, so a loose `default-src 'unsafe-inline'` with a locked-down `script-src` no longer over-warns.
+
+### Deferred to IMPROVEMENTS.md
+- video `--app-crop`/`--concat` (#96), still open.
+- repo-bootstrap: cross-check an in-code `VERSION` export (#100), and the GitHub Pages branch-deploy vs
+  Actions-deploy fork note (#100, alongside the `--pages` idea).
+- evaluator: source-derivable perf signals to lift `--dir` Perf off `n/a` (oversized inline data, etc.)
+  (#101), and AEO `ItemList`/`CreativeWork` for portfolios (#97).
+
 ## [1.11.0] - 2026-07-17
 
 A triage round from three field reports: multi-part session timelines for the video analyzer,

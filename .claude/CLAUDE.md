@@ -24,12 +24,21 @@ For each change you make **in this repository**:
    never commit to `main` directly. If another repo is open in the same session (e.g. a plugin
    marketplace you installed tools from), it is **read-only reference**: do all your branches and PRs
    on *this* repo, never on it.
+   *Session spanning several repos you own?* These steps are per-repo: give each its own branch and PR,
+   keep each repo's tests/`CHANGELOG`/version in its own tree, and **coordinate the merges** rather than
+   firing each the instant it's green — a feature split across services should land in the order (and at
+   the time) the owner intends. See step 4's production carve-out.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
    request (opening it is pre-authorized — see the note after step 5; don't stop at "branch pushed"
    to ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
-4. **Green, then merge.** Wait until every check has **registered and finished** — an empty or
-   still-populating check list is *not* green — then merge the PR. Never merge on red or before CI
-   completes.
+4. **Green, then merge — with one carve-out.** Wait until every check has **registered and finished**
+   — an empty or still-populating check list is *not* green — then merge the PR. Never merge on red or
+   before CI completes. **Merge routine changes yourself on green.** But when the merge itself triggers
+   an **outward-facing or irreversible production change** — a first prod release, an auth/provider
+   cutover, a coupled multi-service deploy — **don't auto-merge: hand back the green PR** with the
+   specifics and let the owner make the go/no-go call. This mirrors the harness's own "confirm first for
+   hard-to-reverse / outward-facing actions" rule and any repo `HANDOFF.md` that asks to validate on a
+   preview deploy before flipping production.
 5. **Hand back a short PR link.** Give the user a short link to the PR — merged if you were able to,
    otherwise green and ready for them to merge, saying which. They delete the branch when satisfied —
    which you pick up next time you update `main` (step 1). *Branch-pinned caveat:* with a single
@@ -86,7 +95,9 @@ fixes. Keep one source of truth and the other places in agreement, and bump the 
 - `README.md` — a `**Version:**` line, if you keep one, that matches.
 
 `tests/run-tests.sh` checks the version is valid SemVer and that these agree; CI runs it on every
-push/PR, so they can't drift.
+push/PR, so they can't drift. Pre-1.0 (`0.MINOR.PATCH`) is the "still stabilizing" phase: while you're
+at `0.x`, `MINOR` absorbs breaking changes and `PATCH` is fixes — cutting **`1.0.0`** marks the first
+stable release (for a library, typically its first registry publish).
 
 ## Commit identity
 

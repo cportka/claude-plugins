@@ -30,6 +30,8 @@
 #   extract-frames.sh --video <path> --stutter [--window <sec>]      # stutter: dropped frames + freeze gaps
 #   extract-frames.sh --video <path> --pacing                        # frame-timestamp (jitter) timeline
 #   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
+#   extract-frames.sh --video <path> --stall [--stall-min <sec>]     # hang/loop: N sec of no change
+#   extract-frames.sh --video <path> --whiteout [--white-min <sec>]  # blown-highlight / dropout spans
 #   extract-frames.sh --video <path> --saturation [--fps <n>]        # colour-saturation timeline
 #   extract-frames.sh --video <path> --stack --crop <W:H:X:Y>        # ROI time-stack (band over time)
 #   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
@@ -168,6 +170,18 @@
 #                       becomes a number. Quantifies --diff. Sample rate from --fps; honors
 #                       --start/--end and --crop (crop to a spinner/dust region to lift a subtle
 #                       signal above the whole-frame noise floor). (ffmpeg tblend+signalstats; python3.)
+#   --stall             HANG/LOOP detector — the counterpart to --stutter (which finds freezes DURING
+#                       motion). Flags the longest span where NOTHING changes (mean inter-frame delta
+#                       below --stall-thresh, default 1.5/255) for >= --stall-min seconds (default 2):
+#                       a boot hang, dead canvas, or infinite splash/overlay loop, which a jank
+#                       detector reads as "smooth". One-line STALL verdict; honors --crop/--start/
+#                       --end/--t0. (ffmpeg tblend+signalstats; python3.) (1.12.0, #102.)
+#   --whiteout          BLOWN-HIGHLIGHT detector (+ black-dropout companion) — reads each frame's mean
+#                       luma and reports spans at/above --white-thresh (default 220/255, a merge/flash
+#                       whiteout) or at/below the black cutoff (a dropout) lasting >= --white-min
+#                       (default 0.2s), each with start/end/duration/peak. For pixel-ratio black,
+#                       --blackdetect is more precise. Honors --crop/--start/--end/--t0. (ffmpeg
+#                       signalstats; python3.) (1.12.0, #102.)
 #   --saturation        Colour-saturation timeline: print t,saturation (signalstats SATAVG,
 #                       0 grey .. ~180 vivid) per sampled frame, so "clownish/over-saturated vs
 #                       muted/elegant" is measurable and verifiable after a fix. Sample rate from
@@ -245,7 +259,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.11.0"
+VBA_VERSION="1.12.0"
 
 VIDEO=""
 START=""
@@ -289,6 +303,13 @@ COLORS="8"     # --colors, how many dominant colours --palette extracts
 AB=""          # --ab <other> SSIM-diffs two clips over time, then exits
 CADENCE=""     # --cadence reports a frame-cadence/jitter timeline, then exits
 MOTION=""      # --motion prints a mean inter-frame pixel-delta timeline, exits
+STALL=""       # --stall flags a >= --stall-min span of near-identical frames (hang/loop), exits (1.12.0, #102)
+STALL_MIN="2.0"  # --stall-min <sec>: minimum near-static span --stall reports as a stall
+STALL_THRESH="1.5" # mean inter-frame delta (0-255) below which frames count as near-identical (--stall)
+WHITEOUT=""    # --whiteout flags blown-highlight (+ black-dropout) spans by mean luma, exits (1.12.0, #102)
+WHITE_MIN="0.2"  # --white-min <sec>: minimum whiteout/dropout span --whiteout reports
+WHITE_THRESH="220" # mean luma (0-255) at/above which a frame is a whiteout (--whiteout)
+BLACK_LUMA_THRESH="16" # mean luma (0-255) at/below which a frame is a black dropout (--whiteout)
 CMP_VIDEOS=""  # --compare-videos a,b -> one stacked phase-aligned contact sheet
 INTRO=""       # --intro = load/splash preset (first ~2s, dense contact + labels)
 SATURATION=""  # --saturation prints a per-frame colour-saturation timeline, exits
@@ -502,6 +523,12 @@ while [[ $# -gt 0 ]]; do
     --marks) MARKS="${2:-}"; shift 2 ;;              # ADDED (1.10.0, #94): perf-mark sidecar JSON
     --t0) T0="${2:-}"; shift 2 ;;                    # ADDED (1.11.0, #96): session offset for reported times
     --motion) MOTION=1; shift ;;                      # inter-frame motion timeline
+    --stall) STALL=1; shift ;;                        # ADDED (1.12.0, #102): hang/loop (no-change) detector
+    --stall-min) STALL_MIN="${2:-}"; shift 2 ;;       # min near-static span (sec) to call a stall
+    --stall-thresh) STALL_THRESH="${2:-}"; shift 2 ;; # near-identical delta cutoff (0-255)
+    --whiteout) WHITEOUT=1; shift ;;                  # ADDED (1.12.0, #102): blown-highlight + dropout detector
+    --white-min) WHITE_MIN="${2:-}"; shift 2 ;;       # min whiteout/dropout span (sec) to report
+    --white-thresh) WHITE_THRESH="${2:-}"; shift 2 ;; # mean-luma cutoff for a whiteout (0-255)
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
     --intro) INTRO=1; shift ;;                        # first-seconds load preset
     --saturation) SATURATION=1; shift ;;             # colour-saturation timeline
@@ -551,6 +578,19 @@ fi
 if [[ "$T0" != "0" && ! "$T0" =~ ^([0-9]+:)?([0-9]+:)?[0-9]+(\.[0-9]+)?$ ]]; then
   echo "Error: --t0 must be a non-negative offset in seconds or SS/MM:SS/HH:MM:SS (got '$T0')." >&2
   exit 2
+fi
+
+# --stall / --whiteout numeric knobs (1.12.0, #102): reject garbage up front rather than a later
+# Python traceback + leaked temp dir. Durations are seconds; thresholds are 0-255 luma/delta.
+if [[ -n "$STALL" ]]; then
+  for _nv in "--stall-min:$STALL_MIN" "--stall-thresh:$STALL_THRESH"; do
+    [[ "${_nv#*:}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: ${_nv%%:*} must be a non-negative number (got '${_nv#*:}')." >&2; exit 2; }
+  done
+fi
+if [[ -n "$WHITEOUT" ]]; then
+  for _nv in "--white-min:$WHITE_MIN" "--white-thresh:$WHITE_THRESH"; do
+    [[ "${_nv#*:}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: ${_nv%%:*} must be a non-negative number (got '${_nv#*:}')." >&2; exit 2; }
+  done
 fi
 
 # --check-update: compare the installed version against the marketplace's main branch and
@@ -1672,9 +1712,11 @@ for line in open(mfile):
         try: y=float(line.split("=",1)[1])
         except ValueError: continue
         tt = (base+t) if t is not None else (base+n/fps)
-        # n==0 is the first frame (no previous) — tblend passes it through, so skip the spurious value.
-        if n>0:
-            rows.append((tt,y)); print("%.3f,%.2f" % (tt,y))
+        # tblend on modern ffmpeg (5.x/6.x) emits N-1 output frames — its FIRST output is already a real
+        # |f1-f0| difference, not a passthrough of frame 0 (verified: static gray reads YAVG=0 here, a raw
+        # passthrough would read ~128). So keep every emitted sample; an old `if n>0` skip dropped a
+        # genuine first delta and lost a sample (review finding). n still indexes the pts-fallback.
+        rows.append((tt,y)); print("%.3f,%.2f" % (tt,y))
         n+=1
 e=sys.stderr
 if rows:
@@ -1697,6 +1739,161 @@ if rows:
                     % (peak[1], FLOOR))
 else:
     e.write("No motion samples — clip too short or --fps too low.\n")
+PY
+  rm -f "$mfile"
+}
+
+# stall / loop / hang detector (1.12.0, #102) — the counterpart to --stutter. --stutter finds frozen
+# frames DURING motion; --stall finds the opposite failure: a span where NOTHING changes for
+# >= --stall-min seconds (a boot hang, a dead canvas, an infinite splash/CSS-overlay loop). A fully
+# static clip reads as "smooth" to a jank detector but is actually hung — this pass names it with a
+# one-line verdict. Reuses the --motion machinery (tblend difference -> per-frame inter-frame delta
+# YAVG): the longest run of frames whose delta stays below --stall-thresh is the stall. Honors
+# --crop/--start/--end/--t0. Needs python3.
+run_stall() {
+  local vf="fps=${FPS},${CROP_VF}tblend=all_mode=difference,signalstats,metadata=mode=print:file="
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}<tmp>" -an -f null -
+    printf '\n'
+    echo "# read lavfi.signalstats.YAVG (mean |frame - prev|) per frame; find the longest run below"
+    echo "# the near-identical cutoff (${STALL_THRESH}/255) -> STALL verdict if it lasts >= ${STALL_MIN}s"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --stall needs python3 to scan the motion timeline. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local base; base="$(disp_base)"
+  local mfile; mfile="$(mktemp)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
+  python3 - "$mfile" "$base" "$FPS" "$STALL_MIN" "$STALL_THRESH" "${CROP:+1}" <<'PY'
+import sys
+mfile=sys.argv[1]; base=float(sys.argv[2]); fps=float(sys.argv[3]) or 1.0
+stall_min=float(sys.argv[4]); thresh=float(sys.argv[5]); cropped=len(sys.argv)>6 and sys.argv[6]=="1"
+t=None; n=0; rows=[]
+print("t,motion")
+for line in open(mfile):
+    line=line.strip()
+    if line.startswith("frame:"):
+        t=None
+        for tok in line.split():
+            if tok.startswith("pts_time:"):
+                try: t=float(tok.split(":",1)[1])
+                except ValueError: t=None
+    elif line.startswith("lavfi.signalstats.YAVG="):
+        try: y=float(line.split("=",1)[1])
+        except ValueError: continue
+        tt=(base+t) if t is not None else (base+n/fps)
+        # tblend on modern ffmpeg emits N-1 frames — its first output is already a real |f1-f0| delta
+        # (static gray reads YAVG=0, not a ~128 passthrough), so keep every sample; an old `if n>0` skip
+        # dropped a genuine first delta, starting the stall a frame late and undercounting it (review).
+        rows.append((tt,y)); print("%.3f,%.2f"%(tt,y))
+        n+=1
+e=sys.stderr
+if not rows:
+    e.write("No motion samples — clip too short or --fps too low.\n"); raise SystemExit(0)
+dt=1.0/fps if fps>0 else 0.0            # frame interval, to turn a run of samples into a real duration
+# Longest contiguous run of near-identical (delta < thresh) frames.
+best_s=best_e=None; best_dur=0.0; cur_s=None; prev_t=None
+def close():
+    global best_s,best_e,best_dur
+    if cur_s is None: return
+    dur=(prev_t-cur_s)+dt              # include the last frame's own interval
+    if dur>best_dur: best_dur=dur; best_s=cur_s; best_e=prev_t
+for tt,y in rows:
+    if y<thresh:
+        if cur_s is None: cur_s=tt
+        prev_t=tt
+    else:
+        close(); cur_s=None; prev_t=None
+close()
+static_frac=sum(1 for _,y in rows if y<thresh)/len(rows)
+span=(rows[-1][0]-rows[0][0])+dt
+if best_dur>=stall_min:
+    whole = best_dur>=0.98*span
+    where = "the ENTIRE clip is" if whole else ("frames @%.2fs-@%.2fs are"%(best_s,best_e))
+    tail = "" if whole else " (%.0f%% of the clip static)"%(100*static_frac)
+    e.write("STALL: %s near-identical (mean delta < %.1f/255) for %.1fs%s.\n" % (where, thresh, best_dur, tail))
+    e.write("  -> the app may be frozen/hung, a splash or CSS overlay looping with nothing beneath, or a dead canvas.\n")
+    if not cropped:
+        e.write("  (Whole-frame scan; if only a REGION should animate, --crop W:H:X:Y to it so a busy border can't mask a stalled centre.)\n")
+else:
+    e.write("No sustained stall: longest near-static span %.1fs < --stall-min %.1fs (%.0f%% of samples were near-static).\n"
+            % (best_dur, stall_min, 100*static_frac))
+PY
+  rm -f "$mfile"
+}
+
+# whiteout / blown-highlight (+ black-dropout) detector (1.12.0, #102) — the companion to
+# --blackdetect for the OTHER luma extreme. A merge/collision flash can blow a small viewport to full
+# white for a beat; a dropout can drop it to black mid-clip. This reads each frame's MEAN LUMA
+# (signalstats YAVG, no tblend) and reports contiguous spans at/above --white-thresh (blown) or at/below
+# the black cutoff (dropout) lasting >= --white-min, with start/end/duration/peak. --white-min tunes the
+# span, --white-thresh the whiteout cutoff. (For pixel-ratio black specifically, --blackdetect is more
+# precise; this catches the bright side.) Honors --crop/--start/--end/--t0. Needs python3.
+run_whiteout() {
+  local vf="fps=${FPS},${CROP_VF}signalstats,metadata=mode=print:file="
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}<tmp>" -an -f null -
+    printf '\n'
+    echo "# read lavfi.signalstats.YAVG (mean frame luma 0-255) per frame; report spans >= ${WHITE_THRESH}"
+    echo "# (whiteout) or <= ${BLACK_LUMA_THRESH} (dropout) lasting >= ${WHITE_MIN}s, with duration + peak"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --whiteout needs python3 to scan the luma timeline. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local base; base="$(disp_base)"
+  local mfile; mfile="$(mktemp)"
+  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
+  python3 - "$mfile" "$base" "$FPS" "$WHITE_MIN" "$WHITE_THRESH" "$BLACK_LUMA_THRESH" <<'PY'
+import sys
+mfile=sys.argv[1]; base=float(sys.argv[2]); fps=float(sys.argv[3]) or 1.0
+wmin=float(sys.argv[4]); wth=float(sys.argv[5]); bth=float(sys.argv[6])
+t=None; n=0; rows=[]
+for line in open(mfile):
+    line=line.strip()
+    if line.startswith("frame:"):
+        t=None
+        for tok in line.split():
+            if tok.startswith("pts_time:"):
+                try: t=float(tok.split(":",1)[1])
+                except ValueError: t=None
+    elif line.startswith("lavfi.signalstats.YAVG="):
+        try: y=float(line.split("=",1)[1])
+        except ValueError: continue
+        tt=(base+t) if t is not None else (base+n/fps)
+        rows.append((tt,y)); n+=1
+e=sys.stderr
+print("t,luma")
+for tt,y in rows: print("%.3f,%.2f"%(tt,y))
+if not rows:
+    e.write("No luma samples — clip too short or --fps too low.\n"); raise SystemExit(0)
+dt=1.0/fps if fps>0 else 0.0
+def find_spans(pred, extremum):
+    out=[]; s=None; prev=None; ext=None
+    for tt,y in rows:
+        if pred(y):
+            if s is None: s=tt; ext=y
+            prev=tt; ext=extremum(ext,y)
+        elif s is not None:
+            out.append((s,prev,(prev-s)+dt,ext)); s=None
+    if s is not None: out.append((s,prev,(prev-s)+dt,ext))
+    return out
+white=[sp for sp in find_spans(lambda y:y>=wth, max) if sp[2]>=wmin]
+black=[sp for sp in find_spans(lambda y:y<=bth, min) if sp[2]>=wmin]
+ys=[y for _,y in rows]; lo=min(ys); hi=max(ys)
+if white:
+    e.write("Whiteout(s) (mean luma >= %.0f/255 for >= %.1fs — blown highlights):\n" % (wth, wmin))
+    for s,en,dur,pk in white: e.write("  @%.2fs-@%.2fs: %.0f ms, peak luma %.0f/255\n" % (s,en,dur*1000,pk))
+else:
+    e.write("No whiteout (mean luma stayed below %.0f/255; brightest frame %.0f).\n" % (wth, hi))
+if black:
+    e.write("Black dropout(s) (mean luma <= %.0f/255 for >= %.1fs — for pixel-ratio black use --blackdetect):\n" % (bth, wmin))
+    for s,en,dur,pk in black: e.write("  @%.2fs-@%.2fs: %.0f ms, darkest luma %.0f/255\n" % (s,en,dur*1000,pk))
+else:
+    e.write("No black dropout (mean luma stayed above %.0f/255; darkest frame %.0f).\n" % (bth, lo))
 PY
   rm -f "$mfile"
 }
@@ -1931,7 +2128,7 @@ PY
 _has_pngs() { [[ -d "$1" ]] && [[ -n "$(find "$1" -maxdepth 1 -name '*.png' -print -quit 2>/dev/null)" ]]; }
 _writes_pngs=1
 for _flag in "$BLACKDETECT" "$OCR_ROI" "$MEASURE" "$PROBE" "$PALETTE" "$AB" "$CADENCE" \
-             "$MOTION" "$SATURATION" "$PACING" "$FLOW" "$OCCUPANCY" "$LIST_SCENES"; do
+             "$MOTION" "$STALL" "$WHITEOUT" "$SATURATION" "$PACING" "$FLOW" "$OCCUPANCY" "$LIST_SCENES"; do
   [[ -n "$_flag" ]] && _writes_pngs=""
 done
 if [[ -n "$_writes_pngs" ]] && _has_pngs "$OUT"; then
@@ -2122,6 +2319,20 @@ fi
 # --motion is an analysis mode — print an inter-frame motion timeline and exit.
 if [[ -n "$MOTION" ]]; then
   run_motion
+  feedback_hint
+  exit 0
+fi
+
+# --stall is an analysis mode — flag a sustained no-change (hang/loop) span and exit (1.12.0, #102).
+if [[ -n "$STALL" ]]; then
+  run_stall
+  feedback_hint
+  exit 0
+fi
+
+# --whiteout is an analysis mode — flag blown-highlight / black-dropout spans and exit (1.12.0, #102).
+if [[ -n "$WHITEOUT" ]]; then
+  run_whiteout
   feedback_hint
   exit 0
 fi

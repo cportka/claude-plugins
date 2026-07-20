@@ -979,6 +979,59 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       skip "could not build a motion test clip (--motion)"
     fi
+    # 1.12.0 (#102): --stall is the counterpart to --stutter — it flags a sustained NO-CHANGE span
+    # (hang/loop/dead canvas) that a jank detector reads as "smooth". A fully-static clip verdicts
+    # STALL (entire clip); a moving clip does not. Needs python3.
+    if command -v python3 >/dev/null 2>&1; then
+      if ffmpeg -hide_banner -loglevel error -f lavfi -i "color=gray:size=160x120:rate=10:duration=3" "$tmp/hang.mp4" -y 2>/dev/null \
+         && ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=size=160x120:rate=10:duration=3" "$tmp/live.mp4" -y 2>/dev/null; then
+        _stall="$(bash "$SCRIPT" --video "$tmp/hang.mp4" --stall --fps 10 --stall-min 1 2>&1 >/dev/null || true)"
+        _nostall="$(bash "$SCRIPT" --video "$tmp/live.mp4" --stall --fps 10 --stall-min 1 2>&1 >/dev/null || true)"
+        if grep -q 'STALL: the ENTIRE clip is near-identical' <<<"$_stall" \
+           && grep -qi 'No sustained stall' <<<"$_nostall"; then
+          pass "--stall flags a fully-static clip as a hang; clears a moving one (#102)"
+        else
+          fail "--stall detection not as expected (#102)"
+        fi
+      else
+        skip "could not build stall test clips (#102)"
+      fi
+      # 1.12.0 (#102): --whiteout flags blown-highlight spans (mean luma high) and, as a companion,
+      # black dropouts (mean luma low), each with a timestamp + duration; --t0 shifts them.
+      if ffmpeg -hide_banner -loglevel error \
+           -f lavfi -i "color=gray:size=160x120:rate=10:duration=1" \
+           -f lavfi -i "color=white:size=160x120:rate=10:duration=1" \
+           -f lavfi -i "color=gray:size=160x120:rate=10:duration=1" \
+           -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1[v]" -map "[v]" "$tmp/flash.mp4" -y 2>/dev/null \
+         && ffmpeg -hide_banner -loglevel error \
+           -f lavfi -i "color=gray:size=160x120:rate=10:duration=1" \
+           -f lavfi -i "color=black:size=160x120:rate=10:duration=1" \
+           -f lavfi -i "color=gray:size=160x120:rate=10:duration=1" \
+           -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1[v]" -map "[v]" "$tmp/drop.mp4" -y 2>/dev/null; then
+        _wo="$(bash "$SCRIPT" --video "$tmp/flash.mp4" --whiteout --fps 10 2>&1 >/dev/null || true)"
+        _wot0="$(bash "$SCRIPT" --video "$tmp/flash.mp4" --whiteout --fps 10 --t0 30 2>&1 >/dev/null || true)"
+        _drp="$(bash "$SCRIPT" --video "$tmp/drop.mp4" --whiteout --fps 10 2>&1 >/dev/null || true)"
+        if grep -qi 'Whiteout(s)' <<<"$_wo" && grep -qE '@[0-9.]+s-@[0-9.]+s: [0-9]+ ms, peak luma' <<<"$_wo" \
+           && grep -qE '@3[0-9]\.[0-9]+s-@3[0-9]\.[0-9]+s' <<<"$_wot0" \
+           && grep -qi 'Black dropout(s)' <<<"$_drp"; then
+          pass "--whiteout flags a blown-highlight span and a black dropout (+ --t0 shift) (#102)"
+        else
+          fail "--whiteout detection not as expected (#102)"
+        fi
+      else
+        skip "could not build whiteout test clips (#102)"
+      fi
+      # 1.12.0 (#102): the numeric knobs reject garbage up front (exit 2), like the other modes.
+      bash "$SCRIPT" --video "$tmp/hang.mp4" --stall --stall-min banana >/dev/null 2>&1; _sm=$?
+      bash "$SCRIPT" --video "$tmp/hang.mp4" --whiteout --white-thresh nope >/dev/null 2>&1; _wt=$?
+      if [[ "$_sm" -eq 2 && "$_wt" -eq 2 ]]; then
+        pass "--stall/--whiteout reject non-numeric knobs (exit 2) (#102)"
+      else
+        fail "--stall/--whiteout knob validation wrong (stall-min=$_sm white-thresh=$_wt)"
+      fi
+    else
+      skip "python3 not installed (--stall/--whiteout e2e)"
+    fi
     # --saturation: a grey clip reads ~0, a vivid clip reads clearly higher (1.0.0 bonus).
     if ! command -v python3 >/dev/null 2>&1; then
       skip "python3 not installed (--saturation e2e)"
@@ -1288,6 +1341,18 @@ if [[ -f "$BOOTSTRAP" ]]; then
   else
     fail "portka-standard CLAUDE.md missing the commit-identity section (#98)"
   fi
+  # 1.12.0 (#103): step 4 carves out irreversible/outward-facing production merges (hand back the green
+  # PR for a go/no-go) and the block notes how the standard applies across a multi-repo session; the
+  # SemVer section explains the pre-1.0 cadence (#100).
+  if grep -q 'with one carve-out' <<<"$_cmflat" \
+     && grep -q 'outward-facing or irreversible production change' <<<"$_cmflat" \
+     && grep -q "don't auto-merge: hand back the green PR" <<<"$_cmflat" \
+     && grep -q 'Session spanning several repos' <<<"$_cmflat" \
+     && grep -q 'Pre-1.0' <<<"$_cmflat"; then
+    pass "portka-standard CLAUDE.md carves out prod-cutover merges + multi-repo + 0.x cadence (#103/#100)"
+  else
+    fail "portka-standard CLAUDE.md missing the 1.12.0 carve-out / multi-repo / cadence guidance (#103/#100)"
+  fi
   # 1.11.0 (#97 con 5): --dry-run must state what the real run would DO, not always "would write". On a
   # repo that already has tests/run-tests.sh, the dry-run reports it would leave it as-is.
   dr="$(mktemp -d)"; drh="$(mktemp -d)"
@@ -1470,6 +1535,24 @@ if [[ -f "$BOOTSTRAP" ]]; then
   else
     fail "portka-standard did not emit the native node:test for a package.json repo"
   fi
+  # 1.12.0 (#100): the scaffolded run-tests.sh (what CI runs) is a SUPERSET of the native suite — it
+  # runs `node --test` and fails closed, so `npm test` and CI can't drift green-here / red-there.
+  if grep -q 'native JS: node --test' "$mr/tests/run-tests.sh"; then
+    pass "scaffolded run-tests.sh invokes the native node --test suite (#100)"
+  else
+    fail "scaffolded run-tests.sh does not run the native node --test suite (#100)"
+  fi
+  if command -v node >/dev/null 2>&1; then
+    printf 'import{test}from"node:test";import a from"node:assert/strict";test("boom",()=>a.ok(false));\n' > "$mr/tests/z-fail.test.mjs"
+    if bash "$mr/tests/run-tests.sh" >/dev/null 2>&1; then
+      fail "scaffolded bash suite stayed green despite a failing native test (#100: not fail-closed)"
+    else
+      pass "scaffolded bash suite fails closed on a failing native node --test (#100)"
+    fi
+    rm -f "$mr/tests/z-fail.test.mjs"
+  else
+    skip "node not installed (native fail-closed check #100)"
+  fi
   # 1.3.0 (#81/ambient): the scaffolded CHANGELOG check anchors to a `## [ver]` heading — a loose
   # substring (a URL / prose mention) must NOT satisfy it. (Do this last; it clobbers the CHANGELOG.)
   printf '# Changelog\n\nSee https://x/rel/0.22.0 — shipped 0.22.0.\n\n## [0.1.0]\n- old\n' > "$mr/CHANGELOG.md"
@@ -1488,6 +1571,22 @@ if [[ -f "$BOOTSTRAP" ]]; then
     pass "portka-standard emits a passing unittest version-sync for a pyproject repo"
   else
     fail "portka-standard pyproject native test missing or failing"
+  fi
+  # 1.12.0 (#100 review): the native Python runner must NOT false-green a pytest-style suite when pytest
+  # is absent — `unittest discover` ignores bare `def test_*()` and prints OK on 0 collected. With only a
+  # failing bare-function test and no pytest, the scaffold NOTES it (no "PASS native Py"), never a pass.
+  if ! python3 -c 'import pytest' >/dev/null 2>&1; then
+    rm -f "$pyr/tests/test_version_sync.py"                 # leave ONLY a pytest-style test
+    printf 'def test_broken():\n    assert False\n' > "$pyr/tests/test_broken.py"
+    _pfout="$(bash "$pyr/tests/run-tests.sh" 2>&1 || true)"
+    if grep -qi 'no pytest installed and unittest collected 0' <<<"$_pfout" \
+       && ! grep -qE 'PASS[^a-z]*native Py' <<<"$_pfout"; then
+      pass "scaffolded native Py runner notes (not false-greens) a pytest-style suite w/o pytest (#100 review)"
+    else
+      fail "scaffolded native Py runner false-greened a pytest-style suite w/o pytest (#100 review)"
+    fi
+  else
+    skip "pytest importable here — can't exercise the unittest-fallback false-green guard (#100 review)"
   fi
   rm -rf "$pyr" "$pyh"
 
@@ -1542,10 +1641,46 @@ H
   mkdir -p "$ev/bad"
   echo '<html><head><title>x</title></head><body>hi</body></html>' > "$ev/bad/index.html"
   _b="$(bash "$EVAL" --dir "$ev/bad" 2>/dev/null || true)"
-  if grep -q 'FAIL' <<<"$_b" && grep -q 'meta description missing' <<<"$_b" && grep -q 'robots.txt missing' <<<"$_b"; then
+  # robots.txt is now WARN, not FAIL (#101 — advisory, not a broken-site failure); og:image absence is
+  # still a FAIL, so the bare site still shows a FAIL and the robots gap still surfaces (as a WARN).
+  if grep -q 'FAIL' <<<"$_b" && grep -q 'meta description missing' <<<"$_b" && grep -q 'no robots.txt' <<<"$_b"; then
     pass "evaluate-site.sh --dir flags a bare site's gaps"
   else
     fail "evaluate-site.sh --dir didn't flag the bare site"
+  fi
+  # 1.12.0 (#101): a CSP with 'unsafe-inline' in script-src is still credited but flagged (present !=
+  # strong); offline modes note og:image/canonical are presence-checked, not reachability-checked.
+  mkdir -p "$ev/weakcsp"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><meta http-equiv="Content-Security-Policy" content="script-src %s"></head><body><h1>h</h1></body></html>\n' "'self' 'unsafe-inline'" > "$ev/weakcsp/index.html"
+  _wc="$(bash "$EVAL" --dir "$ev/weakcsp" 2>/dev/null || true)"
+  if grep -qi 'CSP declared via <meta' <<<"$_wc" && grep -qi 'unsafe-inline' <<<"$_wc" && grep -qi 'reachability' <<<"$_wc"; then
+    pass "evaluate-site.sh flags CSP unsafe-inline + notes og:image/canonical reachability in --dir (#101)"
+  else
+    fail "evaluate-site.sh #101 CSP/reachability checks not as expected"
+  fi
+  # A strong CSP (no unsafe-inline) is credited WITHOUT the unsafe-inline warning (no false positive).
+  mkdir -p "$ev/strongcsp"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><meta http-equiv="Content-Security-Policy" content="script-src %s"></head><body><h1>h</h1></body></html>\n' "'self'" > "$ev/strongcsp/index.html"
+  if ! bash "$EVAL" --dir "$ev/strongcsp" 2>/dev/null | grep -qi 'unsafe-inline'; then
+    pass "evaluate-site.sh does not warn unsafe-inline on a strong CSP (#101)"
+  else
+    fail "evaluate-site.sh false-flagged unsafe-inline on a strong CSP (#101)"
+  fi
+  # 1.12.0 (#101 review): script-src falls back to default-src ONLY when script-src is absent — so a
+  # loose default-src 'unsafe-inline' WITH a locked-down script-src must NOT warn (scripts stay safe),
+  # while default-src 'unsafe-inline' with NO script-src must warn (scripts fall back to it).
+  mkdir -p "$ev/dscsp"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><meta http-equiv="Content-Security-Policy" content="default-src %s; script-src %s"></head><body><h1>h</h1></body></html>\n' "'unsafe-inline'" "'self'" > "$ev/dscsp/index.html"
+  mkdir -p "$ev/dsonly"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><meta http-equiv="Content-Security-Policy" content="default-src %s"></head><body><h1>h</h1></body></html>\n' "'self' 'unsafe-inline'" > "$ev/dsonly/index.html"
+  # capture-then-grep (not `| grep`): the evaluator exits non-zero on a bare site, and under pipefail a
+  # `| grep` pipeline would reflect THAT, not the match (issue #21 pattern).
+  _dsc="$(bash "$EVAL" --dir "$ev/dscsp" 2>/dev/null || true)"
+  _dso="$(bash "$EVAL" --dir "$ev/dsonly" 2>/dev/null || true)"
+  if ! grep -qi 'inline scripts' <<<"$_dsc" && grep -qi 'inline scripts' <<<"$_dso"; then
+    pass "evaluate-site.sh scopes the unsafe-inline warning to script-src fallback rules (#101 review)"
+  else
+    fail "evaluate-site.sh unsafe-inline warning ignores script-src/default-src fallback (#101 review)"
   fi
   # Scoring (1.2.0): a Scorecard with a weighted overall that rates a complete site ABOVE a bare
   # one. (Compare numeric scores — robust to the ANSI colour codes around the grade letter.)

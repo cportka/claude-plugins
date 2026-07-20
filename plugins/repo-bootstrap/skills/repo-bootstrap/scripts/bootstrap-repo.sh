@@ -233,12 +233,21 @@ For each change you make **in this repository**:
    never commit to `main` directly. If another repo is open in the same session (e.g. a plugin
    marketplace you installed tools from), it is **read-only reference**: do all your branches and PRs
    on *this* repo, never on it.
+   *Session spanning several repos you own?* These steps are per-repo: give each its own branch and PR,
+   keep each repo's tests/`CHANGELOG`/version in its own tree, and **coordinate the merges** rather than
+   firing each the instant it's green — a feature split across services should land in the order (and at
+   the time) the owner intends. See step 4's production carve-out.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
    request (opening it is pre-authorized — see the note after step 5; don't stop at "branch pushed"
    to ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
-4. **Green, then merge.** Wait until every check has **registered and finished** — an empty or
-   still-populating check list is *not* green — then merge the PR. Never merge on red or before CI
-   completes.
+4. **Green, then merge — with one carve-out.** Wait until every check has **registered and finished**
+   — an empty or still-populating check list is *not* green — then merge the PR. Never merge on red or
+   before CI completes. **Merge routine changes yourself on green.** But when the merge itself triggers
+   an **outward-facing or irreversible production change** — a first prod release, an auth/provider
+   cutover, a coupled multi-service deploy — **don't auto-merge: hand back the green PR** with the
+   specifics and let the owner make the go/no-go call. This mirrors the harness's own "confirm first for
+   hard-to-reverse / outward-facing actions" rule and any repo `HANDOFF.md` that asks to validate on a
+   preview deploy before flipping production.
 5. **Hand back a short PR link.** Give the user a short link to the PR — merged if you were able to,
    otherwise green and ready for them to merge, saying which. They delete the branch when satisfied —
    which you pick up next time you update `main` (step 1). *Branch-pinned caveat:* with a single
@@ -295,7 +304,9 @@ fixes. Keep one source of truth and the other places in agreement, and bump the 
 - `README.md` — a `**Version:**` line, if you keep one, that matches.
 
 `tests/run-tests.sh` checks the version is valid SemVer and that these agree; CI runs it on every
-push/PR, so they can't drift.
+push/PR, so they can't drift. Pre-1.0 (`0.MINOR.PATCH`) is the "still stabilizing" phase: while you're
+at `0.x`, `MINOR` absorbs breaking changes and `PATCH` is fixes — cutting **`1.0.0`** marks the first
+stable release (for a library, typically its first registry publish).
 
 ## Commit identity
 
@@ -776,6 +787,40 @@ else
 fi
 
 shopt -s nullglob
+# Native test suite (scaffolded by repo-bootstrap 1.12.0, #100): if this repo also carries a JS/Python
+# test suite, run it HERE and fail closed on its result — so this bash runner (what CI invokes) is a
+# SUPERSET of `npm test` / `pytest`, and the two can't drift green-here / red-there. Skipped with a
+# note when the toolchain isn't installed, so a docs- or bash-only repo is unaffected.
+# JS: let `node --test` DISCOVER its own tests (so a test outside tests/*.mjs still runs); it exits 0
+# and prints "# tests 0" when it finds none, which we treat as a clean skip (no false pass/fail).
+if [[ -f package.json ]] && command -v node >/dev/null 2>&1; then
+  _js_out="$(node --test 2>&1)"; _js_rc=$?
+  if grep -qE '(^|[^0-9])# tests 0([^0-9]|$)|no test files found' <<<"$_js_out"; then
+    :   # no JS tests discovered — nothing to assert
+  elif [[ "$_js_rc" -eq 0 ]]; then pass "native JS: node --test"; else fail "native JS: node --test (run 'node --test' for details)"; fi
+fi
+# Python: PREFER a real pytest (via the module, not just the CLI) — it runs BOTH pytest-style bare
+# `def test_*()` and unittest.TestCase suites and discovers beyond tests/. Only fall back to `unittest`
+# when pytest isn't importable, and then trust it ONLY if it actually ran a test: `unittest discover`
+# silently IGNORES bare-function tests and still prints "OK" on 0 collected, which would false-green a
+# pytest-style suite (review finding). When present tests can't be run, emit a NOTE, never a PASS.
+_py_tests=(tests/test_*.py tests/*_test.py test_*.py)
+if [[ ${#_py_tests[@]} -gt 0 || -f pyproject.toml ]]; then
+  if python3 -c 'import pytest' >/dev/null 2>&1; then
+    python3 -m pytest -q >/dev/null 2>&1; _py_rc=$?
+    if [[ "$_py_rc" -eq 0 ]]; then pass "native Py: pytest"
+    elif [[ "$_py_rc" -eq 5 ]]; then :          # pytest exit 5 = no tests collected — clean skip
+    else fail "native Py: pytest (run 'python3 -m pytest' for details)"; fi
+  elif [[ ${#_py_tests[@]} -gt 0 ]] && command -v python3 >/dev/null 2>&1; then
+    _ut_out="$(python3 -m unittest discover -s tests -p 'test_*.py' 2>&1)"; _ut_rc=$?
+    if grep -qE '^Ran [1-9][0-9]* test' <<<"$_ut_out"; then
+      if [[ "$_ut_rc" -eq 0 ]]; then pass "native Py: unittest"; else fail "native Py: unittest (run 'python3 -m unittest discover -s tests' for details)"; fi
+    else
+      echo "  note: Python tests present but no pytest installed and unittest collected 0 (pytest-style?) — install pytest to run them here"
+    fi
+  fi
+fi
+
 for t in tests/cases/*.sh; do
   if bash "$t"; then pass "case: $t"; else fail "case: $t"; fi
 done

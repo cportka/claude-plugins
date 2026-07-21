@@ -1157,6 +1157,28 @@ FP
     else
       fail "smoothness VFR classification wrong (#89): $_vfr"
     fi
+    # 1.12.1 (#105): the generic "choppy" verdict must distinguish DUPLICATE frames (a static UI/text
+    # recording) from DROPPED frames (jank). Inject a high-refresh-vs-low-effective rate (the generic
+    # branch) via the fake ffprobe, then vary the REAL clip: a static clip reads "mostly-static ... not
+    # choppy"; a moving clip keeps "likely choppy". (_mean_motion runs real ffmpeg on the clip, so the
+    # fake ffprobe — which only answers the rate queries — doesn't affect the motion probe.)
+    ffmpeg -hide_banner -loglevel error -f lavfi -i "color=gray:size=200x200:rate=10:duration=2" "$tmp/stat105.mp4" -y 2>/dev/null || true
+    # A dedicated HIGH-motion clip for the "choppy" half — testsrc2's mean inter-frame delta (~7/255)
+    # clears the 2.5 static gate with margin, so the assertion isn't brittle to ffmpeg-version drift
+    # (plain testsrc sits at ~3/255, only ~20% above the gate — review finding).
+    ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc2=size=200x200:rate=10:duration=2" "$tmp/mov105.mp4" -y 2>/dev/null || true
+    if [[ -s "$tmp/stat105.mp4" && -s "$tmp/mov105.mp4" ]]; then
+      _smstat="$(PATH="$_fpbin:$PATH" FAKE_RFR=120/1 FAKE_AFR=434/10 bash "$SCRIPT" --video "$tmp/stat105.mp4" --start 0 --end 1 --fps 2 --out "$tmp/s105.out" 2>&1 >/dev/null || true)"
+      _smmov="$(PATH="$_fpbin:$PATH" FAKE_RFR=120/1 FAKE_AFR=434/10 bash "$SCRIPT" --video "$tmp/mov105.mp4" --start 0 --end 1 --fps 2 --out "$tmp/m105.out" 2>&1 >/dev/null || true)"
+      if grep -qi 'mostly-static capture' <<<"$_smstat" && ! grep -q 'likely choppy' <<<"$_smstat" \
+         && grep -q 'likely choppy' <<<"$_smmov"; then
+        pass "smoothness distinguishes static-UI duplicate frames from real choppiness (#105)"
+      else
+        fail "smoothness static/choppy disambiguation wrong (#105): stat='$_smstat' mov='$_smmov'"
+      fi
+    else
+      skip "could not build the static/moving clips for the smoothness disambiguation (#105)"
+    fi
     # Feedback hint: prints a pre-filled link on stderr (when not suppressed); hidden when set.
     env -u VBA_NO_FEEDBACK_HINT bash "$SCRIPT" --video "$clip" --start 0 --end 1 --fps 2 \
       --out "$tmp/fb" >/dev/null 2>"$tmp/fb.err" || true

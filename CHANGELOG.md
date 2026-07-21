@@ -5,6 +5,22 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.12.1] - 2026-07-21
+
+A focused fix from a field report. **video-bug-analyzer → 1.12.1** (other plugins unchanged). PATCH.
+
+### Fixed (video-bug-analyzer → 1.12.1, #105)
+- **The `smoothness:` header no longer false-alarms "likely choppy" on a static UI/text recording.** A
+  low effective-vs-nominal frame rate (e.g. `43 fps vs 120 fps`) on a mostly-static screen recording is
+  almost all *duplicate* frames (nothing is moving), not *dropped* ones — but the header lumped
+  "dropped/duplicated" together and concluded "likely choppy", which could send someone chasing a
+  stutter that isn't there. The one genuinely ambiguous verdict now runs a cheap, **gated** motion probe
+  (a downscaled, low-fps, frame-capped `tblend` sample — so most runs never pay for it): when
+  inter-frame motion is low it reframes as *"~N% duplicate frames on a mostly-static capture … a high
+  duplicate ratio is expected here, not choppy"* and points at `--motion`/`--stall`; genuine
+  motion-with-a-shortfall still reads "likely choppy". The high-refresh (#83) and VFR-timebase (#89)
+  verdicts are unchanged, and if the probe can't run the old verdict is kept.
+
 ## [1.12.0] - 2026-07-20
 
 A triage round from four field reports: two new video failure-mode detectors, a production-cutover

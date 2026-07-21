@@ -259,7 +259,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.12.0"
+VBA_VERSION="1.12.1"
 
 VIDEO=""
 START=""
@@ -747,9 +747,24 @@ EOF
 # Diagnostic: which ffmpeg is in use (cite this when reporting extraction problems).
 [[ -n "$DRY_RUN" ]] || echo "ffmpeg: $(ffmpeg -version 2>/dev/null | head -n1)" >&2
 
-# a one-line smoothness header on every run — effective (avg) vs nominal (r)
-# frame rate + a dropped/duplicated estimate. The single best "is it choppy?" number, for free
-# (one ffprobe call), so it never has to be reached for by hand. Best-effort; silent without it.
+# cheap mean inter-frame motion (0-255) over a downscaled, low-fps, frame-capped sample — a rough "is
+# anything actually moving?" signal used ONLY to disambiguate the smoothness verdict (#105), so most
+# runs never pay for it. Echoes a number, or nothing on failure / too-short.
+_mean_motion() {
+  command -v ffmpeg >/dev/null 2>&1 || return 1
+  local mf; mf="$(mktemp)"
+  ffmpeg -hide_banner -loglevel error -i "$VIDEO" \
+    -vf "fps=3,scale=160:-2,tblend=all_mode=difference,signalstats,metadata=mode=print:file=$mf" \
+    -frames:v 48 -an -f null - >/dev/null 2>&1 || { rm -f "$mf"; return 1; }
+  awk -F= '/lavfi\.signalstats\.YAVG=/{ s+=$2+0; n++ } END{ if(n>=2) printf "%.2f", s/n }' "$mf"
+  rm -f "$mf"
+}
+
+# a one-line smoothness header on every run — effective (avg) vs nominal (r) frame rate + a verdict.
+# The single best "is it choppy?" number, for (almost) free (one ffprobe call). The one genuinely
+# ambiguous case — a low effective rate that could be DROPPED frames (jank) or DUPLICATE frames (a
+# mostly-static UI/text screen recording) — is disambiguated with a cheap, GATED motion probe, so a
+# static login-screen capture isn't false-alarmed as "choppy" (#105). Best-effort; silent w/o ffprobe.
 print_smoothness() {
   command -v ffprobe >/dev/null 2>&1 || return 0
   [[ -n "$VIDEO" && -f "$VIDEO" ]] || return 0
@@ -757,33 +772,50 @@ print_smoothness() {
   rfr="$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate   -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
   afr="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
   [[ -n "$rfr" && -n "$afr" ]] || return 0
-  awk -v r="$rfr" -v a="$afr" '
+  # Classify from the rates alone first (cheap). Branch is one of ok|near60|near30|vfr|generic|minor.
+  local cls
+  cls="$(awk -v r="$rfr" -v a="$afr" '
     function fr(s,  p){ if(index(s,"/")){split(s,p,"/"); return (p[2]+0)?p[1]/p[2]:0} return s+0 }
     function near(x,c){ return (x >= c-6 && x <= c+6) }   # near a common animation cadence (±6 fps)
     BEGIN{ R=fr(r); A=fr(a); if(R<=0||A<=0) exit;
-      printf "smoothness: effective %.1f fps vs nominal %.1f fps", A, R;
-      if (A < R) {
-        d=(1-A/R)*100;
-        # A high-refresh CAPTURE (>=90 Hz nominal) of a lower-cadence app (~30/~60 fps) reads as a
-        # big "dropped" %, but it is just expected frame *duplication* (display refreshes faster than
-        # the app renders), not jank (#83). Only irregular pacing is choppy — so when the effective
-        # rate lands near 30/60 on a high-refresh capture, name that instead of crying wolf, and
-        # point at --motion/--pacing (which localize *real* stutter).
-        if (R >= 90 && (near(A,60) || near(A,30))) {
-          cad = near(A,60) ? 60 : 30;
-          printf "  (~%.0f fps content on a %.0f Hz capture — normal for a %d fps app, not choppy; --motion/--pacing to check for real stutter)", A, R, cad;
-        } else if (R >= 200 && A >= 15) {
-          # VFR screen recordings (macOS: r_frame_rate 240/1, some muxers 600/1000) use nominal as
-          # a TIMEBASE, not a target — comparing against it called a healthy ~47fps control clip
-          # "80% dropped — likely choppy" (#89). Real display refreshes (90/120/144/165) stay under
-          # the branches above/below, so genuine high-refresh jank is still flagged (#83 contract).
-          printf "  (VFR/high-refresh capture: nominal %.0f is the container timebase, not a target — effective ~%.0f fps; --stutter/--pacing for real stutter)", R, A;
-        } else if (d>=5) {
-          printf "  (~%.0f%% frames dropped/duplicated — likely choppy; --cadence/--motion to localize)", d;
-        }
+      b="ok";
+      if (A < R) { d=(1-A/R)*100;
+        # A high-refresh CAPTURE (>=90 Hz) of a lower-cadence app (~30/60 fps) reads as a big "dropped"
+        # %, but that is expected frame *duplication*, not jank (#83). A VFR capture (macOS 240/1, some
+        # muxers 600/1000) uses nominal as a TIMEBASE, not a target (#89). Everything else that shortfalls
+        # by >=5% is "generic" — the case that needs the motion probe to tell dropped from duplicate.
+        if (R >= 90 && (near(A,60) || near(A,30))) b=(near(A,60)?"near60":"near30");
+        else if (R >= 200 && A >= 15) b="vfr";
+        else if (d>=5) b="generic";
+        else b="minor";
       }
-      printf "\n";
-    }' >&2
+      printf "%.4f %.4f %s", R, A, b;
+    }')"
+  [[ -n "$cls" ]] || return 0
+  local R A branch
+  read -r R A branch <<<"$cls"
+  # Only the generic case is ambiguous (dropped vs duplicate). Probe mean inter-frame motion for it: a
+  # mostly-static clip (low motion) whose effective rate lags nominal is just frame duplication — a UI/
+  # text recording — NOT choppiness. If the probe can't run (no ffmpeg / unreadable), keep the old verdict.
+  local mm="" static=""
+  if [[ "$branch" == "generic" ]]; then
+    mm="$(_mean_motion || true)"
+    [[ -n "$mm" ]] && awk -v m="$mm" 'BEGIN{exit !(m < 2.5)}' && static=1
+  fi
+  awk -v R="$R" -v A="$A" -v branch="$branch" -v mm="${mm:-0}" -v static="$static" 'BEGIN{
+    printf "smoothness: effective %.1f fps vs nominal %.1f fps", A, R;
+    if (branch=="near60"||branch=="near30"){ cad=(branch=="near60")?60:30;
+      printf "  (~%.0f fps content on a %.0f Hz capture — normal for a %d fps app, not choppy; --motion/--pacing to check for real stutter)", A, R, cad; }
+    else if (branch=="vfr"){
+      printf "  (VFR/high-refresh capture: nominal %.0f is the container timebase, not a target — effective ~%.0f fps; --stutter/--pacing for real stutter)", R, A; }
+    else if (branch=="generic"){ d=(1-A/R)*100;
+      if (static!="")
+        printf "  (~%.0f%% duplicate frames on a mostly-static capture (inter-frame motion ~%.1f/255) — a UI/text recording; a high duplicate ratio is expected here, not choppy; --motion/--stall to confirm)", d, mm+0;
+      else
+        printf "  (~%.0f%% frames dropped/duplicated — likely choppy; --cadence/--motion to localize)", d;
+    }
+    printf "\n";
+  }' >&2
 }
 [[ -n "$DRY_RUN" ]] || print_smoothness
 

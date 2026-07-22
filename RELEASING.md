@@ -16,9 +16,12 @@ there's no MCP tool for repo settings / external submissions) — they're for a 
    moves to a release like `1.0.0`). The README **Version:** line and each plugin's table row must
    match — the test suite enforces the table↔manifest sync.
 2. Add a dated entry to [CHANGELOG.md](./CHANGELOG.md) (Keep a Changelog format) and a footer link.
-3. Keep [IMPROVEMENTS.md](./IMPROVEMENTS.md) forward-looking only (shipped history goes in CHANGELOG).
-4. `bash tests/run-tests.sh` → 0 failures, and `claude plugin validate --strict <plugin>` (and `.`
-   for the marketplace) clean for every plugin.
+3. Keep [IMPROVEMENTS.md](./IMPROVEMENTS.md) forward-looking only (shipped history goes in CHANGELOG),
+   and refresh the **State at handoff** stamp in `docs/HANDOFF.md` (version + issue high-water mark)
+   so the cold-start doc can't silently drift.
+4. `bash tests/run-tests.sh` → 0 failures. Where the `claude` CLI is available, also run
+   `claude plugin validate --strict <plugin>` (and `.` for the marketplace) — a manual gate today;
+   CI does not run it (hosted runners lack the CLI), so don't treat CI-green as covering it.
 5. Open the PR, let CI (`.github/workflows/validate.yml`) go green, squash-merge to `main`.
 
 ### Versioning model (the single source of truth)

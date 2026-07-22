@@ -14,11 +14,11 @@ install plugins by name; a committed `.claude/settings.json` does the same for w
 | Piece | Where | What it is |
 | :-- | :-- | :-- |
 | Marketplace catalog | `.claude-plugin/marketplace.json` | The four plugin entries; `source` paths are relative (`./plugins/<name>`) |
-| `video-bug-analyzer` | `plugins/video-bug-analyzer/` | `extract-frames.sh` (~2,300 lines) — frame extraction + ~20 analysis modes over ffmpeg/ffprobe/python3 |
-| `app-website-evaluator` | `plugins/app-website-evaluator/` | `evaluate-site.sh` (~800 lines) — coverage-honest site scorecard (url / dir / html / hybrid inputs) |
-| `repo-bootstrap` | `plugins/repo-bootstrap/` | `bootstrap-repo.sh` (~900 lines) — onboards a repo to this marketplace and/or the Portka standard |
+| `video-bug-analyzer` | `plugins/video-bug-analyzer/` | `extract-frames.sh` (largest script; `wc -l` for the current size) — frame extraction + ~20 analysis modes over ffmpeg/ffprobe/python3 |
+| `app-website-evaluator` | `plugins/app-website-evaluator/` | `evaluate-site.sh` — coverage-honest site scorecard (url / dir / html / hybrid inputs) |
+| `repo-bootstrap` | `plugins/repo-bootstrap/` | `bootstrap-repo.sh` — onboards a repo to this marketplace and/or the Portka standard |
 | `tab-chord-formatter` | `plugins/tab-chord-formatter/` | `format-tab.py` — deterministic tab/chord cleanup + PDF songbook (headless Chromium) |
-| Test suite | `tests/run-tests.sh` | ONE self-contained runner (~2,100 lines) — manifests, version sync, per-script behavior, ffmpeg e2e |
+| Test suite | `tests/run-tests.sh` | ONE self-contained runner — manifests, version sync, per-script behavior, ffmpeg e2e |
 | CI | `.github/workflows/validate.yml` | Runs the suite + a `version-bump-guard` job on every push/PR |
 | Site | `index.html` (+ `assets/`, GitHub Pages) | The marketplace's public page; the suite dogfoods the evaluator against it |
 
@@ -37,8 +37,10 @@ presence is the "explicit ask" that authorizes the whole loop. Per change:
 2. Branch; never commit to `main` directly.
 3. Tests + CI, then **open the PR proactively** — don't stop at "branch pushed" and ask.
 4. Wait until every check has **registered and finished** (an empty check list is not green),
-   then merge it yourself. If GitHub refuses the merge (branch protection, token scope), hand back
-   the green PR — never self-approve or force-merge.
+   then merge it yourself — EXCEPT outward-facing/irreversible merges (a prod cutover, a coupled
+   multi-service deploy): hand those back green for the owner's go/no-go (standard step 4's
+   carve-out). If GitHub refuses a merge (branch protection, token scope), hand back the green PR
+   — never self-approve or force-merge.
 5. Hand back a short PR link. **Tags/releases are the human's manual step** — prepare version +
    CHANGELOG in the PR, never `git tag`/`gh release` (sandboxes block tag pushes).
 
@@ -122,16 +124,15 @@ hard way — see the issue numbers in comments):
 - **`PRIVACY.md` / `SECURITY.md` / `.well-known/security.txt`** — posture: local-only scripts, no
   data collection; vulnerabilities via GitHub private reporting.
 
-## State at handoff (2026-07-16)
+## State at handoff (refreshed each release — this stamp: 1.13.0, 2026-07-22)
 
-- Versions: repo **1.10.0** — all four plugins at 1.10.0 (the handoff-review fixes touched each).
-  Suite 234 tests green; shellcheck clean.
-- All feedback issues (#55–#94) triaged and closed; deferred items are in `IMPROVEMENTS.md` with
-  issue numbers. Highest-leverage open ideas: greenfield CI toolchain injection (bootstrap, #81),
-  `--track-color` (video, #89), the snippet-hijack heuristic (evaluator, #91).
-- Tags exist through `v1.9.0` (v1.7.0 intentionally skipped — tags are optional, human-cut).
-- All four plugins are submitted to Anthropic's community directory and pending review; nothing
-  to do — the nightly sync picks up merged work once approved.
+- Versions: the README header + plugin table and each `plugins/*/.claude-plugin/plugin.json` are
+  the live source of truth (per-plugin versions diverge by design). Suite size/green-ness: run
+  `bash tests/run-tests.sh`; CI mirrors it.
+- All feedback issues through #110 triaged; deferred items live in `IMPROVEMENTS.md` with issue
+  numbers. Tags/GitHub Releases are the human's manual step and may lag main — that's expected.
+- Community-directory submission state: check the open PR on anthropics' marketplace repo
+  (see `docs/DISTRIBUTION.md`); the nightly sync picks up merged work once approved.
 
 ## The spirit of the thing
 

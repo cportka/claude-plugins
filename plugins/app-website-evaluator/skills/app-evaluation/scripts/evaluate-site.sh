@@ -39,6 +39,7 @@
 # Exit: 0 always (this is an advisory report, not a gate); findings are in the output.
 #
 set -uo pipefail
+export LC_ALL=C   # locale-stable numerics (audit: comma-decimal locales break awk/sort/printf)
 
 URL=""
 DIR=""
@@ -228,9 +229,14 @@ if [[ -n "$URL" ]]; then
   fi
   # A 200 is trustworthy even behind a filter; a non-200 is only a real miss when the network is
   # reliable — otherwise answer "unknown" so the check sites report INFO, not FAIL (#91).
+  # Probe budget (audit): once NET_UNRELIABLE is set, a miss is predetermined to render as INFO —
+  # yet each probe still waited its full 15s, so a black-holed origin blocked ~60s across the four
+  # root files. Behind an unreliable network, cap probes at 4s: a genuine 200 still lands (and is
+  # still trusted); a hang stops costing 15s per file.
+  _probe_t=15; [[ -n "$NET_UNRELIABLE" ]] && _probe_t=4
   root_has() {
     local code
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${base}/$1" 2>/dev/null || true)"
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "$_probe_t" -A "$UA" "${base}/$1" 2>/dev/null || true)"
     if [[ "$code" == "200" ]]; then echo "yes"
     elif [[ -n "$NET_UNRELIABLE" ]]; then echo "unknown"
     else echo "no"; fi
@@ -238,7 +244,7 @@ if [[ -n "$URL" ]]; then
   # Probe a file at the HOST ROOT (what crawlers actually read), independent of any subpath.
   root_url_has() {
     local code
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -A "$UA" "${HOST_ROOT}/$1" 2>/dev/null || true)"
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "$_probe_t" -A "$UA" "${HOST_ROOT}/$1" 2>/dev/null || true)"
     if [[ "$code" == "200" ]]; then echo "yes"
     elif [[ -n "$NET_UNRELIABLE" ]]; then echo "unknown"
     else echo "no"; fi
@@ -473,11 +479,27 @@ sec "Security / hygiene"
 # --html paired with --headers). A static host can't set HTTP headers, so we ALSO score the
 # *source-visible* controls a static site can ship — a <meta> CSP, its third-party <script>
 # posture, a shipped security.txt — so Security isn't a blanket n/a in --dir / --html mode (#79).
+# A --url pointed at localhost/127.0.0.1/::1 is a LOCAL EVAL of (usually) a prod site — a
+# first-class workflow when a sandbox egress proxy blocks the live origin (#107). Plain-http and
+# missing HSTS there are artifacts of the local server, not defects of the target: report them as
+# INFO ("verify on the deployed origin") instead of FAIL/WARN, so a localhost run can't under-grade
+# a site that is fine in prod. Any other http:// URL is still a genuine transport failure.
+_local_eval=""
 if [[ "$MODE" == url ]]; then
-  if [[ "$URL" == https://* ]]; then ok "served over HTTPS"; else bad "not HTTPS — serve over TLS and redirect http→https"; fi
+  _url_host="$(sed -E 's#^[a-zA-Z]+://##; s#^\[([^]]+)\].*#\1#; s#[:/?#].*$##' <<<"$URL" | tr '[:upper:]' '[:lower:]')"
+  case "$_url_host" in localhost|127.0.0.1|::1) _local_eval=1 ;; esac
+fi
+if [[ "$MODE" == url ]]; then
+  if [[ -n "$_local_eval" ]]; then
+    info "local eval ($_url_host) — HTTPS/TLS not scored; verify https + the http→https redirect on the deployed origin"
+  elif [[ "$URL" == https://* ]]; then ok "served over HTTPS"; else bad "not HTTPS — serve over TLS and redirect http→https"; fi
 fi
 if [[ -n "$HEADERS" ]]; then
-  hdr '^strict-transport-security:' "HSTS header set" warn "no Strict-Transport-Security header"
+  if [[ -n "$_local_eval" ]]; then
+    info "local eval — HSTS not scored (local servers don't send it); verify Strict-Transport-Security on the deployed origin"
+  else
+    hdr '^strict-transport-security:' "HSTS header set" warn "no Strict-Transport-Security header"
+  fi
   hdr '^content-security-policy:'   "Content-Security-Policy header set" warn "no Content-Security-Policy response header (a <meta> CSP is a weaker fallback)"
   hdr '^x-content-type-options:'    "X-Content-Type-Options set" warn "no X-Content-Type-Options: nosniff"
   hdr '^referrer-policy:'           "Referrer-Policy set" info "no Referrer-Policy header"
@@ -509,6 +531,20 @@ if [[ -n "$HTML" ]]; then
     if grep -qE "script-src[^;]*unsafe-inline" <<<"$_csplc" \
        || { ! grep -qE "script-src" <<<"$_csplc" && grep -qE "default-src[^;]*unsafe-inline" <<<"$_csplc"; }; then
       warn "CSP allows inline scripts ('unsafe-inline' in script-src, or a default-src fallback with no script-src) — that defeats much of its XSS protection; move to hashes or nonces"
+    fi
+    # The 'strict-dynamic' trap (#110): in modern browsers, 'strict-dynamic' makes script-src IGNORE
+    # 'self', scheme sources (https:) and every host allow-list entry — only nonced/hashed scripts
+    # (and scripts they inject via DOM APIs) run. A policy that LISTS a third-party host next to
+    # 'strict-dynamic' looks correct but that entry is inert, and the external SDK it names silently
+    # fails to load unless the loader propagates the nonce. A static audit can't watch the network,
+    # but it CAN flag the misleading combination — which broke a load-bearing auth SDK in the field.
+    _ssrc="$(grep -oE "script-src[^;\"]*" <<<"$_csplc" | head -1 || true)"
+    if [[ -n "$_ssrc" ]] && grep -qE "strict-dynamic" <<<"$_ssrc"; then
+      if grep -qE "(https?:)?//|'self'|[[:space:]]https?:([[:space:]]|$)" <<<"$_ssrc"; then
+        warn "CSP script-src combines 'strict-dynamic' with host/scheme sources — browsers IGNORE those entries under strict-dynamic, so a listed third-party SDK may silently fail to load; nonce the loader (and verify each external script actually loads at runtime)"
+      else
+        info "CSP uses 'strict-dynamic' (nonce-based) — host allow-lists don't apply; verify third-party scripts load at runtime (they must be nonced or injected by a nonced loader)"
+      fi
     fi
   fi
   # Third-party <script src> origins widen the supply-chain/exfil surface. Absolute-URL scripts only

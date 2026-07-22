@@ -65,6 +65,10 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 | Is it moving, and *how much* over time? | `--motion` → `t,motion` (mean inter-frame delta) |
 | Is it choppy, and *where*? | `--stutter` (alias `--cadence`) — verdict (worst freeze) + per-window unique fps; `--freeze-min` tunes |
 | Does a freeze match the app's own timing marks? | `--stutter --marks perf.json` — overlays `performance.mark` entries; verdict names the aligned mark |
+| Is it hung — dead canvas / infinite splash loop? | `--stall` — flags ≥ `--stall-min` s of *no change* (reads "smooth" to a jank detector) |
+| Blown-white flash / mid-clip black dropout? | `--whiteout` — mean-luma spans with start/duration/peak (bright-side `--blackdetect`) |
+| Content vanished then came back (words dropped)? | `--content-revert` — A→B→A flicker events; `--crop` to the text region |
+| Part 2 of a split capture (timestamps off by the split)? | add `--t0 <sec>` to any mode — relabels all reported times into session clock |
 | Uneven frame *timing* (content changes every frame)? | `--pacing` → `t,interval_ms` from real presentation timestamps; median/p95/max + worst hitches |
 | Spinning in place vs spiralling inward? | `--flow` → `t,speed,curl,div` (swirl vs suck decomposition; `--flow-center fx:fy`) |
 | How much of the frame does the subject fill? | `--occupancy` → `t,coverage_pct,bbox` (the "present but too small" case) |
@@ -125,16 +129,7 @@ See `reference.md` for the reliability matrix, fps-per-bug-class table, and chec
 
 ## Reporting feedback
 
-`extract-frames.sh` already prints a **one-click, pre-filled feedback link** (plugin + ffmpeg
-version + the exact command, encoded) on stderr at the end of each run — surface that line to
-the user and encourage a click; it's how the tool improves. (Suppress with
-`VBA_NO_FEEDBACK_HINT=1`.) For a fuller report, run
-`${CLAUDE_PLUGIN_ROOT}/skills/video-bug-analysis/scripts/report-feedback.sh`
-(`--ran`/`--outcome`/`--notes` optional). If you have a GitHub MCP/`gh` with write access to
-`cportka/claude-plugins`, file it directly; otherwise hand the user the link (it needs no
-GitHub scope or session network — it just opens in a browser).
-
-**Session timing:** plugins load at session *start*, so a video dropped right after the
-plugin was enabled won't have the skill/commands available until the next session. Enable one
-session ahead; if a request arrives early, `extract-frames.sh --dry-run …` prints the exact
-ffmpeg commands to run by hand.
+Surface the pre-filled feedback link each run prints on stderr (suppress:
+`VBA_NO_FEEDBACK_HINT=1`); for a fuller report, `scripts/report-feedback.sh`. Skill not loaded
+this session (plugins load at session start)? `--dry-run` prints the raw ffmpeg commands to run
+by hand.

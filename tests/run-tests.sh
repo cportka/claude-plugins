@@ -111,9 +111,13 @@ for src, entry in registered.items():
         f"name mismatch: plugin.json '{pdata['name']}' vs marketplace '{entry['name']}'")
     assert pdata["name"] == os.path.basename(src), (
         f"name '{pdata['name']}' != directory '{os.path.basename(src)}'")
+    # 1.13.0 (audit): descriptions had silently DRIFTED between the two surfaces (users see the
+    # marketplace copy; the plugin.json copy is the source of truth) — enforce byte parity.
+    assert pdata.get("description") == entry.get("description"), (
+        f"description drift for '{pdata['name']}': plugin.json != marketplace.json")
 PY
 then
-  pass "every plugin is registered and names match (entry == plugin.json == dir)"
+  pass "every plugin is registered; names match; descriptions are in byte-parity (audit)"
 else
   fail "marketplace/plugin mismatch (see error above)"
 fi
@@ -402,13 +406,27 @@ fi
 # --- 9. shellcheck (optional) ---------------------------------------------------------
 section "shellcheck"
 if command -v shellcheck >/dev/null 2>&1; then
+  # Run per-file checks CONCURRENTLY — this section was fully serial and cost ~15s (the two
+  # biggest files alone ~13s); parallel, it's bound by the largest file (~9s saved per run,
+  # twice per merge in CI). Findings still print (from the saved logs) and fail per-file.
+  _scdir="$(mktemp -d)"
+  _i=0
   for sh in "${scripts[@]}"; do
-    if shellcheck "$sh"; then
+    ( shellcheck "$sh" > "$_scdir/$_i.log" 2>&1; echo $? > "$_scdir/$_i.rc" ) &
+    _i=$((_i + 1))
+  done
+  wait
+  _i=0
+  for sh in "${scripts[@]}"; do
+    if [[ "$(cat "$_scdir/$_i.rc" 2>/dev/null)" == "0" ]]; then
       pass "shellcheck clean: $sh"
     else
+      cat "$_scdir/$_i.log"
       fail "shellcheck findings: $sh"
     fi
+    _i=$((_i + 1))
   done
+  rm -rf "$_scdir"
 else
   skip "shellcheck not installed"
 fi
@@ -1029,6 +1047,32 @@ if command -v ffmpeg >/dev/null 2>&1; then
       else
         fail "--stall/--whiteout knob validation wrong (stall-min=$_sm white-thresh=$_wt)"
       fi
+      # 1.13.0 (#108): --content-revert flags A->B->A flicker (content vanished then restored) with a
+      # timestamp + gap; a change that never reverts is NOT an event; bad knob exits 2; --t0 shifts.
+      if ffmpeg -hide_banner -loglevel error \
+           -f lavfi -i "color=gray:size=200x120:rate=10:duration=1" \
+           -f lavfi -i "color=white:size=200x120:rate=10:duration=0.3" \
+           -f lavfi -i "color=gray:size=200x120:rate=10:duration=1" \
+           -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1[v]" -map "[v]" "$tmp/aba.mp4" -y 2>/dev/null \
+         && ffmpeg -hide_banner -loglevel error \
+           -f lavfi -i "color=gray:size=200x120:rate=10:duration=1" \
+           -f lavfi -i "color=white:size=200x120:rate=10:duration=1" \
+           -filter_complex "[0:v][1:v]concat=n=2:v=1[v]" -map "[v]" "$tmp/abonly.mp4" -y 2>/dev/null; then
+        _cr="$(bash "$SCRIPT" --video "$tmp/aba.mp4" --content-revert 2>&1 >/dev/null || true)"
+        _crn="$(bash "$SCRIPT" --video "$tmp/abonly.mp4" --content-revert 2>&1 >/dev/null || true)"
+        _crt0="$(bash "$SCRIPT" --video "$tmp/aba.mp4" --content-revert --t0 30 2>&1 >/dev/null || true)"
+        bash "$SCRIPT" --video "$tmp/aba.mp4" --content-revert --revert-window x >/dev/null 2>&1; _crrc=$?
+        if grep -qE 'content-revert: 1 event' <<<"$_cr" && grep -qE 'reverted after [0-9]+ ms' <<<"$_cr" \
+           && grep -q 'no A->B->A events' <<<"$_crn" \
+           && grep -qE '@3[0-9]\.[0-9]+s: reverted' <<<"$_crt0" \
+           && [[ "$_crrc" -eq 2 ]]; then
+          pass "--content-revert flags A->B->A flicker (not a plain change), honors --t0, validates knobs (#108)"
+        else
+          fail "--content-revert detection wrong (rc=$_crrc)"
+        fi
+      else
+        skip "could not build content-revert clips (#108)"
+      fi
     else
       skip "python3 not installed (--stall/--whiteout e2e)"
     fi
@@ -1054,8 +1098,9 @@ if command -v ffmpeg >/dev/null 2>&1; then
       skip "python3 not installed (--occupancy e2e)"
     elif ffmpeg -hide_banner -loglevel error -f lavfi -i "color=black:s=200x200:rate=4:duration=1" -vf "drawbox=x=90:y=90:w=20:h=20:color=white:t=fill" "$tmp/occ_s.mp4" -y 2>/dev/null \
        && ffmpeg -hide_banner -loglevel error -f lavfi -i "color=black:s=200x200:rate=4:duration=1" -vf "drawbox=x=20:y=20:w=160:h=160:color=white:t=fill" "$tmp/occ_b.mp4" -y 2>/dev/null; then
-      _occs="$(bash "$SCRIPT" --video "$tmp/occ_s.mp4" --occupancy --fps 2 2>/dev/null || true)"
-      _occserr="$(bash "$SCRIPT" --video "$tmp/occ_s.mp4" --occupancy --fps 2 2>&1 >/dev/null || true)"
+      # one invocation captures BOTH streams (this ran the identical command twice — audit).
+      bash "$SCRIPT" --video "$tmp/occ_s.mp4" --occupancy --fps 2 >"$tmp/occ_s.out" 2>"$tmp/occ_s.err" || true
+      _occs="$(cat "$tmp/occ_s.out")"; _occserr="$(cat "$tmp/occ_s.err")"
       _occb="$(bash "$SCRIPT" --video "$tmp/occ_b.mp4" --occupancy --fps 2 2>/dev/null || true)"
       _cs="$(awk -F, 'NR==2{print int($2+0.5)}' <<<"$_occs")"   # small-subject coverage %
       _cb="$(awk -F, 'NR==2{print int($2+0.5)}' <<<"$_occb")"   # big-subject coverage %
@@ -1509,6 +1554,102 @@ PY
     fail "--scope user scoping wrong (home CLAUDE.md: $(test -f "$suh/.claude/CLAUDE.md" && echo yes || echo no), project CLAUDE.md: $(test -f "$su/.claude/CLAUDE.md" && echo yes || echo no))"
   fi
   rm -rf "$su" "$suh"
+  # --- 1.13.0 (#98/#109): the corrected stop-hook ---------------------------------------
+  # The #109-verified false positive: after merge + branch-restart, a STALE origin/<branch> ref
+  # makes the stock hook flag GitHub's own squash-merge commit every turn. The corrected hook
+  # scopes checks to commits unpushed AND unmerged, so: (A) merged commit + stale ref -> silent 0;
+  # (B) a genuinely unpushed commit -> exit 2 "push" WITHOUT any noreply@anthropic.com demand;
+  # (C) after pushing -> 0 again.
+  SHOOK="plugins/repo-bootstrap/skills/repo-bootstrap/scripts/stop-hook-git-check.sh"
+  if [[ -x "$SHOOK" ]]; then
+    hkt="$(mktemp -d)"
+    git init -q --bare "$hkt/remote.git"
+    git -C "$hkt" clone -q "$hkt/remote.git" work 2>/dev/null
+    (
+      cd "$hkt/work" || exit 1
+      git config user.name "Declared Person"; git config user.email declared@example.com
+      echo a > f; git add f; git commit -qm init; git push -q origin HEAD:main
+      git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+      git checkout -qb feature; echo b > g; git add g; git commit -qm work
+      PRE="$(git rev-parse HEAD)"; git push -q origin feature; git checkout -q main
+      GIT_COMMITTER_NAME=GitHub GIT_COMMITTER_EMAIL=noreply@github.com git merge --squash -q feature >/dev/null 2>&1
+      GIT_COMMITTER_NAME=GitHub GIT_COMMITTER_EMAIL=noreply@github.com git commit -qm "feature (#1)"
+      git push -q origin main; git push -q origin --delete feature
+      git checkout -qB feature origin/main
+      git update-ref refs/remotes/origin/feature "$PRE"   # force the #109 stale-ref state
+      git config commit.gpgsign true; git config user.signingkey /nonexistent
+    )
+    _hk() { ( cd "$hkt/work" && echo '{"stop_hook_active":false}' | bash "$OLDPWD/$SHOOK" 2>&1 ); }
+    _a_out="$(_hk)"; _a_rc=$?
+    # -c commit.gpgsign=false: the repo config says gpgsign=true (so the HOOK exercises its
+    # unusable-key silence), but the commit itself must land everywhere — on a stock runner, real
+    # gpg + the bogus key FAILS the commit (h stays staged and case C reads "uncommitted changes"
+    # — the first two CI reds), while hosted envs' stub ssh-signer exits 0. Bypass signing for the
+    # commit only; the hook still reads the repo config.
+    ( cd "$hkt/work" && echo c > h && git add h && git -c commit.gpgsign=false commit -qm unpushed ) 2>/dev/null
+    _b_out="$(_hk)"; _b_rc=$?
+    # After pushing, explicitly sync the remote-tracking refs before re-running the hook: whether
+    # `git push` itself refreshes a (test-forced) STALE tracking ref varies by git version (2.54 on
+    # CI runners does not, older gits do — this exact test went red in CI on that difference). The
+    # hook's contract is about ref STATE, and the standard's own loop fetches/prunes, so the fetch
+    # models reality rather than weakening the assertion.
+    _c_push="$( cd "$hkt/work" && git push origin feature 2>&1; git fetch -q origin 2>&1 )"
+    _c_out="$(_hk)"; _c_rc=$?
+    if [[ "$_a_rc" -eq 0 && -z "$_a_out" ]] \
+       && [[ "$_b_rc" -eq 2 ]] && grep -q 'unpushed commit' <<<"$_b_out" \
+       && ! grep -q 'noreply@anthropic.com' <<<"$_b_out" \
+       && [[ "$_c_rc" -eq 0 ]]; then
+      pass "corrected stop-hook: merged squash + stale ref silent; unpushed nudges w/o identity rewrite; clean after push (#109)"
+    else
+      fail "corrected stop-hook behavior wrong (A=$_a_rc/'$_a_out' B=$_b_rc C=$_c_rc/'$_c_out' push/fetch='$_c_push')"
+    fi
+    rm -rf "$hkt"
+    # Bootstrap user-scope install: a STOCK hook (hardcoded noreply@anthropic.com demand) is
+    # replaced with a backup; a CUSTOM hook is left alone; dry-run states the outcome.
+    hb="$(mktemp -d)"; hbh="$(mktemp -d)"
+    mkdir -p "$hbh/.claude"
+    printf '#!/bin/bash\necho "git config user.email noreply@anthropic.com && git config user.name Claude"\n' > "$hbh/.claude/stop-hook-git-check.sh"
+    bash "$BOOTSTRAP" --portka-standard --scope user --dir "$hb" --home "$hbh" >/dev/null 2>&1
+    if [[ -f "$hbh/.claude/stop-hook-git-check.sh.stock.bak" ]] \
+       && ! grep -qF 'user.email noreply@anthropic.com' "$hbh/.claude/stop-hook-git-check.sh" \
+       && grep -q 'Portka corrected edition' "$hbh/.claude/stop-hook-git-check.sh"; then
+      pass "portka-standard replaces a stock stop-hook at user scope (backup kept) (#98/#109)"
+    else
+      fail "portka-standard stock stop-hook replacement wrong"
+    fi
+    printf '#!/bin/bash\n# my custom hook\nexit 0\n' > "$hbh/.claude/stop-hook-git-check.sh"
+    bash "$BOOTSTRAP" --portka-standard --scope user --dir "$hb" --home "$hbh" >/dev/null 2>&1
+    if grep -q 'my custom hook' "$hbh/.claude/stop-hook-git-check.sh"; then
+      pass "portka-standard leaves a custom stop-hook alone"
+    else
+      fail "portka-standard clobbered a custom stop-hook"
+    fi
+    rm -rf "$hb" "$hbh"
+    # The plugin's SessionStart refresh hook: same replace-stock semantics, driven by $HOME.
+    RHOOK="plugins/repo-bootstrap/hooks/refresh-stop-hook.sh"
+    rh="$(mktemp -d)"; mkdir -p "$rh/.claude"
+    printf '#!/bin/bash\necho "git config user.email noreply@anthropic.com"\n' > "$rh/.claude/stop-hook-git-check.sh"
+    _rh_out="$(HOME="$rh" bash "$RHOOK" 2>&1)"
+    if grep -q 'Portka corrected edition' "$rh/.claude/stop-hook-git-check.sh" \
+       && [[ -f "$rh/.claude/stop-hook-git-check.sh.stock.bak" ]] \
+       && grep -q 'replaced the stock stop-hook' <<<"$_rh_out"; then
+      pass "SessionStart refresh hook heals a stock stop-hook each session (#109)"
+    else
+      fail "SessionStart refresh hook did not replace the stock hook"
+    fi
+    rm -rf "$rh"
+  else
+    fail "corrected stop-hook missing or not executable: $SHOOK"
+  fi
+  # 1.13.0 (#109): the standard's branch-pinned note carries the prune step + push recipe, and the
+  # Commit identity section tells agents a hook's hardcoded identity never overrides the declared one.
+  if grep -q 'git remote prune origin' <<<"$_cmflat" \
+     && grep -q 'recreates' <<<"$_cmflat" \
+     && grep -q 'never reset authorship to satisfy' <<<"$_cmflat"; then
+    pass "portka-standard CLAUDE.md: prune step + push recipe + hook-identity divergence note (#109)"
+  else
+    fail "portka-standard CLAUDE.md missing the #109 prune/push/identity guidance"
+  fi
 else
   fail "bootstrap script not found: $BOOTSTRAP"
 fi
@@ -1704,6 +1845,46 @@ H
   else
     fail "evaluate-site.sh unsafe-inline warning ignores script-src/default-src fallback (#101 review)"
   fi
+  # 1.13.0 (#110): 'strict-dynamic' makes script-src host/scheme entries INERT — listing a
+  # third-party host next to it warns (the SDK may silently fail to load); a clean nonce-only
+  # strict-dynamic policy gets an INFO, not a warn.
+  mkdir -p "$ev/sdhost" "$ev/sdnonce"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><meta http-equiv="Content-Security-Policy" content="script-src %s https://x.example.dev"></head><body><h1>h</h1></body></html>\n' "'nonce-a' 'strict-dynamic' 'self' https:" > "$ev/sdhost/index.html"
+  printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y><meta http-equiv="Content-Security-Policy" content="script-src %s"></head><body><h1>h</h1></body></html>\n' "'nonce-a' 'strict-dynamic'" > "$ev/sdnonce/index.html"
+  _sdh="$(bash "$EVAL" --dir "$ev/sdhost" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  _sdn="$(bash "$EVAL" --dir "$ev/sdnonce" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if grep -q "WARN.*strict-dynamic' with host/scheme sources" <<<"$_sdh" \
+     && ! grep -q "WARN.*strict-dynamic" <<<"$_sdn" \
+     && grep -qi "INFO.*strict-dynamic" <<<"$_sdn"; then
+    pass "evaluate-site.sh flags strict-dynamic + inert host allow-list; nonce-only reads INFO (#110)"
+  else
+    fail "evaluate-site.sh strict-dynamic handling wrong (#110)"
+  fi
+  # 1.13.0 (#107): --url at localhost = a LOCAL EVAL — HTTPS/HSTS report as INFO ("verify on the
+  # deployed origin"), never FAIL/WARN, so a localhost run can't under-grade a prod site; a plain
+  # http:// NON-local URL still fails.
+  _lb="$(mktemp -d)"
+  cat > "$_lb/curl" <<'LC'
+#!/usr/bin/env bash
+case "$*" in
+  *-sSI*) printf 'HTTP/1.1 200 OK\ncontent-type: text/html\n' ;;
+  *"-o /dev/null"*) echo 200 ;;
+  *robots.txt*|*sitemap*|*llms*|*security.txt*) exit 22 ;;
+  *) printf '<!doctype html><html lang=en><head><title>t</title><meta name=viewport content=x><meta name=description content=y></head><body><h1>h</h1></body></html>\n' ;;
+esac
+LC
+  chmod +x "$_lb/curl"
+  _lo="$(PATH="$_lb:$PATH" bash "$EVAL" --url http://localhost:3201 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  _le="$(PATH="$_lb:$PATH" bash "$EVAL" --url http://example.com 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if grep -q 'INFO  local eval (localhost)' <<<"$_lo" \
+     && grep -q 'INFO  local eval — HSTS not scored' <<<"$_lo" \
+     && ! grep -q 'FAIL  not HTTPS' <<<"$_lo" \
+     && grep -q 'FAIL  not HTTPS' <<<"$_le"; then
+    pass "evaluate-site.sh: localhost eval scores HTTPS/HSTS as INFO; non-local http still FAILs (#107)"
+  else
+    fail "evaluate-site.sh localhost-eval handling wrong (#107)"
+  fi
+  rm -rf "$_lb"
   # Scoring (1.2.0): a Scorecard with a weighted overall that rates a complete site ABOVE a bare
   # one. (Compare numeric scores — robust to the ANSI colour codes around the grade letter.)
   _ovscore() { bash "$EVAL" --dir "$1" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' \

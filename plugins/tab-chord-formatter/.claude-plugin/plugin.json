@@ -1,7 +1,7 @@
 {
   "name": "tab-chord-formatter",
-  "version": "1.10.0",
-  "description": "Format a messy guitar tab or chord sheet into a clean, standard, readable layout — for screen or print. Paste a tab copied from anywhere and get back a normalized chord sheet: standardized [Section] labels, chords aligned over the right lyric syllables, a tidy metadata header (Title/Artist/Capo/Key/Tuning), and well-formed 6-line ASCII tab blocks. Print mode renders a consistent monospace PDF songbook (one or many songs, a target number of songs per page) via headless Chromium. A bundled script does the deterministic cleanup and rendering; the skill applies judgment to re-align chords and infer structure.",
+  "version": "1.13.0",
+  "description": "Format a messy guitar tab or chord sheet into a clean, aligned layout, or render a consistent monospace PDF songbook \u2014 a deterministic cleanup script plus model judgment for chord-over-lyric alignment and section structure.",
   "author": {
     "name": "Chris Portka"
   },

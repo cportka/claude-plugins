@@ -9,9 +9,16 @@ on:
     branches: [main]
   pull_request:
 
+# The standard's branch-restart loop force-pushes routinely — cancel superseded runs instead of
+# queueing them, and cap runtime so a hung ffmpeg can't burn an hour of runner time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

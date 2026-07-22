@@ -44,6 +44,10 @@ form and are triaged into the items below.
 - Scene-change is heuristic (threshold per clip); many PNGs cost tokens if the window/fps isn't tight.
 
 **Ideas (not yet built)**
+- **Token-level `--content-revert`** (#108, the remaining half): the shipped detector diffs frame
+  *signatures* (A→B→A on pixels); an OCR variant would diff word SETS so "which words dropped"
+  is named in the verdict, and an auto-FPS-boost around detected change regions would catch
+  transients even shorter than the 10 fps default samples. `--ocr-roi` covers it manually today.
 - **`--app-crop` — mobile-chrome auto-crop** (#96). On portrait phone captures the URL bar + toolbar
   + status bar eat ~25% of every contact tile, right where legibility is scarcest. Heuristic: find the
   stable chrome bands (top/bottom) by per-row temporal variance — chrome never changes, the app always
@@ -193,9 +197,12 @@ form and are triaged into the items below.
   FAQPage/Review/Article/HowTo, but a portfolio or gallery site's natural schema is an `ItemList` of
   `CreativeWork`s — currently unrewarded. Credit those types (and suggest them for a portfolio-classed
   target) so the advice fits creative sites, not just content/commerce ones.
-- **Render-blocking CSS shipped in 1.11.0 (#97)** — the Performance section now warns on cross-origin
-  and same-origin render-blocking stylesheets. Remaining: it's source-visible only (no waterfall/size),
-  and it can't see a `@import` chain inside a stylesheet it doesn't fetch.
+- **Waterfall/size-blind render-blocking CSS check** (#97, the remaining gap): the warn itself is
+  source-visible only — no fetch, so no sizes/waterfall, and it can't see an `@import` chain inside
+  a stylesheet it never opens. A `--url`-mode fetch of first-party CSS would close it.
+- **Runtime CSP verification** (#110, the remaining gap): the `strict-dynamic` inert-allowlist WARN
+  is static; actually confirming each third-party script loads under the policy needs a headless
+  browser run (the Chromium shipped for tab-PDF could be reused).
 - **More source-derivable perf signals to lift `--dir` Perf off `n/a`** (#101): the Performance dimension
   reads `n/a` (starred) when a minimal site has no external scripts/stylesheets/images to score. Crediting
   more *source-level* signals — `loading="lazy"` (already), `async`/`defer` (already), plus a new
@@ -232,13 +239,24 @@ form and are triaged into the items below.
 - Markdown link-lint; an optional macOS CI leg for the `brew` install path.
 
 ## Discoverability
-Done: the **GitHub Pages** site (`cportka.github.io/claude-plugins`), enriched `plugin.json`
-keywords, repo description/topics, and **all four plugins submitted to the Anthropic community
-directory** (pending review as of 2026-07-16; the catalog re-syncs from `main` nightly once
-approved — nothing to maintain). Remaining ideas: the announcement channels in
-[docs/DISTRIBUTION.md](./docs/DISTRIBUTION.md) (awesome-lists, posts) as releases warrant.
+Remaining ideas: the announcement channels in [docs/DISTRIBUTION.md](./docs/DISTRIBUTION.md)
+(awesome-lists, posts) as releases warrant. (Shipped groundwork — Pages site, keywords,
+community-directory submission — is tracked in `docs/HANDOFF.md`'s state section and CHANGELOG.)
 
 ## Repo / CI (ideas)
 - **Run the `--pdf` e2e in CI**: `validate.yml` never installs a Playwright Chromium, so the
   format-tab PDF test always SKIPs there (it runs locally where `PLAYWRIGHT_BROWSERS_PATH` is
   set). A pinned `npx playwright install chromium` step would cover it, at the cost of CI time.
+- **Cache CI apt packages + pin shellcheck** (audit): validate.yml apt-installs
+  ffmpeg/shellcheck/tesseract on every run (~30–60s) and takes whatever shellcheck the runner
+  image ships — a runner bump can inject new SC findings with zero repo changes. Cache the
+  packages and pin a shellcheck version (static binary + actions/cache).
+- **Run `claude plugin validate --strict` in CI** (audit): the documented release gate is
+  manual-only today (RELEASING.md says so); a best-effort CI step (install the claude CLI, run
+  per-plugin + marketplace) would automate it once stable in headless runners.
+- **Trim `extract-frames.sh --help` further** (token audit): option entries still carry
+  release/issue annotations and multi-line histories (~5.5K tokens per print); a disciplined
+  1–3-lines-per-flag pass would halve it. The in-code comments keep the history.
+- **Evaluator suite fixture reuse** (audit): the e2e section re-runs the same `good`/`bad`
+  fixtures several times where one captured run could feed multiple greps (~seconds per run);
+  same for halving the `--flow` fixture size once its verdict margins are re-verified.

@@ -5,6 +5,81 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.13.0] - 2026-07-22
+
+The authorship-fix + audit release: a persistent end to the per-turn "squash-merge flagged as
+unverified authorship" false positive (#109/#98), triage of #107/#108/#110, and a whole-repo
+efficiency/token/docs audit (three parallel review agents; findings verified before applying).
+**All four plugins → 1.13.0.** MINOR.
+
+### Added (repo-bootstrap → 1.13.0, #109/#98) — the persistent authorship fix
+- **A corrected `stop-hook-git-check.sh` ships with the plugin** (`skills/repo-bootstrap/scripts/`).
+  The stock hosted Stop hook diffs `origin/<branch>..HEAD`; after the standard's merge →
+  branch-restart cycle the deleted branch's remote-tracking ref lingers (refspec-scoped fetches
+  never prune it), so that stale range spans **GitHub's own squash-merge commit** — flagged as
+  "unverified authorship" with a rewrite-it suggestion, every turn (#109's verified root cause).
+  The corrected edition scopes every check to commits **unpushed AND unmerged** (`HEAD --not
+  <upstream> <default>` — one `--not`, which toggles), reads the expected identity from the repo's
+  **declared** `git config` (never a hardcoded `noreply@anthropic.com`), treats signatures as
+  informational when signing is unusable (empty/stub keys; squash-merges discard branch sigs
+  anyway), and never suggests rewriting pushed/merged history.
+- **A SessionStart hook auto-heals the stock hook each session.** Hosted containers re-provision
+  `~/.claude` (direct edits don't persist — #109 verified a mid-session revert), so the plugin's
+  `hooks/refresh-stop-hook.sh` replaces a recognizably-STOCK hook with the corrected edition at
+  session start (backup kept; custom hooks untouched). `--portka-standard` (user scope) installs
+  or refreshes it too.
+- **The standard's branch-pinned note now carries the no-hook-needed fix:** `git remote prune
+  origin` after each restart (kills the stale ref so even the stock hook goes quiet), the matching
+  push recipe (auto-deleted branch → plain `git push -u` recreates; `--force-with-lease` only when
+  the branch persists), and a Commit-identity note that a hook's hardcoded identity never overrides
+  the declared one.
+
+### Added (video-bug-analyzer → 1.13.0, #108)
+- **`--content-revert` — the non-monotonic-content detector.** The third failure axis: `--stutter`
+  reads timing, `--stall` reads "nothing changes"; this flags content going BACKWARD — an element
+  present in frame N vanishes and REAPPEARS within `--revert-window` s (default 1.5): a transcript
+  dropping words then restoring them. A→B→A on small grayscale frame signatures with hysteresis;
+  samples at 10 fps by default (sub-second transients; explicit `--fps` wins); honors
+  `--crop`/`--start`/`--end`/`--t0`. Token-level (OCR word-set) detection is on the roadmap.
+
+### Changed (app-website-evaluator → 1.13.0, #107/#110)
+- **Localhost eval no longer drags Security (#107).** `--url http://localhost|127.0.0.1|::1` is a
+  local eval of (usually) a prod site — plain-http and missing HSTS there are artifacts of the
+  local server, now INFO ("verify on the deployed origin") and excluded from scoring; a non-local
+  `http://` URL still FAILs.
+- **The `strict-dynamic` trap is flagged (#110).** Under `'strict-dynamic'`, browsers IGNORE
+  `'self'`/scheme/host entries in `script-src` — a policy listing a third-party SDK host next to it
+  looks right but the entry is inert, and the SDK can silently fail to load. That combination now
+  WARNs (nonce the loader; verify each external script loads); a clean nonce-only strict-dynamic
+  policy reads INFO.
+
+### Changed (audit round — token/context, docs, CI, suite)
+- **Skills slimmed where agents pay per session:** the video `reference.md` rewritten 296 → ~110
+  lines (syntax/defaults live in `--help` alone now; interpretation guides + misread traps stay),
+  its SKILL.md router gained the missing `--stall`/`--whiteout`/`--content-revert`/`--t0` rows
+  (the 1.11–1.13 features were unreachable from the in-context docs), and the evaluator /
+  tab-chord / repo-bootstrap SKILL.mds dropped ~800 tokens of `--help` duplication. Frontmatter
+  descriptions tightened for sharper skill triggering.
+- **Plugin metadata unified:** all four `plugin.json` descriptions cut to ~35–40 words,
+  `marketplace.json` now MIRRORS them byte-for-byte (they had drifted apart) and carries the
+  homepage/repository/license/keywords the distribution playbook mandates; the suite enforces
+  parity so they can't drift again.
+- **Docs de-drifted:** `docs/HANDOFF.md` step 4 now carries the production-cutover carve-out
+  (it contradicted the 1.12.0 standard), its state section is stamped per release (a RELEASING.md
+  checklist step now demands it), rotting line-count anchors removed; README's hand-enumerated
+  mode list replaced with a pointer; RELEASING.md is honest that `claude plugin validate --strict`
+  is a manual gate (CI lacks the CLI); IMPROVEMENTS.md is forward-looking-only again.
+- **CI + suite faster/safer:** `validate.yml` gains `concurrency` (superseded runs cancel — the
+  branch-restart loop force-pushes routinely) and `timeout-minutes`; the suite's shellcheck section
+  runs per-file checks concurrently (~9s saved/run) and a duplicated `--occupancy` invocation
+  captures both streams in one run. `publish.sh --release` no longer `gh release create`s directly
+  (it raced release.yml, the single notes authority) — it prints the tag commands.
+
+### Deferred to IMPROVEMENTS.md (with issue refs)
+- Token-level `--content-revert` + auto-FPS-boost (#108); CI apt caching + pinned shellcheck +
+  `plugin validate --strict` in CI; a further `--help` trim; evaluator fixture reuse in the suite;
+  runtime CSP verification (#110) and the CSS waterfall gap (#97).
+
 ## [1.12.1] - 2026-07-21
 
 A focused fix from a field report. **video-bug-analyzer → 1.12.1** (other plugins unchanged). PATCH.

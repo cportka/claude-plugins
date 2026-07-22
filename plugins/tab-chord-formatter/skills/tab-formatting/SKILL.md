@@ -1,6 +1,6 @@
 ---
 name: tab-formatting
-description: Format a guitar tab or chord sheet into a clean, standard, readable layout and output the text, OR render a printable PDF songbook. Use when the user pastes or links a song's chords/tab (chords over lyrics, a 6-line ASCII tablature, or a Capo/Key/Tuning header) — often messy, copied from a web page or email with broken spacing — and asks to clean it up, standardize, reformat, align the chords, "make this tab readable," or print/PDF a songbook (one or many songs, a target number of songs per page). Two modes: screen (plain text) and print (a consistent monospace PDF, default one song per page).
+description: Format a guitar tab or chord sheet into a clean, readable layout, or render a monospace PDF songbook. Use when the user pastes or links chords/tab (chords over lyrics, ASCII tablature, a Capo/Key/Tuning header) and asks to clean it up, align the chords, "make this readable," or print/PDF a songbook.
 ---
 
 # Tab / Chord Formatter
@@ -25,12 +25,10 @@ ${CLAUDE_PLUGIN_ROOT}/skills/tab-formatting/scripts/format-tab.py < input.txt
 ${CLAUDE_PLUGIN_ROOT}/skills/tab-formatting/scripts/format-tab.py input.txt
 ```
 
-It does only the safe, reversible things: strips HTML tags and decodes entities (`&amp;` → `&`,
-`&#39;` → `'`), normalizes line endings, expands tabs, strips *trailing* whitespace (never a
-line's **internal** spacing — that spacing is the chord/lyric/tab alignment), standardizes
-section labels to `[Title Case]` with one blank line around them, collapses runs of blank lines,
-and is **idempotent** (running it twice changes nothing). It deliberately does **not** touch
-alignment — pass its output to step 2.
+It does only the safe, reversible things (strip tags/entities, normalize endings, standardize
+`[Section]` labels, collapse blank runs — full list in `--help`), never a line's **internal**
+spacing (that spacing IS the chord/lyric alignment), and is idempotent. It deliberately does
+**not** touch alignment — pass its output to step 2.
 
 If the user pasted the tab inline rather than as a file, you can still reason over it directly;
 the script is most useful for a copied-from-web blob with entities/tags.
@@ -78,11 +76,6 @@ ${CLAUDE_PLUGIN_ROOT}/skills/tab-formatting/scripts/format-tab.py --print --pdf 
 … --print --html songbook.html book.txt
 ```
 
-- **Input can be many songs.** Songs are split on a title line (`Artist – Title`, un-indented,
-  preceded by a blank line) or an explicit form-feed; a single tab with no such title is one song.
-- **`--songs-per-page N`** (default 1), **`--font`** (default `Courier New`), **`--size`** pt
-  (default 10). `--dedent` is **on by default** (strips each song's common leading indentation so
-  the left margin is consistent and wide lines don't overflow); `--no-dedent` keeps the source.
-- PDF needs Chromium/Chrome (auto-detected on `PATH` or a Playwright browsers dir). For best
-  results, clean each song's alignment (steps 1–2) **before** rendering — the PDF is a faithful
-  monospace snapshot, so the chord-over-lyric alignment must already be right in the text.
+Flags, defaults, and the song-split rule are in `--help` (PDF needs Chromium/Chrome; `--html`
+is the no-Chromium fallback). Clean each song's alignment (steps 1–2) **before** rendering —
+the PDF is a faithful monospace snapshot, so the alignment must already be right in the text.

@@ -10,30 +10,119 @@
     {
       "name": "video-bug-analyzer",
       "source": "./plugins/video-bug-analyzer",
-      "description": "Diagnose UI and rendering bugs from a screen recording — and reason over any clip's look + motion. Give Claude a video and roughly when the bug happens; the plugin extracts frames (contact sheet, scene-cut detection, per-timestamp zoom + before/after strips, ROI time-stack --stack) and reasons over them to pinpoint the defect. Quantifies FPS stutter / dropped frames + freeze gaps (--stutter) and frame-pacing jitter (--pacing). Doubles as an art/colour-reference tool: --palette pulls a clip's hex ramp, --palette --over-time emits the colour arc (t,[hex...] per window), and --loop-check reports the first-vs-last seam diff for a seamless loop; GIF input works on every mode. Runs never overwrite a previous extraction; --check-update spots a stale install. Requires ffmpeg (auto-installs where the sandbox allows).",
+      "description": "Extract and reason over frames from a screen recording to diagnose UI/rendering bugs \u2014 stutter, hangs (--stall), whiteouts, content flicker (--content-revert), black screens, motion character \u2014 or read any clip's look, palette, and pacing. Requires ffmpeg (auto-installs where the sandbox allows).",
       "category": "debugging",
-      "tags": ["video", "screen-recording", "debugging", "bug", "stutter", "fps", "pacing", "roi", "palette", "loop-check"]
+      "tags": [
+        "video",
+        "screen-recording",
+        "debugging",
+        "bug",
+        "stutter",
+        "fps",
+        "pacing",
+        "roi",
+        "palette",
+        "loop-check"
+      ],
+      "homepage": "https://github.com/cportka/claude-plugins/tree/main/plugins/video-bug-analyzer",
+      "repository": "https://github.com/cportka/claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "video",
+        "bug",
+        "screen-recording",
+        "debugging",
+        "claude-code-plugin",
+        "ffmpeg",
+        "frames",
+        "contact-sheet",
+        "portka-tools"
+      ]
     },
     {
       "name": "repo-bootstrap",
       "source": "./plugins/repo-bootstrap",
-      "description": "Set up a repo to use portka-tools plugins (writes .claude/settings.json + optional CI; --print-only for a classifier-safe manual mode), and optionally install the Portka standard setup: a workflow CLAUDE.md (branch-per-change, releases left to a human, tool feedback funneled to the marketplace's issues not stray branches), a git/gh permissions allowlist, and an enforced SemVer version sync bound to the repo's existing version (package.json / pyproject.toml / Cargo.toml / VERSION / README) with a basic test suite whose CHANGELOG check anchors to a real release heading — plus a native version-sync test (node:test / unittest) and a wired-up npm test for JS/Python repos.",
+      "description": "Onboard a repo to the portka-tools marketplace (committed .claude/settings.json + optional CI), and optionally install the Portka standard: a workflow CLAUDE.md, a git/gh permissions allowlist, an enforced SemVer sync with tests, and the corrected hosted git stop-hook.",
       "category": "workflow",
-      "tags": ["bootstrap", "scaffold", "setup", "marketplace"]
+      "tags": [
+        "bootstrap",
+        "scaffold",
+        "setup",
+        "marketplace"
+      ],
+      "homepage": "https://github.com/cportka/claude-plugins",
+      "repository": "https://github.com/cportka/claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "bootstrap",
+        "scaffold",
+        "setup",
+        "marketplace",
+        "claude-code-plugin"
+      ]
     },
     {
       "name": "app-website-evaluator",
       "source": "./plugins/app-website-evaluator",
-      "description": "Evaluate an app or website with a standardized, coverage-honest scorecard — each dimension 0-100 + letter grade, a weight-averaged overall that is starred when unassessed weight is excluded, and optional --json. Scores a live --url, a local --dir build, or pre-fetched --html (file or stdin, +--headers) so an agent behind a sandbox egress proxy still gets the full scorecard. Security credits source-visible controls (a <meta> CSP, security.txt, no third-party <script> origins). AI-readiness parse-validates JSON-LD and credits rich schema types (FAQPage/Review/Article). Covers SEO, crawlability, AI-readiness, social/sharing assets, security, performance, and growth — tailored to the site's type and community.",
+      "description": "Audit an app or website into a standardized, coverage-honest scorecard (per-dimension 0-100 + letter grade, weighted overall, --json) from a live --url, a local --dir build, or pre-fetched --html \u2014 SEO, crawlability, AI-readiness, social, security, performance, growth.",
       "category": "analysis",
-      "tags": ["seo", "audit", "website", "growth", "performance", "accessibility", "scorecard"]
+      "tags": [
+        "seo",
+        "audit",
+        "website",
+        "growth",
+        "performance",
+        "accessibility",
+        "scorecard"
+      ],
+      "homepage": "https://github.com/cportka/claude-plugins/tree/main/plugins/app-website-evaluator",
+      "repository": "https://github.com/cportka/claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "seo",
+        "audit",
+        "website",
+        "evaluation",
+        "growth",
+        "accessibility",
+        "performance",
+        "robots-txt",
+        "open-graph",
+        "llms-txt",
+        "claude-code-plugin",
+        "portka-tools"
+      ]
     },
     {
       "name": "tab-chord-formatter",
       "source": "./plugins/tab-chord-formatter",
-      "description": "Format a messy guitar tab or chord sheet into a clean, readable layout for screen, or render a consistent monospace PDF songbook (one or many songs, a target songs-per-page) via headless Chromium. Standardizes [Section] labels, aligns chords over the right lyric syllables, tidies a metadata header (Title/Artist/Capo/Key/Tuning) and 6-line ASCII tab blocks — a deterministic script does the cleanup and rendering, the skill applies judgment to re-align and infer structure.",
+      "description": "Format a messy guitar tab or chord sheet into a clean, aligned layout, or render a consistent monospace PDF songbook \u2014 a deterministic cleanup script plus model judgment for chord-over-lyric alignment and section structure.",
       "category": "music",
-      "tags": ["tab", "chords", "guitar", "music", "lyrics", "formatter", "pdf", "songbook"]
+      "tags": [
+        "tab",
+        "chords",
+        "guitar",
+        "music",
+        "lyrics",
+        "formatter",
+        "pdf",
+        "songbook"
+      ],
+      "homepage": "https://github.com/cportka/claude-plugins/tree/main/plugins/tab-chord-formatter",
+      "repository": "https://github.com/cportka/claude-plugins",
+      "license": "MIT",
+      "keywords": [
+        "tab",
+        "tablature",
+        "chords",
+        "chord-sheet",
+        "guitar",
+        "music",
+        "formatter",
+        "lyrics",
+        "claude-code-plugin",
+        "portka-tools"
+      ]
     }
   ]
 }

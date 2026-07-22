@@ -32,6 +32,7 @@
 #   extract-frames.sh --video <path> --motion [--fps <n>]            # mean inter-frame motion timeline
 #   extract-frames.sh --video <path> --stall [--stall-min <sec>]     # hang/loop: N sec of no change
 #   extract-frames.sh --video <path> --whiteout [--white-min <sec>]  # blown-highlight / dropout spans
+#   extract-frames.sh --video <path> --content-revert [--crop <region>] # A->B->A content flicker
 #   extract-frames.sh --video <path> --saturation [--fps <n>]        # colour-saturation timeline
 #   extract-frames.sh --video <path> --stack --crop <W:H:X:Y>        # ROI time-stack (band over time)
 #   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
@@ -182,6 +183,12 @@
 #                       (default 0.2s), each with start/end/duration/peak. For pixel-ratio black,
 #                       --blackdetect is more precise. Honors --crop/--start/--end/--t0. (ffmpeg
 #                       signalstats; python3.) (1.12.0, #102.)
+#   --content-revert    NON-MONOTONIC content detector — flags A->B->A flicker: an element present in
+#                       frame N vanishes and REAPPEARS within --revert-window sec (default 1.5), e.g. a
+#                       transcript dropping words then restoring them. Samples at 10 fps by default
+#                       (sub-second transients; explicit --fps wins). --crop to the text/live region —
+#                       a looping animation in the region also reads as a revert. Honors
+#                       --start/--end/--t0. (small grayscale signatures; python3.) (1.13.0, #108.)
 #   --saturation        Colour-saturation timeline: print t,saturation (signalstats SATAVG,
 #                       0 grey .. ~180 vivid) per sampled frame, so "clownish/over-saturated vs
 #                       muted/elegant" is measurable and verifiable after a fix. Sample rate from
@@ -253,13 +260,16 @@
 #   extract-frames.sh --video app.mov --intro                            # "the intro does X" — t=0
 #
 set -euo pipefail
+# Numeric output must be locale-stable: under a comma-decimal locale, mawk/bash printf emit "0,000"
+# (python float() then crashes) and sort -g mis-ranks — a verified de_DE.UTF-8 failure (audit).
+export LC_ALL=C
 
 ORIG_ARGS=("$@")   # remember the invocation for the end-of-run feedback link
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.json
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.12.1"
+VBA_VERSION="1.13.0"
 
 VIDEO=""
 START=""
@@ -307,6 +317,8 @@ STALL=""       # --stall flags a >= --stall-min span of near-identical frames (h
 STALL_MIN="2.0"  # --stall-min <sec>: minimum near-static span --stall reports as a stall
 STALL_THRESH="1.5" # mean inter-frame delta (0-255) below which frames count as near-identical (--stall)
 WHITEOUT=""    # --whiteout flags blown-highlight (+ black-dropout) spans by mean luma, exits (1.12.0, #102)
+CONTENT_REVERT="" # --content-revert flags A->B->A content flicker (words dropped + restored), exits (1.13.0, #108)
+REVERT_WINDOW="1.5" # --revert-window <sec>: how long a vanished element may take to reappear
 WHITE_MIN="0.2"  # --white-min <sec>: minimum whiteout/dropout span --whiteout reports
 WHITE_THRESH="220" # mean luma (0-255) at/above which a frame is a whiteout (--whiteout)
 BLACK_LUMA_THRESH="16" # mean luma (0-255) at/below which a frame is a black dropout (--whiteout)
@@ -527,6 +539,8 @@ while [[ $# -gt 0 ]]; do
     --stall-min) STALL_MIN="${2:-}"; shift 2 ;;       # min near-static span (sec) to call a stall
     --stall-thresh) STALL_THRESH="${2:-}"; shift 2 ;; # near-identical delta cutoff (0-255)
     --whiteout) WHITEOUT=1; shift ;;                  # ADDED (1.12.0, #102): blown-highlight + dropout detector
+    --content-revert) CONTENT_REVERT=1; shift ;;      # ADDED (1.13.0, #108): A->B->A content-flicker detector
+    --revert-window) REVERT_WINDOW="${2:-}"; shift 2 ;; # max seconds for the vanished content to return
     --white-min) WHITE_MIN="${2:-}"; shift 2 ;;       # min whiteout/dropout span (sec) to report
     --white-thresh) WHITE_THRESH="${2:-}"; shift 2 ;; # mean-luma cutoff for a whiteout (0-255)
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
@@ -591,6 +605,10 @@ if [[ -n "$WHITEOUT" ]]; then
   for _nv in "--white-min:$WHITE_MIN" "--white-thresh:$WHITE_THRESH"; do
     [[ "${_nv#*:}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: ${_nv%%:*} must be a non-negative number (got '${_nv#*:}')." >&2; exit 2; }
   done
+fi
+if [[ -n "$CONTENT_REVERT" && ! "$REVERT_WINDOW" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+  echo "Error: --revert-window must be a non-negative number of seconds (got '$REVERT_WINDOW')." >&2
+  exit 2
 fi
 
 # --check-update: compare the installed version against the marketplace's main branch and
@@ -856,7 +874,7 @@ set_vfr_flag() {
 run_blackdetect() {
   local vf="${CROP_VF}blackdetect=d=${BLACK_D}:pic_th=${BLACK_RATIO}"
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -f null -
+    printf 'ffmpeg'; printf ' %q' -hide_banner -nostats ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" -f null -
     printf '\n'
     echo "(dry run — the command above prints 'black_start:.. black_end:..' lines on stderr)"
     return 0
@@ -864,7 +882,7 @@ run_blackdetect() {
   echo "Black-frame detection (min ${BLACK_D}s, pic_th ${BLACK_RATIO}${CROP:+, crop ${CROP}}) in $VIDEO:" >&2
   # blackdetect logs "black_start:.. black_end:.. black_duration:.." to stderr at info level.
   local log
-  log="$(ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -f null - 2>&1 || true)"
+  log="$(ffmpeg -hide_banner -nostats ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" -f null - 2>&1 || true)"
   # Source duration (for the permanent-vs-transient test); empty if ffprobe is unavailable.
   local dur=""
   if command -v ffprobe >/dev/null 2>&1; then
@@ -904,7 +922,7 @@ run_ocr_roi() {
   local roi="$1"
   local vf="crop=${roi},fps=${FPS}"
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.png"; printf '\n'
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.png"; printf '\n'
     echo "# then OCR each f_*.png with tesseract --psm 7 -> rows of: t,\"text\"  (t = start + (frame-1)/${FPS})"
     return 0
   fi
@@ -914,7 +932,7 @@ run_ocr_roi() {
     exit 2
   fi
   local d; d="$(mktemp -d)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.png"
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" "$d/f_%05d.png"
   local cfg=()
   # Numeric whitelist for count/speed readouts — cuts OCR noise when --ocr-digits is set.
   [[ -n "$OCR_DIGITS" ]] && cfg=(-c "tessedit_char_whitelist=0123456789.,:/x %-")
@@ -926,7 +944,7 @@ run_ocr_roi() {
     i=$((i + 1))
     t="$(awk -v i="$i" -v fps="$FPS" -v b="$base" 'BEGIN{ printf "%.3f", b + (i-1)/fps }')"
     # --psm 7: treat the ROI as a single text line. Collapse whitespace; trim.
-    txt="$(tesseract "$f" stdout --psm 7 "${cfg[@]}" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ *$//' || true)"
+    txt="$(tesseract "$f" stdout --psm 7 ${cfg[@]+"${cfg[@]}"} 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ *$//' || true)"
     printf '%s,"%s"\n' "$t" "${txt//\"/\"\"}"   # CSV-quote (double any embedded quotes)
   done
   rm -rf "$d"
@@ -948,7 +966,7 @@ run_measure() {
   local kind="dark"; [[ -n "$MEASURE_BRIGHT" ]] && kind="bright"
   local vf="crop=${roi},fps=${FPS},format=gray"
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.pgm"
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.pgm"
     printf '\n'
     echo "# then threshold each PGM (limit ${MEASURE_LIMIT}, ${kind}) -> 2-D bounding box -> CSV"
     echo "# t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy"
@@ -966,7 +984,7 @@ run_measure() {
     vh="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
   fi
   local d; d="$(mktemp -d)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
   local base; base="$(disp_base)"
   # Threshold + bounding box per PGM frame (P5 is trivially parseable with the stdlib).
   python3 - "$d" "$MEASURE_LIMIT" "$kind" "$mx" "$my" "$FPS" "$base" "${vw:-}" "${vh:-}" <<'PY'
@@ -996,18 +1014,23 @@ def read_pgm(p):
         return 0,0,b''
 def pct(diam, dim): return ("%.2f" % (diam/dim*100)) if dim else ""
 print("t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy")
+# Threshold via bytes.translate (a C-speed 256-entry LUT: matching luma -> 0x01, else 0x00), then
+# bound the box with per-row find/rfind — identical bbox to the old per-pixel Python loops but ~60x
+# faster on a native-resolution ROI (audit-verified; the loops cost ~9s per 120 full-res frames).
+_tbl=bytes(1 if ((v<limit) if kind=="dark" else (v>limit)) else 0 for v in range(256))
 for n,p in enumerate(sorted(glob.glob(os.path.join(d,"f_*.pgm")))):
     w,h,px=read_pgm(p)
+    mask=px.translate(_tbl)
     minx=miny=10**9; maxx=maxy=-1
     for y in range(h):
-        row=px[y*w:(y+1)*w]
-        for x in range(w):
-            v=row[x]
-            if (v<limit) if kind=="dark" else (v>limit):
-                if x<minx: minx=x
-                if x>maxx: maxx=x
-                if y<miny: miny=y
-                if y>maxy: maxy=y
+        row=mask[y*w:(y+1)*w]
+        x0=row.find(1)
+        if x0<0: continue
+        x1=row.rfind(1)
+        if x0<minx: minx=x0
+        if x1>maxx: maxx=x1
+        if y<miny: miny=y
+        maxy=y
     t=base+n/fps
     if maxx<0:                               # nothing matched the threshold this frame
         print("%.3f,0,0,0,,,0,0" % t); continue
@@ -1042,7 +1065,7 @@ run_occupancy() {
   local kind="bright"; [[ -n "$OCC_DARK" ]] && kind="dark"
   local vf="${CROP_VF}fps=${FPS},scale='min(240,iw)':-1,format=gray"
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.pgm"
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.pgm"
     printf '\n'
     echo "# then threshold each PGM (${kind} subject, cutoff ${OCC_THRESH}) -> coverage % + bbox"
     echo "# t,coverage_pct,x,y,w,h"
@@ -1053,7 +1076,7 @@ run_occupancy() {
     exit 2
   fi
   local d; d="$(mktemp -d)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
   local base; base="$(disp_base)"
   python3 - "$d" "$OCC_THRESH" "$kind" "$FPS" "$base" <<'PY'
 import sys, os, glob
@@ -1163,7 +1186,7 @@ run_probe() {
 run_palette() {
   local vf="fps=${FPS},palettegen=max_colors=${COLORS}:reserve_transparent=0:stats_mode=full"
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v 1 "<tmp>/palette.ppm"
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" -frames:v 1 "<tmp>/palette.ppm"
     printf '\n'
     echo "# then read the PPM swatches -> hex colour list (#rrggbb)"
     return 0
@@ -1173,7 +1196,7 @@ run_palette() {
     exit 2
   fi
   local d; d="$(mktemp -d)"
-  ffmpeg -y -nostdin -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v 1 "$d/palette.ppm" >/dev/null 2>&1 || true
+  ffmpeg -y -nostdin -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" -frames:v 1 "$d/palette.ppm" >/dev/null 2>&1 || true
   # Read swatches via _ppm_hexes (the single hardened parser: 16-bit PPMs, truncated headers — #85
   # review), then expand each hex to the documented `#rrggbb  rgb(r,g,b)` line format here.
   local _hexes _h
@@ -1410,15 +1433,15 @@ run_ab() {
   [[ -n "$W" && -n "$H" ]] || { W=640; H=360; }   # fallback if ffprobe is unavailable
   local fc_pre="[0:v]fps=${FPS},scale=${W}:${H},setsar=1[a];[1:v]fps=${FPS},scale=${W}:${H},setsar=1[b];[a][b]ssim=stats_file="
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" \
-      "${PRE_ARGS[@]}" -i "$other" -filter_complex "${fc_pre}<tmp>/ssim.log" -f null -
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" \
+      ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$other" -filter_complex "${fc_pre}<tmp>/ssim.log" -f null -
     printf '\n'
     echo "# parse the ssim stats (n: / All:) -> CSV t,ssim; lowest SSIM = most divergent moment"
     return 0
   fi
   local sf; sf="$(mktemp)"
   # PRE_ARGS (-ss/-to) go before BOTH inputs so the two clips are aligned to the same window.
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" "${PRE_ARGS[@]}" -i "$other" \
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$other" \
     -filter_complex "${fc_pre}${sf}" -f null - >/dev/null 2>&1 || true
   local base; base="$(disp_base)"
   local csv
@@ -1459,11 +1482,11 @@ run_cadence() {
     exit 2
   fi
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "mpdecimate,showinfo" -an -f null -
+    printf 'ffmpeg'; printf ' %q' -hide_banner -nostats ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "freezedetect=d=${FREEZE_MIN},mpdecimate,showinfo" -an -f null -
     printf '\n'
-    echo "# + ffprobe r_frame_rate/avg_frame_rate; bucket unique-frame pts_time into --window bins"
+    echo "# ONE decode, both signals: freeze_* lines -> freeze gaps (--freeze-min tunes); showinfo"
+    echo "# pts_time -> unique frames per --window bin. + ffprobe r_frame_rate/avg_frame_rate."
     echo "# -> CSV t,unique_frames,fps; headline verdict (worst freeze first) + choppiest windows"
-    echo "# + ffmpeg -vf freezedetect=d=${FREEZE_MIN} -> longest frozen spans (freeze gaps, #56; --freeze-min tunes)"
     [[ -n "$MARKS" ]] && echo "# + overlay app perf marks from ${MARKS} on the freeze timeline (--marks, #94)"
     return 0
   fi
@@ -1483,9 +1506,13 @@ assert isinstance(d,list) and all(isinstance(m,dict) and "name" in m and "tMs" i
       exit 2
     fi
   fi
-  # Freeze-gap pass FIRST (#89): the worst freeze is the most actionable single number, so it now
-  # leads the report as a one-line verdict instead of living at the bottom.
-  local fd; fd="$(ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "freezedetect=d=${FREEZE_MIN}" -an -f null - 2>&1 || true)"
+  # ONE decode for BOTH signals (audit: this ran two full decodes — a freezedetect pass, then an
+  # mpdecimate pass — measured 29% slower than the combined graph, and worse on 4K/60). freezedetect
+  # sits BEFORE mpdecimate so it sees every frame (identical spans), and both filters log
+  # independently: freeze_* lines feed the gap list, showinfo pts_time lines feed the unique-frame
+  # timeline — verified byte-identical to the two-pass outputs.
+  local fd; fd="$(ffmpeg -hide_banner -nostats ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" \
+    -vf "freezedetect=d=${FREEZE_MIN},mpdecimate,showinfo" -an -f null - 2>&1 || true)"
   local gaps; gaps="$(printf '%s\n' "$fd" | awk -v base="$base" '
     /freeze_start:/    { s=$NF }
     /freeze_duration:/ { if (s!="") { printf "%.3f\t%.3f\n", s+base, $NF; s="" } }
@@ -1497,8 +1524,7 @@ assert isinstance(d,list) and all(isinstance(m,dict) and "name" in m and "tMs" i
   # Write them to a temp file and pass its PATH to python — a `python3 - <<'PY'` heredoc already
   # uses stdin for the program, so the frame times can't also come in on stdin.
   local tf; tf="$(mktemp)"
-  ffmpeg -hide_banner -nostats "${PRE_ARGS[@]}" -i "$VIDEO" -vf "mpdecimate,showinfo" -an -f null - 2>&1 \
-    | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' > "$tf" || true
+  printf '%s\n' "$fd" | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' > "$tf" || true
   python3 - "${WINDOW}" "$base" "${rfr:-0}" "${afr:-0}" "${dur:-0}" "$tf" "${START:+1}${END:+1}" "$worst_gs" "$worst_gd" "$gf" "$MARKS" "$FREEZE_MIN" <<'PY'
 import sys, math
 window=float(sys.argv[1]) or 0.5
@@ -1656,11 +1682,24 @@ run_pacing() {
     exit 2
   fi
   local tf; tf="$(mktemp)"
-  ffprobe -v error -select_streams v:0 -show_entries frame=best_effort_timestamp_time \
-    -of csv=p=0 "$VIDEO" 2>/dev/null > "$tf" || true
-  # --t0 session offset (1.11.0, #96): --pacing reads the WHOLE file's pts (no seek — --start is
-  # ignored here), so the reported times are already whole-file absolute; the only shift into session
-  # time is T0 (NOT disp_base, which folds in --start and would double-count it in this un-seeked mode).
+  # Packet pts, not frame entries (audit): `-show_entries frame=` fully DECODES the file (~4s for a
+  # 30s clip, minutes for a long 60fps capture); `packet=pts_time` is demux-only (~55x cheaper) and
+  # presentation order is what pacing needs (the python sorts anyway). --start/--end now scope the
+  # read via -read_intervals; interval pts stay whole-file ABSOLUTE, so reported times don't shift.
+  # Fallback to the old frame path if packets yield too few timestamps (exotic containers).
+  local _ri=()
+  if [[ -n "$START" || -n "$END" ]]; then
+    _ri=(-read_intervals "$(to_seconds "${START:-0}")%${END:+$(to_seconds "$END")}")
+  fi
+  ffprobe -v error -select_streams v:0 ${_ri[@]+"${_ri[@]}"} -show_entries packet=pts_time \
+    -of csv=p=0 "$VIDEO" 2>/dev/null | grep -vE 'N/A|^$' > "$tf" || true
+  if [[ "$(wc -l < "$tf")" -lt 2 ]]; then
+    ffprobe -v error -select_streams v:0 ${_ri[@]+"${_ri[@]}"} -show_entries frame=best_effort_timestamp_time \
+      -of csv=p=0 "$VIDEO" 2>/dev/null > "$tf" || true
+  fi
+  # --t0 session offset (1.11.0, #96): pacing timestamps are whole-file absolute (read_intervals
+  # does not restart pts), so the only shift into session time is T0 (NOT disp_base, which folds in
+  # --start and would double-count it here).
   local base; base="$(to_seconds "${T0:-0}")"
   python3 - "$tf" "$base" <<'PY'
 import sys
@@ -1712,7 +1751,7 @@ PY
 run_motion() {
   local vf="fps=${FPS},${CROP_VF}tblend=all_mode=difference,signalstats,metadata=mode=print:file="
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" \
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" \
       -vf "${vf}<tmp>" -an -f null -
     printf '\n'
     echo "# read lavfi.signalstats.YAVG (mean |frame - prev|) per frame -> CSV t,motion (0..255)"
@@ -1724,7 +1763,7 @@ run_motion() {
   fi
   local base; base="$(disp_base)"
   local mfile; mfile="$(mktemp)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
   python3 - "$mfile" "$base" "$FPS" "${CROP:+1}" <<'PY'
 import sys
 mfile, base, fps = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]) or 1.0
@@ -1785,7 +1824,7 @@ PY
 run_stall() {
   local vf="fps=${FPS},${CROP_VF}tblend=all_mode=difference,signalstats,metadata=mode=print:file="
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}<tmp>" -an -f null -
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "${vf}<tmp>" -an -f null -
     printf '\n'
     echo "# read lavfi.signalstats.YAVG (mean |frame - prev|) per frame; find the longest run below"
     echo "# the near-identical cutoff (${STALL_THRESH}/255) -> STALL verdict if it lasts >= ${STALL_MIN}s"
@@ -1797,7 +1836,7 @@ run_stall() {
   fi
   local base; base="$(disp_base)"
   local mfile; mfile="$(mktemp)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
   python3 - "$mfile" "$base" "$FPS" "$STALL_MIN" "$STALL_THRESH" "${CROP:+1}" <<'PY'
 import sys
 mfile=sys.argv[1]; base=float(sys.argv[2]); fps=float(sys.argv[3]) or 1.0
@@ -1866,7 +1905,7 @@ PY
 run_whiteout() {
   local vf="fps=${FPS},${CROP_VF}signalstats,metadata=mode=print:file="
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}<tmp>" -an -f null -
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "${vf}<tmp>" -an -f null -
     printf '\n'
     echo "# read lavfi.signalstats.YAVG (mean frame luma 0-255) per frame; report spans >= ${WHITE_THRESH}"
     echo "# (whiteout) or <= ${BLACK_LUMA_THRESH} (dropout) lasting >= ${WHITE_MIN}s, with duration + peak"
@@ -1878,7 +1917,7 @@ run_whiteout() {
   fi
   local base; base="$(disp_base)"
   local mfile; mfile="$(mktemp)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
   python3 - "$mfile" "$base" "$FPS" "$WHITE_MIN" "$WHITE_THRESH" "$BLACK_LUMA_THRESH" <<'PY'
 import sys
 mfile=sys.argv[1]; base=float(sys.argv[2]); fps=float(sys.argv[3]) or 1.0
@@ -1930,6 +1969,105 @@ PY
   rm -f "$mfile"
 }
 
+# content-revert / non-monotonic-content detector (1.13.0, #108) — the third failure axis. --stutter
+# reads frame TIMING, --stall reads "nothing changes"; this reads content that goes BACKWARD: an
+# element present in frame N vanishes in N+1..M and REAPPEARS — a transcript dropping words, a list
+# flickering an entry away. Playback looks smooth to every other detector. Method: sample small
+# grayscale frames, then flag A -> B -> A patterns: a change from the previous appearance followed,
+# within --revert-window seconds, by a return to it (mean-abs-diff hysteresis: changed >= 3.0/255,
+# returned <= 1.5/255). Sub-second transients are the norm here, so sampling defaults to 10 fps in
+# this mode (an explicit --fps still wins). Crop to the text/live region (--crop) — a looping
+# animation inside the region also reads as A->B->A and will (correctly, but noisily) trigger.
+# Token-level detection (OCR word sets) stays on the roadmap; --ocr-roi covers it manually today.
+run_content_revert() {
+  local fps_use="$FPS"
+  [[ -z "$FPS_SET" ]] && fps_use=10   # boost: a <1s disappear->reappear at the default 4fps is sampled away
+  local vf="fps=${fps_use},${CROP_VF}scale=96:-2,format=gray"
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" -frames:v 600 "<tmp>/f_%05d.pgm"
+    printf '\n'
+    echo "# then scan frame signatures for A->B->A within ${REVERT_WINDOW}s: changed (>=3.0/255 vs prev"
+    echo "# appearance) then returned (<=1.5/255) -> 'content-revert: N event(s) (max gap X s)'"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --content-revert needs python3 to compare frame signatures. Install python3 and re-run." >&2
+    exit 2
+  fi
+  local base; base="$(disp_base)"
+  local d; d="$(mktemp -d)"
+  # 600-frame cap (60s at the boosted 10fps) bounds the pairwise scan; scope longer clips with --start/--end.
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" -frames:v 600 "$d/f_%05d.pgm" >/dev/null 2>&1 || true
+  python3 - "$d" "$base" "$fps_use" "$REVERT_WINDOW" <<'PY'
+import sys, os, struct
+d, base, fps, window = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]) or 1.0, float(sys.argv[4])
+def read_pgm(p):
+    # binary P5 reader tolerant of comment lines; returns the raw pixel buffer
+    with open(p, "rb") as fh:
+        data = fh.read()
+    if not data.startswith(b"P5"): return None
+    fields, i = [], 2
+    while len(fields) < 3 and i < len(data):
+        while i < len(data) and data[i:i+1].isspace(): i += 1
+        if data[i:i+1] == b"#":
+            while i < len(data) and data[i:i+1] != b"\n": i += 1
+            continue
+        j = i
+        while j < len(data) and not data[j:j+1].isspace(): j += 1
+        fields.append(data[i:j]); i = j
+    i += 1
+    try: w, h = int(fields[0]), int(fields[1])
+    except Exception: return None
+    return data[i:i+w*h]
+frames = []
+for name in sorted(os.listdir(d)):
+    if name.endswith(".pgm"):
+        buf = read_pgm(os.path.join(d, name))
+        if buf: frames.append(buf)
+def mad(a, b):
+    n = min(len(a), len(b))
+    if n == 0: return 255.0
+    step = max(1, n // 4096)          # sample up to ~4096 pixels — plenty at 96px wide
+    tot = cnt = 0
+    for i in range(0, n, step):
+        tot += abs(a[i] - b[i]); cnt += 1
+    return tot / cnt if cnt else 255.0
+e = sys.stderr
+if len(frames) < 3:
+    e.write("content-revert: too few frames to compare (need >= 3; raise --fps or widen --start/--end).\n")
+    raise SystemExit(0)
+dt = 1.0 / fps
+CHANGED, SAME = 3.0, 1.5              # hysteresis: clearly-changed vs returned-to-same (0-255 luma)
+wf = max(1, int(round(window * fps))) # lookahead in frames
+events = []
+i = 1
+while i < len(frames):
+    if mad(frames[i-1], frames[i]) >= CHANGED:
+        ref = frames[i-1]
+        j = i + 1
+        found = None
+        while j < len(frames) and j <= i + wf:
+            if mad(ref, frames[j]) <= SAME: found = j; break
+            j += 1
+        if found is not None:
+            t0 = base + (i-1) * dt
+            gap = (found - (i-1)) * dt
+            events.append((t0, gap))
+            i = found + 1
+            continue
+    i += 1
+if events:
+    mx = max(g for _, g in events)
+    e.write("content-revert: %d event(s) (max gap %.2fs) — content changed then REVERTED to its prior appearance (words dropped and restored, a flickering element).\n" % (len(events), mx))
+    for t0, gap in events[:5]:
+        e.write("  @%.2fs: reverted after %.0f ms\n" % (t0, gap*1000))
+    e.write("(A->B->A on frame signatures; a looping animation in the sampled region also reads this way — --crop to the text/live region to isolate it. Token-level diffing: --ocr-roi.)\n")
+else:
+    e.write("content-revert: no A->B->A events within %.1fs windows (%d frames @ %.0f fps) — on-screen content did not revert.\n" % (window, len(frames), fps))
+PY
+  rm -rf "$d"
+}
+
 # rotational/radial flow decomposition (#69) — --motion/--diff give magnitude and *where*,
 # but not *character*: "a disk spinning in place" and "a disk spiralling inward" light them up the
 # same. This computes a coarse block-matching optical flow between sampled frames and decomposes it
@@ -1946,7 +2084,7 @@ run_flow() {
   local vf="${CROP_VF}fps=${FPS},scale='min(160,iw)':'min(160,ih)':force_original_aspect_ratio=decrease,format=gray"
   local flow_max=200                                  # cap sampled frames — full-search matching is O(frames)
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v "$flow_max" "<tmp>/f_%05d.pgm"
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" -frames:v "$flow_max" "<tmp>/f_%05d.pgm"
     printf '\n'
     echo "# then block-match consecutive PGMs (full search) -> flow field -> decompose about ${FLOW_CENTER} (fx:fy)"
     echo "# t,speed,curl,div   (curl = swirl/tangential; div = radial: <0 inward 'suck', >0 outward)"
@@ -1957,7 +2095,7 @@ run_flow() {
     exit 2
   fi
   local d; d="$(mktemp -d)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "$vf" -frames:v "$flow_max" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" -frames:v "$flow_max" "$d/f_%05d.pgm" >/dev/null 2>&1 || true
   # If we filled the cap, the clip has more than we analyzed — say so (don't silently truncate).
   if [[ "$(find "$d" -maxdepth 1 -name 'f_*.pgm' | wc -l)" -ge "$flow_max" ]]; then
     echo "Note: --flow analyzed the first ${flow_max} sampled frames (~$(awk "BEGIN{printf \"%.0f\", ${flow_max}/${FPS}}")s at --fps ${FPS}); narrow with --start/--end or lower --fps to cover a different/longer span." >&2
@@ -1999,7 +2137,10 @@ R=8           # search radius (px) — raise --fps if motion exceeds this per fr
 STRIDE=2      # subsample the block when scoring (~4x faster; fine for a coarse flow)
 VAR=20.0      # min block variance (over the sampled pixels) to trust a vector (skip flat background)
 
-def sad(a, b, w, ax, ay, bx, by):
+def sad(a, b, w, ax, ay, bx, by, cutoff):
+    # Early termination (audit): abort a candidate the moment its partial sum EXCEEDS the best so
+    # far — a standard 2-5x cut with an identical argmin (strictly-greater abort + unchanged
+    # iteration order can never discard a new minimum or reorder ties).
     s=0; yy=0
     while yy<B:
         ra=(ay+yy)*w+ax; rb=(by+yy)*w+bx; xx=0
@@ -2007,6 +2148,7 @@ def sad(a, b, w, ax, ay, bx, by):
             dv=a[ra+xx]-b[rb+xx]
             s+= dv if dv>=0 else -dv
             xx+=STRIDE
+        if cutoff is not None and s>cutoff: return s
         yy+=STRIDE
     return s
 
@@ -2050,7 +2192,7 @@ for k in range(len(frames)-1):
                     while dx2<=R:
                         nx=x+dx2
                         if 0<=nx and nx+B<=w:
-                            c=sad(a,b,w,x,y,nx,ny)
+                            c=sad(a,b,w,x,y,nx,ny,best)
                             if best is None or c<best: best=c; bdx=dx2; bdy=dy2
                         dx2+=1
                 dy2+=1
@@ -2107,7 +2249,7 @@ PY
 run_saturation() {
   local vf="fps=${FPS},signalstats,metadata=mode=print:file="
   if [[ -n "$DRY_RUN" ]]; then
-    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" \
+    printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" \
       -vf "${vf}<tmp>" -an -f null -
     printf '\n'
     echo "# read lavfi.signalstats.SATAVG per frame -> CSV t,saturation (0 grey .. ~180 vivid)"
@@ -2119,7 +2261,7 @@ run_saturation() {
   fi
   local base; base="$(disp_base)"
   local mfile; mfile="$(mktemp)"
-  ffmpeg -hide_banner -loglevel error "${PRE_ARGS[@]}" -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
+  ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
   python3 - "$mfile" "$base" "$FPS" <<'PY'
 import sys
 mfile, base, fps = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]) or 1.0
@@ -2160,7 +2302,8 @@ PY
 _has_pngs() { [[ -d "$1" ]] && [[ -n "$(find "$1" -maxdepth 1 -name '*.png' -print -quit 2>/dev/null)" ]]; }
 _writes_pngs=1
 for _flag in "$BLACKDETECT" "$OCR_ROI" "$MEASURE" "$PROBE" "$PALETTE" "$AB" "$CADENCE" \
-             "$MOTION" "$STALL" "$WHITEOUT" "$SATURATION" "$PACING" "$FLOW" "$OCCUPANCY" "$LIST_SCENES"; do
+             "$MOTION" "$STALL" "$WHITEOUT" "$CONTENT_REVERT" "$SATURATION" "$PACING" "$FLOW" \
+             "$OCCUPANCY" "$LIST_SCENES" "$LOOP_CHECK"; do
   [[ -n "$_flag" ]] && _writes_pngs=""
 done
 if [[ -n "$_writes_pngs" ]] && _has_pngs "$OUT"; then
@@ -2213,15 +2356,23 @@ fi
 # then exit. Feed the interesting ones back into --timestamps. Threshold from --scene (def 0.3).
 if [[ -n "$LIST_SCENES" ]]; then
   _thr="${SCENE:-0.3}"
+  # Honor --start/--end (audit: this block ran before PRE_ARGS was built, so a scoped scan silently
+  # decoded the WHOLE file and printed out-of-window cuts). Input-seek restarts pts near 0, so add
+  # the --start offset back to the printed times, matching every other mode's disp_base behavior.
+  _ls_pre=()
+  [[ -n "$START" ]] && _ls_pre+=(-ss "$START")
+  [[ -n "$END"   ]] && _ls_pre+=(-to "$END")
+  _ls_off="$(to_seconds "${START:-0}")"
   if [[ -n "$DRY_RUN" ]]; then
-    run_ff -hide_banner -nostats -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" -f null -
+    run_ff -hide_banner -nostats ${_ls_pre[@]+"${_ls_pre[@]}"} -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" -f null -
     echo "(dry run — the command above prints showinfo lines; their pts_time values are the cuts)"
     exit 0
   fi
   echo "Scene cuts (threshold=$_thr) in $VIDEO — pts_time seconds:" >&2
   # capture, then guide the user if no cuts were found at this threshold.
-  _cuts="$(ffmpeg -hide_banner -nostats -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" \
-    -f null - 2>&1 | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' || true)"
+  _cuts="$(ffmpeg -hide_banner -nostats ${_ls_pre[@]+"${_ls_pre[@]}"} -i "$VIDEO" -vf "select='gt(scene,${_thr})',showinfo" \
+    -f null - 2>&1 | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' \
+    | awk -v o="$_ls_off" '{ printf "%.3f\n", $1 + o }' || true)"
   if [[ -n "$_cuts" ]]; then
     printf '%s\n' "$_cuts"
   else
@@ -2369,6 +2520,13 @@ if [[ -n "$WHITEOUT" ]]; then
   exit 0
 fi
 
+# --content-revert is an analysis mode — flag A->B->A content flicker and exit (1.13.0, #108).
+if [[ -n "$CONTENT_REVERT" ]]; then
+  run_content_revert
+  feedback_hint
+  exit 0
+fi
+
 # --saturation is an analysis mode — print a colour-saturation timeline and exit.
 if [[ -n "$SATURATION" ]]; then
   run_saturation
@@ -2430,7 +2588,7 @@ if [[ -n "$TIMESTAMPS" ]]; then
     blabel="$(awk -v b="$bstart" -v z="$(to_seconds "${T0:-0}")" 'BEGIN{ printf "%.3f", b+z }')"
     echo "Timestamp $t -> burst [$bstart,$bend] @${FPS}fps -> $OUT/ts${idx}_*" >&2
     run_ff -hide_banner -loglevel error \
-      -ss "$bstart" -to "$bend" -i "$VIDEO" "${VFR[@]}" \
+      -ss "$bstart" -to "$bend" -i "$VIDEO" ${VFR[@]+"${VFR[@]}"} \
       -vf "fps=${FPS},${CROP_VF}scale=${FRAMEW}:-1$(label_seg "$blabel")" \
       "$OUT/ts${idx}_%03d.png"
     # Before/after strip from the first and last frame of the burst. (Skipped in --dry-run,
@@ -2455,7 +2613,7 @@ elif [[ -n "$CONTACT" ]]; then
   # applied per-frame, before tiling), which is exactly what timing analysis wants.
   echo "Contact-sheet mode [$MODE_DESC], ${COLS}x${ROWS} per sheet -> $OUT" >&2
   run_ff -hide_banner -loglevel error \
-    "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
+    ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" ${VFR[@]+"${VFR[@]}"} \
     -vf "${SELECT},${CROP_VF}scale=${TILEW}:-1$(label_seg "$LBL_OFF"),tile=${COLS}x${ROWS}" \
     "$OUT/contact_%04d.png"
 elif [[ -n "$STACK" ]]; then
@@ -2485,7 +2643,7 @@ elif [[ -n "$STACK" ]]; then
   fi
   echo "ROI time-stack mode (fps=$FPS, crop=$CROP, 1x${_srows} per sheet) -> $OUT" >&2
   run_ff -hide_banner -loglevel error \
-    "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
+    ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" ${VFR[@]+"${VFR[@]}"} \
     -vf "fps=${FPS},${CROP_VF}scale=${TILEW}:-1$(label_seg "$LBL_OFF"),tile=1x${_srows}" \
     "$OUT/stack_%04d.png"
 elif [[ -n "$DIFF" ]]; then
@@ -2494,21 +2652,21 @@ elif [[ -n "$DIFF" ]]; then
   set_vfr_flag
   echo "Frame-diff mode (fps=$FPS) -> $OUT (bright = changed pixels between frames)" >&2
   run_ff -hide_banner -loglevel error \
-    "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
+    ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" ${VFR[@]+"${VFR[@]}"} \
     -vf "fps=${FPS},${CROP_VF}tblend=all_mode=difference,scale='min(${MAXW},iw)':-1$(label_seg "$LBL_OFF")" \
     "$OUT/diff_%04d.png"
 elif [[ -n "$SCENE" ]]; then
   echo "Scene-change mode (threshold=$SCENE) -> $OUT" >&2
   # cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
-    "${PRE_ARGS[@]}" -i "$VIDEO" "${VFR[@]}" \
+    ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" ${VFR[@]+"${VFR[@]}"} \
     -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1$(label_seg "$LBL_OFF")" \
     "$OUT/scene_%04d.png"
 else
   echo "Dense mode (fps=$FPS) -> $OUT" >&2
   # cap width (min so small clips aren't upscaled) — was -vf "$SELECT"
   run_ff -hide_banner -loglevel error \
-    "${PRE_ARGS[@]}" -i "$VIDEO" \
+    ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" \
     -vf "${SELECT},${CROP_VF}scale='min(${MAXW},iw)':-1$(label_seg "$LBL_OFF")" \
     "$OUT/frame_%04d.png"
 fi

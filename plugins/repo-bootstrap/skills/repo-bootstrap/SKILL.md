@@ -1,6 +1,6 @@
 ---
 name: repo-bootstrap
-description: Set up a repository to use Claude Code plugins from the portka-tools marketplace, especially for Claude Code on the web. Use when the user wants to onboard a repo to a marketplace/plugin, enable a portka-tools plugin in a specific repo, or scaffold .claude/settings.json (and optional CI) so plugins load in ephemeral web sessions. Also installs the Portka standard setup — a workflow CLAUDE.md, a git/gh permissions allowlist, and an enforced VERSION/CHANGELOG/README sync with a basic test suite — when the user asks for the Portka standard, or to standardize how Claude works in a repo.
+description: Set up a repository to use Claude Code plugins from the portka-tools marketplace, especially for Claude Code on the web. Use when the user wants to onboard a repo to a marketplace/plugin, enable a plugin in a specific repo, scaffold .claude/settings.json (+ optional CI) for ephemeral web sessions, or asks for the Portka standard / to standardize how Claude works in a repo.
 ---
 
 # Repo Bootstrap
@@ -23,13 +23,10 @@ Local-CLI-only use doesn't need this: `/plugin marketplace add cportka/claude-pl
      --plugin <name> [--plugin <name> ...] [--ci] [--dir <repo-root>] [--dry-run] [--auto-update] \
      [--portka-standard] [--scope user|project|both] [--print-only]
    ```
-   `--dry-run` previews without writing. `--auto-update` also sets `"autoUpdate": true` on the
-   marketplace entry — but note that for third-party marketplaces it currently refreshes the
-   catalog without re-installing plugin code (anthropics/claude-code#61854); tell the user the
-   reliable way to get a published fix is `claude plugin update <name>@<marketplace>`.
-   It merges into any existing `.claude/settings.json` (never clobbers other keys), is
-   idempotent, and won't overwrite a CI workflow without `--force`. If the existing settings
-   file is invalid JSON it stops rather than risk losing data.
+   `--dry-run` previews without writing (and states the real outcome per file). `--auto-update`
+   is catalog-only on third-party marketplaces — `claude plugin update <name>@<marketplace>` is
+   the reliable refresh (see `--help`). Merges never clobber other keys; invalid existing JSON
+   stops the run rather than risk data loss.
 3. **Review + commit** `.claude/settings.json` (and any workflow). It only takes effect once
    committed — web sessions clone the repo fresh and read it at session start.
 
@@ -47,29 +44,18 @@ Resulting file:
 ## Portka standard setup (`--portka-standard`)
 
 Adds the standing **"how we work" setup** so each session stays focused on the code instead of
-re-explaining process. It writes (all idempotent, never clobbering):
+re-explaining process (all idempotent, never clobbering; the full inventory is in `--help`):
+the managed **workflow `CLAUDE.md`** block, a git/`gh` **permissions allowlist**, an enforced
+**SemVer sync** bound to the repo's existing version source with a `tests/run-tests.sh` + CI
+(native `node --test`/`pytest` version-sync tests for JS/Python repos), and — at user scope —
+the **corrected `stop-hook-git-check.sh`** that stops hosted sessions false-flagging GitHub's
+squash-merge commits and the repo's declared commit identity (also auto-refreshed by this
+plugin's SessionStart hook each session).
 
-- A **workflow `CLAUDE.md`** (a managed block between `<!-- BEGIN/END portka-standard -->`) encoding
-  the Portka process: update `main` first, branch for every change, tests + CI then a PR, merge on
-  green, and hand back a short PR link the user deletes as confirmation.
-- A **permissions allowlist** for the git/`gh` commands that workflow runs, merged into
-  `settings.json` (so the loop isn't gated on re-approving the same tools).
-- For the repo: an enforced **SemVer** (`MAJOR.MINOR.PATCH`) version sync that **binds to the repo's
-  existing version source** — `package.json` / `pyproject.toml` / `Cargo.toml` / a bare `VERSION` /
-  a README `**Version:**` line — and only seeds a `VERSION` 0.1.0 on a truly greenfield repo. A basic
-  **`tests/run-tests.sh`** *enforces* valid SemVer + that `CHANGELOG.md` and the README line agree
-  (the README line is checked only if one exists), plus a specifically-named **`portka-standard.yml`**
-  CI (skipped if the repo already has CI, to avoid collisions). For a **`package.json`** or
-  **`pyproject.toml`** repo it also drops a **native version-sync test** (`tests/version-sync.test.mjs`
-  for `node --test`, or `tests/test_version_sync.py` for `pytest`/`unittest`) so the repo's own test
-  command enforces the sync too.
-
-`--scope` controls where the `CLAUDE.md` + permissions go — `user` (`~/.claude`, your machine),
-`project` (committed `./.claude`, for web sessions + team), or `both` (default). The
-version/sync scaffold always lands in the repo; existing `VERSION`/`CHANGELOG`/`README` are never
-overwritten (and the test runner only with `--force`). Use `--dry-run` to preview, and `--home` to
-point user-scope writes somewhere other than `$HOME` (mainly for tests). Commit the project files so
-they apply in fresh web sessions.
+The decisions the agent must make: **which plugins**, **`--scope`** (`user` = `~/.claude`,
+`project` = committed `./.claude` for web sessions + team, `both` = default), and **committing
+the project files** so fresh web sessions pick them up. Existing files are never overwritten
+(test runner only with `--force`); `--home` redirects user-scope writes (mainly for tests).
 
 ## When the `.claude/settings.json` write is blocked (`--print-only`)
 

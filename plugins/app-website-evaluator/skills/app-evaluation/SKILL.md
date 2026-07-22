@@ -41,17 +41,11 @@ curl -sSL https://example.com | "$S" --html -           # score pre-fetched HTML
 "$S" --html page.html --headers resp-headers.txt        # …and score the live security headers too
 ```
 
-**Behind a sandbox egress proxy** (web/remote Claude Code) `--url` often can't reach the origin — the
-proxy 403s arbitrary hosts. When that happens, fetch the page some other way (an MCP fetch tool, a
-headless browser, `web_fetch`) and feed it to **`--html`** (a file, or `-` for stdin); add
-**`--headers`** (e.g. `curl -sSI` output, or an MCP fetch's response headers) to still score the live
-HSTS / CSP / X-Content-Type-Options / Referrer-Policy checks. Better yet, **combine `--url` with
-`--html`** (the hybrid, #91): your HTML is scored while the live origin probes (headers,
-robots/sitemap/security.txt) still run — one run, one honest scorecard. When the page GET fails but
-probes run, origin-file *misses* are reported as INFO "could not verify" rather than FAIL — behind a
-filter a non-200 is ambiguous, and the tool says so instead of sending you to chase a robots.txt the
-repo actually ships. `--headers` only pairs with `--html` (without `--url`); `--dir` combines with
-neither.
+**Behind a sandbox egress proxy** (web/remote Claude Code) `--url` often 403s: fetch the page any
+other way and feed **`--html`** (+ **`--headers`** for the live header checks), or combine
+**`--url` with `--html`** so your HTML is scored while the origin probes still run. A local build
+served on `localhost` also works — plain-http/HSTS there are reported as INFO, not FAILs. Probe
+misses behind a filter downgrade to INFO automatically. Pairing rules and details: `--help`.
 
 **Point `--dir` at the built/deployed output, not source.** Many sites generate `robots.txt`,
 `sitemap.xml`, and `.well-known/security.txt` **at build time** (e.g. a `build-web.js`), so scanning
@@ -59,17 +53,12 @@ neither.
 deployed tree. The tool prints a NOTE when `--dir` looks like a source tree (a `package.json` build
 script, or a `src/` with no root robots/sitemap).
 
-It prints a PASS/WARN/FAIL/INFO checklist over crawlability, SEO, social, assets, AI-readiness,
-security, and performance hints, then a **standardized Scorecard**: each dimension scores
-**0–100** (PASS=1, WARN=0.5, FAIL=0; INFO unscored) with a **letter grade** (A ≥90, B ≥80, C ≥70,
-D ≥60, F <60), and a **weight-averaged overall** grade (starred when part of the weight is
-unassessed). Add **`--json`** for a machine-readable scorecard (stdout; human report → stderr). It
-needs `curl` for `--url` (a clean error points you at `--dir`/`--html` if it's missing) and only
-`grep`/`sed`/`python3` for `--dir` / `--html`. **Security scores even off the network:** live HTTPS + response headers need
-`--url` (or `--html --headers`), but source-visible controls — a `<meta http-equiv>` CSP, a shipped
-`security.txt`, and zero third-party `<script>` origins — are credited in every mode, so Security
-isn't a blanket `n/a` for a static build. Don't stop at the script: read `robots.txt`, the sitemap,
-the page `<head>`, and (if available) the repo — the score is the evidence base, your judgment
+It prints a PASS/WARN/FAIL/INFO checklist per dimension, then a **standardized Scorecard**
+(per-dimension 0–100 + letter grade, a weight-averaged overall that's **starred** when weight went
+unassessed; `--json` for machine-readable). Formula and grade rubric: `reference.md`; flags:
+`--help`. Security scores even off the network via source-visible controls (meta CSP,
+`security.txt`, third-party-script posture). Don't stop at the script: read `robots.txt`, the
+sitemap, the `<head>`, and the repo if you have it — the score is the evidence base, your judgment
 (weighted by type/community) is the report.
 
 ## 3. Evaluate across dimensions

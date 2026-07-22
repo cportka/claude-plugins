@@ -255,7 +255,11 @@ if [[ -n "$DO_RELEASE" && -n "$VERSION" ]]; then
     if gh release view "v${VERSION}" >/dev/null 2>&1; then
       note "release v${VERSION} already exists - nothing to do."
     else
-      gh release create "v${VERSION}" --generate-notes --title "v${VERSION}" || note "release: create it via the tag push above"
+      # Print the tag commands only — never `gh release create` here. A direct create bypasses
+      # release.yml (the single authority for release title + CHANGELOG-sourced notes) and races
+      # it: the API-created tag fires the workflow, whose notes then fight the generated ones
+      # (audit finding). The tag push above IS the release trigger; run it from your own shell.
+      note "release v${VERSION} not cut yet - run the tag command above from your own shell (it triggers release.yml, the single source of release notes)."
     fi
   fi
 else

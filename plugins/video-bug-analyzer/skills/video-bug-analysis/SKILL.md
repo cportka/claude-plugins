@@ -73,6 +73,8 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 | Spinning in place vs spiralling inward? | `--flow` → `t,speed,curl,div` (swirl vs suck decomposition; `--flow-center fx:fy`) |
 | How much of the frame does the subject fill? | `--occupancy` → `t,coverage_pct,bbox` (the "present but too small" case) |
 | One region's evolution in a single image | `--stack --crop W:H:X:Y` → vertical ROI time-stack |
+| Is content cut off / off-canvas at an edge? | `--stack --edge right:60` — `--edge side:px` is a coord-free crop of that edge band; feeds any mode `--crop` feeds |
+| How many distinct poses / how fast does a region *really* animate? | `--unique` → deduped `uniq_*.png` (the poses) + a cadence verdict; scope with `--crop`/`--edge` |
 | Too vivid / "clownish" vs muted? | `--saturation` → `t,saturation` (per-frame colour intensity) |
 | Read a tiny region (FPS/HUD/label) | `--crop W:H:X:Y` (crop+zoom; combines with any mode) |
 | Black / blank screen | `--blackdetect` (spans, flags PERMANENT vs transient) |
@@ -98,6 +100,13 @@ feature sizes as **% of viewport** (`--measure`/`--probe`), since retina (dpr 2)
 mislead. And for **"an animation didn't play"**, frames confirm *absence* but not *cause* (the
 element may be in the DOM but paused, the first paint deferred, or JS threw) — pair the video
 pass with a DOM/console capture before concluding (see reference.md).
+
+**Art-reference steer — captures shift colours.** A compressed screen recording is
+chroma-subsampled (yuv420): saturated colours drift (hot pink reads salmon), so treat
+`--palette` hexes as *approximate* and never tune art direction to them — for exact colours ask
+for the **source asset or a lossless screenshot**. For "match this animation" requests, lead
+with `--unique` (the distinct poses + real cadence) rather than a fixed-fps burst that
+duplicates or skips poses.
 
 **ffmpeg note:** ffmpeg is already on PATH in many environments (incl. many web containers).
 If it's missing the plugin tries apt → brew → a GitHub static build; a locked-down sandbox

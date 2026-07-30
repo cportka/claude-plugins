@@ -35,6 +35,8 @@
 #   extract-frames.sh --video <path> --content-revert [--crop <region>] # A->B->A content flicker
 #   extract-frames.sh --video <path> --saturation [--fps <n>]        # colour-saturation timeline
 #   extract-frames.sh --video <path> --stack --crop <W:H:X:Y>        # ROI time-stack (band over time)
+#   extract-frames.sh --video <path> --stack --edge right:60         # edge band over time, no coords
+#   extract-frames.sh --video <path> --unique [--crop <region>]      # distinct poses + region cadence
 #   extract-frames.sh --compare-videos a.mov,b.mov [--cols <n>]      # one A/B phase-aligned sheet
 #   extract-frames.sh --video <path> --intro                        # load/splash preset (first ~2s)
 #   extract-frames.sh --check-update                                 # installed vs marketplace version
@@ -82,8 +84,22 @@
 #                       so that region fills the frame — a zoom on an on-screen FPS/HUD, a
 #                       counter, or any small UI area. Applies to dense/scene/contact/diff/
 #                       timestamp modes. iw/ih expressions allowed (e.g. iw/4:ih/4:0:0).
+#   --edge <side:px>    Crop shorthand for a screen-EDGE band: right:60 = the rightmost 60px
+#                       column (left:/top:/bottom: analogous), built from iw/ih so no pixel
+#                       arithmetic is needed. Feeds every mode --crop feeds — --stack --edge
+#                       right:60 reads "what happens at the right edge over time" (the
+#                       content-cut-off-at-an-edge question). Mutually exclusive with --crop.
+#                       (1.14.0, #112.)
 #   --diff              Frame-difference mode: emit diff_*.png where each frame is the change
 #                       from the previous one (bright = motion). Confirms what moved / where.
+#   --unique            Distinct-content extractor: keep ONLY frames whose content changed
+#                       (mpdecimate survivors) as uniq_*.png, print a frame,t CSV on stdout,
+#                       and end with a cadence verdict ("region content changes every ~66 ms
+#                       ≈ 15.2 fps; 12 unique frames over 3.1s"). Answers "how many poses does
+#                       this animation actually have, and how fast does it really run?" in one
+#                       pass — scope with --crop/--edge (crop happens BEFORE dedup) so a busy
+#                       background can't defeat it. Honors --start/--end/--t0; caps at 200
+#                       frames. (python3.) (1.14.0, #113.)
 #   --label             Burn the source timestamp onto each frame (dense/--diff/--timestamps,
 #                       and contact tiles + --compare-videos). Best-effort: needs ffmpeg
 #                       drawtext + a font; silently skipped if unavailable.
@@ -258,6 +274,8 @@
 #   extract-frames.sh --video splash.mov --saturation --fps 6            # vivid vs muted, over time
 #   extract-frames.sh --compare-videos fresh.mov,replay.mov --label      # A vs B, phase-aligned
 #   extract-frames.sh --video app.mov --intro                            # "the intro does X" — t=0
+#   extract-frames.sh --video app.mov --stack --edge right:60            # clipped at the right edge?
+#   extract-frames.sh --video sprite.mov --unique --crop 220:220:24:310  # distinct poses + cadence
 #
 set -euo pipefail
 # Numeric output must be locale-stable: under a comma-decimal locale, mawk/bash printf emit "0,000"
@@ -269,7 +287,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.13.0"
+VBA_VERSION="1.14.0"
 
 VIDEO=""
 START=""
@@ -299,6 +317,8 @@ LABEL_OK=""   # ADDED (1.0.3): set when the --label drawtext probe succeeds
 LABEL_FONT="" # ADDED (1.0.3): font file resolved for --label burn-in; segments built by label_seg
 CROP=""       # --crop W:H:X:Y (ffmpeg geometry) -> crop a region, then scale = zoom
 CROP_VF=""    # computed crop filter segment (empty unless --crop given)
+EDGE=""        # --edge side:px — edge-ROI crop shorthand (1.14.0, #112)
+UNIQUE=""      # --unique emits deduped frames + a region-cadence verdict (1.14.0, #113)
 BLACKDETECT="" # --blackdetect finds blacked-out spans, then exits
 BLACK_D="0.1"  # --black-min, minimum black-span duration (seconds) to report
 BLACK_RATIO="0.98" # --black-ratio, fraction of pixels that must be black (pic_th)
@@ -437,8 +457,16 @@ tune_contact_for_source() {
   read -r w h <<<"${wh:-}" || true   # empty here-string returns non-zero under set -e
   # Portrait: explicit --portrait, or ffprobe says taller-than-wide.
   if [[ -z "$COLS_SET" ]] && { [[ -n "$PORTRAIT" ]] || { [[ -n "${w:-}" && -n "${h:-}" ]] && (( h > w )); }; }; then
-    COLS=2
-    echo "Portrait capture: using --cols 2 (override with --cols). For dense small text, full-res individual frames (drop --contact) read better than any contact sheet." >&2
+    if [[ -n "$TEXT" ]]; then
+      # --text on portrait (1.14.0, #112): even 2-col tiles render ~13px phone-UI text illegibly.
+      # The user asked for legible text, and the tool KNOWS it's portrait — make the first
+      # extraction the right one: single-column tiles (an explicit --cols still wins).
+      COLS=1
+      echo "Portrait + --text: using --cols 1 for legible tiles (override with --cols). Full-res individual frames (drop --contact) still read best for dense text." >&2
+    else
+      COLS=2
+      echo "Portrait capture: using --cols 2 (override with --cols). For dense small text, full-res individual frames (drop --contact) read better than any contact sheet." >&2
+    fi
   fi
   # Legibility guard: if each tile downscales the source width a lot, small text blurs.
   if [[ -n "${w:-}" ]] && awk -v sw="$w" -v tw="$TILEW" 'BEGIN{ exit !(tw>0 && sw/tw > 2.5) }'; then
@@ -514,6 +542,8 @@ while [[ $# -gt 0 ]]; do
     --label) LABEL=1; shift ;;                        # burn source timestamp on frames
     --list-scenes) LIST_SCENES=1; shift ;;            # print scene-cut timestamps, exit
     --crop) CROP="${2:-}"; shift 2 ;;                  # crop region W:H:X:Y, then zoom
+    --edge) EDGE="${2:-}"; shift 2 ;;                  # ADDED (1.14.0, #112): side:px crop shorthand
+    --unique) UNIQUE=1; shift ;;                       # ADDED (1.14.0, #113): deduped unique frames + cadence verdict
     --blackdetect) BLACKDETECT=1; shift ;;            # find black spans, exit
     --black-min) BLACK_D="${2:-}"; shift 2 ;;         # min black-span duration (seconds)
     --black-ratio) BLACK_RATIO="${2:-}"; shift 2 ;;   # black-pixel fraction (pic_th)
@@ -573,6 +603,29 @@ fi
 # --text preset bumps contact tiles to a code/transcript-legible width unless the
 # user set --tile-width explicitly.
 [[ -n "$TEXT" && -z "$TILEW_SET" ]] && TILEW="640"
+
+# --edge <side>:<px> (1.14.0, #112): shorthand for the edge-clipping question ("is content cut off
+# at the right edge?") — computes the --crop expression from ffmpeg's own iw/ih, so no probe math.
+# Resolved HERE, before any validation, so --stack's needs-a-crop check below accepts --edge too.
+if [[ -n "$EDGE" ]]; then
+  if [[ -n "$CROP" ]]; then
+    echo "Error: --edge and --crop are mutually exclusive (edge IS a crop shorthand)." >&2
+    exit 2
+  fi
+  _epx="${EDGE#*:}"
+  if [[ ! "$_epx" =~ ^[0-9]+$ ]]; then
+    echo "Error: --edge must be side:px (e.g. right:60) with an integer px (got '$EDGE')." >&2
+    exit 2
+  fi
+  case "$EDGE" in
+    right:*)  CROP="${_epx}:ih:iw-${_epx}:0" ;;
+    left:*)   CROP="${_epx}:ih:0:0" ;;
+    top:*)    CROP="iw:${_epx}:0:0" ;;
+    bottom:*) CROP="iw:${_epx}:0:ih-${_epx}" ;;
+    *) echo "Error: --edge side must be left|right|top|bottom (got '$EDGE')." >&2; exit 2 ;;
+  esac
+  echo "--edge $EDGE -> crop ${CROP} (pairs well with --stack for an edge ROI time-stack)" >&2
+fi
 
 # --stack needs its ROI up front — fail before any ffmpeg install/probe work (1.3.0, #62).
 if [[ -n "$STACK" && -z "$CROP" ]]; then
@@ -1206,6 +1259,9 @@ run_palette() {
   done
   rm -rf "$d"
   echo "Palette: up to ${COLORS} dominant colours${START:+ from ${START}}${END:+ to ${END}} (sampled at ${FPS} fps)." >&2
+  # Expectation-setting (1.14.0, #113): consumer captures are yuv420 — 4:2:0 chroma subsampling +
+  # codec quantization shift saturated colours (a hot pink reads salmon). Not fixable post-hoc.
+  echo "(colours passed through video compression — chroma-subsampled, treat as approximate; for exact art colours sample the source asset/screenshot, not a lossy capture)" >&2
 }
 
 # Duration of the VIDEO stream. NOT format=duration — that's the longest stream, and an audio track
@@ -1311,6 +1367,8 @@ run_palette_over_time() {
     printf '%s\t%s\n' "$t0" "${hexes:-(no colours)}"
   done
   rm -rf "$d"
+  # Expectation-setting (1.14.0, #113): same caveat as run_palette — lossy capture shifts colours.
+  echo "(colours passed through video compression — chroma-subsampled, treat as approximate; for exact art colours sample the source asset/screenshot, not a lossy capture)" >&2
 }
 
 # --loop-check — is this a clean *seamless* loop? Extract the first and last frame, report the mean
@@ -2068,6 +2126,59 @@ PY
   rm -rf "$d"
 }
 
+# deduped unique frames + region-cadence verdict (1.14.0, #113) — the art-reference workhorse.
+# "How fast does this sprite/region actually animate, and what are its distinct poses?" previously
+# took triangulating --stutter (whole-frame) + --motion --crop (CSV) + eyeballing a burst. This
+# emits ONLY the deduped frames (mpdecimate survivors — the distinct poses, as uniq_*.png) plus a
+# one-line verdict: "region content changes every ~66 ms ≈ 15.2 fps; 12 unique frames". Honors
+# --crop/--edge (crop BEFORE dedup, so a busy background can't defeat the dedup), --start/--end,
+# --t0; capped at 200 frames. Needs python3.
+run_unique() {
+  local vf="${CROP_VF}mpdecimate,showinfo,scale='min(${MAXW},iw)':-1"
+  set_vfr_flag
+  if [[ -n "$DRY_RUN" ]]; then
+    printf 'ffmpeg'; printf ' %q' -hide_banner -nostats ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" ${VFR[@]+"${VFR[@]}"} -vf "$vf" -frames:v 200 "<out>/uniq_%04d.png"
+    printf '\n'
+    echo "# mpdecimate survivors = the distinct poses; showinfo pts -> per-frame times + cadence verdict"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: --unique needs python3 for the cadence verdict. Install python3 and re-run." >&2
+    exit 2
+  fi
+  mkdir -p "$OUT"
+  local base; base="$(disp_base)"
+  local log
+  log="$(ffmpeg -hide_banner -nostats ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" ${VFR[@]+"${VFR[@]}"} \
+    -vf "$vf" -frames:v 200 "$OUT/uniq_%04d.png" 2>&1 || true)"
+  printf '%s\n' "$log" | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' > "$OUT/.uniq_times"
+  python3 - "$OUT/.uniq_times" "$base" "$OUT" <<'PY'
+import sys
+times = [float(x) for x in open(sys.argv[1]).read().split()]
+base, out = float(sys.argv[2]), sys.argv[3]
+e = sys.stderr
+n = len(times)
+if n == 0:
+    e.write("unique: no frames survived dedup — the region may be entirely static (try --stall) or the window empty.\n")
+    raise SystemExit(0)
+print("frame,t")
+for i, t in enumerate(times, 1):
+    print("uniq_%04d.png,%.3f" % (i, base + t))
+if n < 2:
+    e.write("unique: 1 distinct frame — the region never changes in this window (a static pose; --stall to confirm a hang).\n")
+    raise SystemExit(0)
+deltas = sorted(times[i] - times[i-1] for i in range(1, n))
+med = deltas[len(deltas)//2]
+fps = (1.0/med) if med > 0 else 0.0
+span = times[-1] - times[0]
+e.write("unique: region content changes every ~%.0f ms ≈ %.1f fps; %d unique frames over %.2fs (uniq_*.png = the distinct poses, timestamps on stdout).\n"
+        % (med*1000, fps, n, span))
+if n >= 200:
+    e.write("(capped at 200 unique frames — scope with --start/--end for a longer clip)\n")
+PY
+  rm -f "$OUT/.uniq_times"
+}
+
 # rotational/radial flow decomposition (#69) — --motion/--diff give magnitude and *where*,
 # but not *character*: "a disk spinning in place" and "a disk spiralling inward" light them up the
 # same. This computes a coarse block-matching optical flow between sampled frames and decomposes it
@@ -2315,6 +2426,7 @@ if [[ -n "$_writes_pngs" ]] && _has_pngs "$OUT"; then
   [[ -n "$TIMESTAMPS" ]] && _tag="ts"
   [[ -n "$STRIP"      ]] && _tag="strip"
   [[ -n "$CMP_VIDEOS" ]] && _tag="compare"
+  [[ -n "$UNIQUE"     ]] && _tag="unique"
   _win="${START:-0}-${END:-end}"
   _sub="${_tag}_$(printf '%s' "$_win" | tr ':/' '..')"
   # a rerun with the SAME mode+window would land in the same subdir — bump a counter until free.
@@ -2433,6 +2545,7 @@ fi
 
 # crop a region (e.g. an on-screen FPS/HUD), applied before scale so the
 # region is zoomed. Geometry is ffmpeg crop syntax W:H:X:Y (expressions like iw/ih allowed).
+# (--edge was already folded into CROP right after argparse, so --stack's early check sees it.)
 [[ -n "$CROP" ]] && CROP_VF="crop=${CROP},"
 
 # heads-up if the clip is sparser than the requested fps (dense/contact/timestamps).
@@ -2523,6 +2636,13 @@ fi
 # --content-revert is an analysis mode — flag A->B->A content flicker and exit (1.13.0, #108).
 if [[ -n "$CONTENT_REVERT" ]]; then
   run_content_revert
+  feedback_hint
+  exit 0
+fi
+
+# --unique writes deduped pose frames + a cadence verdict, then exits (1.14.0, #113).
+if [[ -n "$UNIQUE" ]]; then
+  run_unique
   feedback_hint
   exit 0
 fi
@@ -2676,8 +2796,22 @@ if [[ -n "$DRY_RUN" ]]; then
 else
   COUNT=$(find "$OUT" -maxdepth 1 -type f -name '*.png' | wc -l | tr -d ' ')
   echo "Extracted ${COUNT} image(s) to: ${OUT}"
-  if [[ -n "$CONTACT" ]]; then
+  if [[ "$COUNT" -eq 0 ]]; then
+    # Loud, not silent (1.14.0, #113): a too-tight --start/--end at low --fps produces an empty dir
+    # with exit 0 — easy to mistake for success. Say so and say why (scene mode's why differs).
+    if [[ -n "$SCENE" ]]; then
+      echo "WARNING: 0 frames extracted — no scene cuts scored above --scene ${SCENE} in this window. Lower the threshold (e.g. --scene 0.1) or use --fps sampling instead." >&2
+    else
+      echo "WARNING: 0 frames extracted — the --start/--end window is likely too tight for --fps ${FPS} (or past the clip's end). Widen the window, raise --fps, or check the duration with --probe." >&2
+    fi
+  elif [[ -n "$CONTACT" ]]; then
     echo "Each contact sheet tiles frames left-to-right, top-to-bottom in time order."
+    # Tile -> source mapping footer (1.14.0, #113): finding a feature on a tile means converting
+    # tile px back to source px by hand; print the ratio + the tile->time formula once per run.
+    _swh="$(probe_wh || true)"; _sw="${_swh%% *}"
+    if [[ -n "${_sw:-}" && "$_sw" -gt 0 ]]; then
+      echo "tile->source mapping: tiles are ${TILEW}px wide = scale $(awk -v t="$TILEW" -v s="$_sw" 'BEGIN{printf "%.3f", t/s}') of the ${_sw}px source (multiply tile px by $(awk -v t="$TILEW" -v s="$_sw" 'BEGIN{printf "%.2f", s/t}') for --crop coords); tile N (row-major) ≈ t = start + (N-1)/${FPS}s."
+    fi
   else
     echo "Read them in filename order to reconstruct the timeline."
   fi

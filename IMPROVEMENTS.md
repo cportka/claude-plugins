@@ -70,6 +70,14 @@ form and are triaged into the items below.
   would run each mode over each clip and label the CSVs by source. Low priority.
 - **Numeric plot over a CSV** — the OCR/measure/motion/saturation modes emit `t,value`; rendering
   a quick plot (or min/max/dips) would beat reading the CSV by eye.
+- **`--grid` — burn a labelled coordinate grid onto frames** (#113): reading `--crop` coordinates
+  off a frame still takes zoom-and-guess; a drawtext/drawgrid overlay (e.g. 100px cells, labelled
+  axes) would make any region's `W:H:X:Y` readable at a glance. The 1.14.0 tile→source mapping
+  footer + `--edge` cover the common cases (whole-tile math, edge bands) without it.
+- **`--exact` palette from a lossless source** (#113): `--palette` on a compressed capture is
+  approximate by physics (yuv420 chroma subsampling — now stated in the output); an `--exact` mode
+  taking a PNG/screenshot input (or refusing lossy input) would serve art-direction matching. The
+  SKILL.md steer (ask for the source asset) covers it today.
 - **`--montage a.gif,b.gif,…`** (#85) — an N-way *library survey*: one representative tile per input,
   one contact sheet, to eyeball a whole collection's range at a glance. Distinct from the pairwise
   phase-aligned `--compare-videos`; overlaps the multi-clip batch idea above (shape here is survey).
@@ -124,6 +132,11 @@ form and are triaged into the items below.
   leaves tagging/releasing to a human, and handles branch-pinned web sessions; the scaffolded suite's
   CHANGELOG check is anchored to a real `## [version]` heading and a script-less `package.json` gets
   `npm test` wired to `node --test`.
+- **The standard is self-updating since 1.14.0**: the managed block leads with the one-paragraph
+  contract and carries a `portka-standard-version` stamp; a committed `.claude/commit-identity` is
+  auto-applied to git config by the SessionStart hook (which also heals the stock stop-hook and
+  flags a stale block); `--portka-standard` enables the repo-bootstrap plugin in the repos it
+  bootstraps, so future fixes actually arrive.
 
 **Weaknesses / ideas (not yet built)**
 - Requires `python3` (no pure-bash/`jq` fallback yet).
@@ -159,13 +172,11 @@ form and are triaged into the items below.
   configured to **deploy from a branch root** instead — the two conflict (an Actions workflow fights a
   branch deploy). When `--pages` lands, detect which Pages mode the repo uses; for branch-deploy, skip the
   Actions workflow and just guarantee `.nojekyll` + root-served files.
-- **Stop-hook should read the declared commit identity** (#98): the standard now *declares* a "Commit
-  identity" convention (1.11.0), but the enforcement lives in a global `~/.claude/stop-hook-git-check.sh`
-  — out of this repo's scope. Once that hook is maintained here (or shipped by a plugin), teach it three
-  exemptions: skip GitHub's own squash-merge commits (`noreply@github.com`, reachable from
-  `origin/main`); read the expected identity from the repo declaration instead of hardcoding
-  `noreply@anthropic.com`; and report unsigned commits as INFO (not a fix-it) when `user.signingkey`
-  is empty / the signer is a known hosted-env stub, or skip the signature check on squash-merge repos.
+- **Auto-refresh the stale block, not just flag it** (1.14.0 follow-on): the SessionStart hook now
+  *detects* a stale `portka-standard-version` stamp and says how to refresh; a `--refresh-standard`
+  one-shot (or hook-driven auto-PR) could fold the refresh in without the agent re-running the full
+  bootstrap. Needs care: a CLAUDE.md write mid-session is exactly what the auto-mode classifier
+  guards, so the say-how-to note may remain the right default.
 
 ## app-website-evaluator
 

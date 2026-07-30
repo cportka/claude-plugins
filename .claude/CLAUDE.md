@@ -1,42 +1,29 @@
 <!-- BEGIN portka-standard (managed by repo-bootstrap — edit between the markers, or re-run to refresh) -->
 # Portka standard workflow
+<!-- portka-standard-version: 1.14.0 -->
 
-Standing conventions for how Claude Code works here. Follow them for every change, without being
-asked, so our back-and-forth stays on the code — not on process.
+**The contract.** Describe a feature, a fix, or a next step — that's the whole request. It is
+understood, without being asked, that Claude then runs the loop: **branch fresh from `main` → build
+it and test it fully → open the PR → merge it yourself once CI is green → hand back the short PR
+link.** The user deletes the branch when satisfied; that deletion is the confirmation the next
+round picks up. Two things stay with the user: **releasing** (tags / GitHub Releases) and the
+**go/no-go on outward-facing or irreversible production changes**. Commit identity comes from the
+committed `.claude/commit-identity` file, applied to git config automatically at session start by
+the repo-bootstrap plugin. Everything below is the fine print of that one loop — read it once,
+then just talk about the work.
 
-For each change you make **in this repository**:
+## The loop, step by step
 
-1. **Update `main` first.** Begin by switching to `main` and pulling the latest. A previous
-   change's branch being gone is the user's confirmation that they saw it (see step 5).
-   *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
-   anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
-   signal (step 5) all assume `main` exists and is the repo's **default** branch. Flipping the default
-   is a GitHub **Settings-only, human step** (no API for typical agent toolsets): create `main`, push
-   it, then hand the default-branch flip back to the owner explicitly.
-   *Branch-pinned session?* In a hosted/branch-pinned environment (e.g. Claude Code on the web) the
-   harness assigns you **one** feature branch and forbids **pushing directly to `main`** — so **skip
-   the `main` checkout** and work on that branch. Because the name is reused for the whole session,
-   step 2's "new branch per change" becomes: after each merge, **restart the pinned branch from
-   `origin/main`** and **prune the stale remote-tracking ref**:
-   `git fetch origin main && git checkout -B <pinned> origin/main && git remote prune origin`.
-   The prune matters: with "Automatically delete head branches" on, GitHub deletes the merged branch
-   server-side but your local `origin/<pinned>` ref lingers — and hosted git-check hooks that diff
-   against it will then flag **GitHub's own squash-merge commit** as unverified authorship on every
-   turn (a hard false positive; never rewrite it). Pruned, the next push is a plain
-   `git push -u origin <pinned>` that **recreates** the branch; `--force-with-lease` applies only
-   when the remote branch still exists carrying already-merged history. Nothing else changes: you
-   still open the PR and merge it on green — see the note after step 5.
+1. **Update `main` first.** Switch to `main` and pull the latest. A previous change's branch being
+   gone is the user's confirmation that they saw it (see step 5). (Hosted/branch-pinned session?
+   See the situational notes — you skip this checkout and restart the pinned branch instead.)
 2. **Branch for everything (in this repo).** Every fix, update, or change goes on a new branch here —
    never commit to `main` directly. If another repo is open in the same session (e.g. a plugin
    marketplace you installed tools from), it is **read-only reference**: do all your branches and PRs
    on *this* repo, never on it.
-   *Session spanning several repos you own?* These steps are per-repo: give each its own branch and PR,
-   keep each repo's tests/`CHANGELOG`/version in its own tree, and **coordinate the merges** rather than
-   firing each the instant it's green — a feature split across services should land in the order (and at
-   the time) the owner intends. See step 4's production carve-out.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
-   request (opening it is pre-authorized — see the note after step 5; don't stop at "branch pushed"
-   to ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
+   request (opening it is pre-authorized — see the note below; don't stop at "branch pushed" to
+   ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
 4. **Green, then merge — with one carve-out.** Wait until every check has **registered and finished**
    — an empty or still-populating check list is *not* green — then merge the PR. Never merge on red or
    before CI completes. **Merge routine changes yourself on green.** But when the merge itself triggers
@@ -45,29 +32,49 @@ For each change you make **in this repository**:
    specifics and let the owner make the go/no-go call. This mirrors the harness's own "confirm first for
    hard-to-reverse / outward-facing actions" rule and any repo `HANDOFF.md` that asks to validate on a
    preview deploy before flipping production.
-5. **Hand back a short PR link.** Give the user a short link to the PR — merged if you were able to,
-   otherwise green and ready for them to merge, saying which. They delete the branch when satisfied —
-   which you pick up next time you update `main` (step 1). *Branch-pinned caveat:* with a single
-   reused branch name, deletion can't happen mid-session, so this confirmation signal only fires
-   **between** sessions — don't wait on it within one.
+5. **Hand back a short PR link.** Merged if you were able to, otherwise green and ready for them to
+   merge — say which. They delete the branch when satisfied, which step 1 picks up next round.
 
 **Opening the PR and merging are authorized — this file is the "explicit ask."** Some hosted
 harnesses default to *"don't open a pull request unless the user explicitly asks for one."* The repo
 owner committed this standard, so **its presence is that standing instruction**: open the PR
-proactively at step 3 for every change — do **not** stop at "branch pushed" and ask whether to open
-one. Then **merge it yourself once CI is green.** Merging a PR happens through GitHub, not a local
-push to `main`, so a branch-pin usually doesn't block it — but that's not guaranteed: branch
-protection (e.g. a required approving review you can't give as the PR's author), the harness's token
-scope, or org policy can still refuse a merge on a green PR. So **attempt the merge; if GitHub
-refuses, hand back the green PR** and say it's ready for them to merge — never self-approve, bypass
-protection, or admin/force-merge around a refusal. The owner's expected flow is open → green → you
-merge → they delete the branch.
+proactively at step 3 for every change. Then **merge it yourself once CI is green.** Merging happens
+through GitHub, not a local push to `main`, so a branch-pin usually doesn't block it — but branch
+protection (e.g. a required approving review you can't give as the PR's author), token scope, or org
+policy can still refuse a merge on a green PR. So **attempt the merge; if GitHub refuses, hand back
+the green PR** and say it's ready — never self-approve, bypass protection, or admin/force-merge
+around a refusal.
 
 **Releasing is the user's manual step — don't tag or cut releases.** Merging the PR is *not*
 releasing. Prepare the release *in the PR* (bump the version, update `CHANGELOG.md`), but do **not**
 create or push a git tag and do **not** run `gh release` / publish a GitHub Release. Hosted/sandbox
 environments block tag pushes, so it just fails. After the PR merges, the user tags the release and
 cuts it from the GitHub web UI.
+
+## Situational notes (read the one that applies)
+
+- *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
+  anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
+  signal all assume `main` exists and is the repo's **default** branch. Flipping the default is a
+  GitHub **Settings-only, human step** (no API for typical agent toolsets): create `main`, push it,
+  then hand the default-branch flip back to the owner explicitly.
+- *Branch-pinned session?* (e.g. Claude Code on the web) The harness assigns **one** feature branch
+  and forbids **pushing directly to `main`** — so skip the `main` checkout and work on that branch.
+  Because the name is reused all session, "new branch per change" becomes: after each merge,
+  **restart the pinned branch from `origin/main` and prune the stale remote-tracking ref**:
+  `git fetch origin main && git checkout -B <pinned> origin/main && git remote prune origin`.
+  The prune matters: with "Automatically delete head branches" on, GitHub deletes the merged branch
+  server-side but your local `origin/<pinned>` ref lingers — and hosted git-check hooks that diff
+  against it will then flag **GitHub's own squash-merge commit** as unverified authorship on every
+  turn (a hard false positive; never rewrite it). Pruned, the next push is a plain
+  `git push -u origin <pinned>` that **recreates** the branch; `--force-with-lease` applies only
+  when the remote branch still exists carrying already-merged history. *Branch-pinned caveat:* with
+  a single reused branch name, deletion can't happen mid-session, so step 5's confirmation signal
+  only fires **between** sessions — don't wait on it within one.
+- *Session spanning several repos you own?* These steps are per-repo: give each its own branch and
+  PR, keep each repo's tests/`CHANGELOG`/version in its own tree, and **coordinate the merges**
+  rather than firing each the instant it's green — a feature split across services should land in
+  the order (and at the time) the owner intends. See step 4's production carve-out.
 
 ## Reporting feedback on the tools you use
 
@@ -107,14 +114,18 @@ stable release (for a library, typically its first registry publish).
 
 ## Commit identity
 
-Set git's author/committer identity **before your first commit**, from the identity this repo
-declares (see the repo-specific note below; ask the owner if none is set yet):
+The repo declares its commit identity in the committed **`.claude/commit-identity`** file
+(`Name <email>` on the first non-comment line). The repo-bootstrap plugin's SessionStart hook
+applies it to git config automatically; if it hasn't (plugin not loaded, fresh clone), set it
+**before your first commit**:
 
 ```
 git config user.name  "<declared name>"
 git config user.email "<declared email>"
 ```
 
+No `.claude/commit-identity` in the repo yet? **Ask the owner** which identity commits should use
+(then declare it: `bootstrap-repo.sh --portka-standard --identity "Name <email>"`) — don't guess.
 Use that same identity for every automated/agent commit so history stays consistent — don't fall
 back to a generic `noreply@` default. Follow any trailer convention the repo names (e.g. a
 `Co-authored-by:` line). In hosted/sandbox environments commit **signing** is often unavailable (an

@@ -5,6 +5,106 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.14.0] - 2026-07-30
+
+The contract release: the bootstrap's job is restated as **one well-defined loop between the user,
+Claude, and GitHub** — describe a feature or next step, and it's understood Claude branches fresh
+from `main`, builds + tests fully, opens the PR, merges on CI green, and hands the link back for the
+user to delete as confirmation. 1.13.0 fixed the authorship mechanics; 1.14.0 makes the contract
+explicit, machine-checkable, and **self-updating** — because the recurring authorship pain traced to
+pre-1.13 repos still running stale standard blocks with the plugin never enabled. Triage of
+#112/#113/#114. **repo-bootstrap + video-bug-analyzer → 1.14.0** (evaluator/tab-chord unchanged at
+1.13.0). MINOR.
+
+### Added (repo-bootstrap → 1.14.0, #114 + user directive) — the contract, made durable
+- **The managed `CLAUDE.md` block now leads with "The contract."** — the whole loop in one
+  paragraph (branch fresh from `main` → build + test → PR → merge on green → hand back the link;
+  deletion = confirmation; releasing + prod go/no-gos stay with the user), then "The loop, step by
+  step", then **situational notes** (greenfield / branch-pinned / multi-repo) so the fine print
+  reads once instead of interleaving every path. All prior guidance (prune step, push recipe,
+  carve-out, feedback funnel, SemVer, identity rules) is preserved verbatim where tests assert it.
+- **The block is version-stamped** (`<!-- portka-standard-version: X -->`, substituted from
+  `plugin.json` at write time), and the SessionStart hook **flags a stale or stampless block** with
+  the exact refresh command — so a repo bootstrapped at 1.9.0 finally *learns* about fixes instead
+  of running an old standard forever (the #109-recurrence root cause).
+- **Committed `.claude/commit-identity`** ("Name <email>") is the contract's identity source.
+  `--identity "Name <email>"` declares it (validated; exit 2 on garbage); with no flag an existing
+  file is kept, else it's **seeded from the repo's own git config** (never a `noreply@` harness
+  default). The SessionStart hook (now `hooks/portka-session-start.sh`, replacing
+  `refresh-stop-hook.sh`) **auto-applies it to git config** each session when identity is unset or
+  the hosted `noreply@anthropic.com` default — the end of per-session identity setup; a
+  deliberately different local identity is left alone. Stop-hook healing (1.13.0) is job 2 of the
+  same hook.
+- **`--portka-standard` auto-enables the repo-bootstrap plugin itself** in the settings it writes —
+  bootstrapped repos previously never loaded the plugin, so they never received the healer/refresh
+  hooks.
+- **SKILL.md documents the unattended default** (`--portka-standard --scope project --ci` +
+  `--identity` when known) so an autonomous session doesn't stall on "ask which plugins" (#114.5).
+
+### Fixed (repo-bootstrap → 1.14.0, #114)
+- **The branch-rename recipe no longer fires when `main` already exists** (#114.1/.3). On a
+  branch-pinned session (hosted web) the old "you're not on main → rename this branch to main"
+  advice was actively dangerous — following it would push the pinned feature branch AS `main`. Now:
+  `main` (local or remote) existing → a NOTE that the branch-pinned flow applies (work here, PR,
+  merge on green), no rename; unborn/local-only repos still get the rename; `--dry-run` resolves
+  the same conditions to the same outcome instead of always printing the recipe.
+- **`--portka-standard --ci` in one run is self-aware** (#114.2): the CI-collision message now says
+  it's *using the `validate.yml` written above* (which already runs `tests/run-tests.sh`) instead
+  of warning about its own workflow as a colliding foreign one.
+- **A greenfield repo with a README but no `**Version:**` line gets the third sync point
+  inserted** under the first H1 (#114.4) — previously the suite's README check just never engaged.
+- **The classifier-refusal warning is calmer** (#114.5): the settings-write fallback is stated as
+  a note (human-run `/plugin` commands aren't permission-gated), not an alarming failure.
+
+### Added (video-bug-analyzer → 1.14.0, #112/#113)
+- **`--unique` — the distinct-poses extractor.** Keep ONLY frames whose content changed
+  (mpdecimate survivors) as `uniq_*.png`, print a `frame,t` CSV, and end with a cadence verdict
+  ("region content changes every ~66 ms ≈ 15.2 fps; 12 unique frames over 3.1s"). Answers "how
+  many poses does this animation actually have, and how fast does it really run?" in one pass —
+  previously triangulated across `--stutter` + `--motion --crop` + eyeballing a burst (#113).
+  Crop applies BEFORE dedup so a busy background can't defeat it; honors
+  `--crop`/`--edge`/`--start`/`--end`/`--t0`; 200-frame cap stated when hit.
+- **`--edge side:px` — a coord-free crop for screen-edge questions** ("is content cut off at the
+  right edge?"): `right:60` → the rightmost 60px band, built from ffmpeg's own `iw`/`ih` (no probe
+  arithmetic), feeding every mode `--crop` feeds — `--stack --edge right:60` is the edge-band
+  time-stack (#112). Mutually exclusive with `--crop`; validated (exit 2 on bad side/px). The
+  conversion resolves *before* `--stack`'s needs-a-crop check so the pairing it exists for works.
+- **A 0-frame extraction now warns with the likely cause** — per mode: the `--start/--end` window
+  too tight for `--fps` / past EOF, `--timestamps` past the clip or `--window` too narrow, or no
+  scene cuts above `--scene` — instead of exiting silently as if it succeeded (#113).
+- **Contact sheets end with a tile→source mapping footer** (tile px × factor = `--crop` coords;
+  tile N → t) closing the sheet → zoom loop without probe arithmetic; on cropped or scene-driven
+  sheets the parts that would mislead (full-width ratio, fixed-fps times) are replaced with the
+  right guidance (#113).
+- **Portrait + `--text` drops to `--cols 1`** (even 640px tiles in 2 portrait columns left ~13px
+  phone-UI text illegible); an explicit `--cols` always wins (#112).
+- **Both palette modes state the lossy-capture caveat** (yuv420 chroma subsampling shifts
+  saturated colours) and SKILL.md gains the art-reference steer: palette hexes from a compressed
+  capture are approximate — ask for the source asset for exact colours; lead "match this
+  animation" requests with `--unique` (#113).
+
+### Hardened (pre-merge adversarial review — findings fixed before this release shipped)
+- **SessionStart hook:** resolves the repo *top* so identity/staleness work from a subdirectory;
+  only claims "applied" when the git-config writes actually land (else prints the set-it-by-hand
+  fallback); rejects a nameless `<email>` declaration; compares version stamps on the
+  `MAJOR.MINOR.PATCH` base so a `-rc` suffix can't invert the staleness order; and honors
+  `PORTKA_HOOK_DIRS` so the test suite can never rewrite a real environment's stop-hook (the
+  suite's own run had healed this sandbox's live hook through the hardcoded `/root` path).
+- **bootstrap:** `--identity` without `--portka-standard` is a loud exit 2 (it was silently
+  ignored, validation and all) and the value is validated up front + printed by `--print-only`;
+  main-exists detection covers **any** remote's `main`, and an unborn *orphan* branch beside an
+  existing `main` (`git checkout --orphan gh-pages`) is left alone instead of having HEAD
+  re-pointed onto `main`; the greenfield rename recipe now leads with a `git ls-remote` guard (a
+  single-branch clone can hide a server-side `main`); the version-stamp read can't abort a
+  vendored copy under `set -e`; the README insert preserves CRLF endings and its dry-run resolves
+  the no-H1 case to the same NOTE as the real run; the managed block tells agents to **ask the
+  owner** when no `.claude/commit-identity` exists yet.
+- **video `--unique`:** the CSV/verdict reconcile to the files actually written at the 200 cap
+  (showinfo logs a few pts past `-frames:v`), and a hard ffmpeg failure (e.g. an `--edge` band
+  wider than the frame) surfaces with the real error instead of reading as "static region". The
+  contact mapping footer prints only on whole-frame sheets — cropped sheets get a
+  region-coordinates note, scene-driven sheets drop the fixed-fps time formula.
+
 ## [1.13.0] - 2026-07-22
 
 The authorship-fix + audit release: a persistent end to the per-turn "squash-merge flagged as
@@ -1522,6 +1622,17 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.14.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.14.0
+[1.13.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.13.0
+[1.12.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.12.1
+[1.12.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.12.0
+[1.11.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.11.0
+[1.10.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.10.0
+[1.9.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.9.0
+[1.8.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.8.0
+[1.7.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.7.0
+[1.6.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.6.0
+[1.5.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.5.0
 [1.4.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.4.1
 [1.4.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.4.0
 [1.3.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.3.1

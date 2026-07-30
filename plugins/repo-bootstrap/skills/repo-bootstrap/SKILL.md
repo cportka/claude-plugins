@@ -17,6 +17,9 @@ Local-CLI-only use doesn't need this: `/plugin marketplace add cportka/claude-pl
 1. **Ask** which plugins to enable (e.g. `video-bug-analyzer`), whether to add CI, and whether to
    apply the **Portka standard setup** (`--portka-standard`, below).
    Default marketplace: `portka-tools` (`cportka/claude-plugins`).
+   **Unattended/autonomous session (nobody to ask)?** Use the deterministic default:
+   `--portka-standard --scope project --ci` (repo-bootstrap enables itself automatically), plus
+   `--identity "Name <email>"` when the owner's identity is known (#114 con 5).
 2. **Run** the script:
    ```
    ${CLAUDE_PLUGIN_ROOT}/skills/repo-bootstrap/scripts/bootstrap-repo.sh \
@@ -43,14 +46,16 @@ Resulting file:
 
 ## Portka standard setup (`--portka-standard`)
 
-Adds the standing **"how we work" setup** so each session stays focused on the code instead of
-re-explaining process (all idempotent, never clobbering; the full inventory is in `--help`):
-the managed **workflow `CLAUDE.md`** block, a git/`gh` **permissions allowlist**, an enforced
-**SemVer sync** bound to the repo's existing version source with a `tests/run-tests.sh` + CI
-(native `node --test`/`pytest` version-sync tests for JS/Python repos), and — at user scope —
-the **corrected `stop-hook-git-check.sh`** that stops hosted sessions false-flagging GitHub's
-squash-merge commits and the repo's declared commit identity (also auto-refreshed by this
-plugin's SessionStart hook each session).
+Installs **the contract**: describe a feature or next step and it's understood Claude branches
+fresh from `main`, builds + tests fully, opens the PR, merges on CI green, and hands the PR back
+for the user to delete as confirmation. Concretely (all idempotent, never clobbering; full
+inventory in `--help`): the managed **workflow `CLAUDE.md`** block (version-stamped; the
+SessionStart hook flags a stale copy), the committed **`.claude/commit-identity`** declaration
+(auto-applied to git config each session — the end of per-session identity setup), a git/`gh`
+**permissions allowlist**, an enforced **SemVer sync** with `tests/run-tests.sh` + CI (native
+`node --test`/`pytest` version-sync tests for JS/Python repos), and the **corrected
+`stop-hook-git-check.sh`** that stops hosted sessions false-flagging GitHub's squash-merge
+commits (installed at user scope and auto-refreshed each session).
 
 The decisions the agent must make: **which plugins**, **`--scope`** (`user` = `~/.claude`,
 `project` = committed `./.claude` for web sessions + team, `both` = default), and **committing

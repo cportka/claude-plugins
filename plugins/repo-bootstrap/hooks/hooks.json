@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/refresh-stop-hook.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/portka-session-start.sh",
             "timeout": 15
           }
         ]

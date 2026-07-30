@@ -124,13 +124,18 @@ hard way — see the issue numbers in comments):
 - **`PRIVACY.md` / `SECURITY.md` / `.well-known/security.txt`** — posture: local-only scripts, no
   data collection; vulnerabilities via GitHub private reporting.
 
-## State at handoff (refreshed each release — this stamp: 1.13.0, 2026-07-22)
+## State at handoff (refreshed each release — this stamp: 1.14.0, 2026-07-30)
 
 - Versions: the README header + plugin table and each `plugins/*/.claude-plugin/plugin.json` are
   the live source of truth (per-plugin versions diverge by design). Suite size/green-ness: run
   `bash tests/run-tests.sh`; CI mirrors it.
-- All feedback issues through #110 triaged; deferred items live in `IMPROVEMENTS.md` with issue
+- All feedback issues through #114 triaged; deferred items live in `IMPROVEMENTS.md` with issue
   numbers. Tags/GitHub Releases are the human's manual step and may lag main — that's expected.
+- 1.14.0 made the standard **self-updating**: the managed block carries a
+  `portka-standard-version` stamp, `.claude/commit-identity` is committed + auto-applied by the
+  SessionStart hook (`plugins/repo-bootstrap/hooks/portka-session-start.sh`), and
+  `--portka-standard` enables the repo-bootstrap plugin in the repos it bootstraps. When touching
+  the block: the BEGIN/END marker text and the suite-asserted phrases must survive any rewrite.
 - Community-directory submission state: check the open PR on anthropics' marketplace repo
   (see `docs/DISTRIBUTION.md`); the nightly sync picks up merged work once approved.
 

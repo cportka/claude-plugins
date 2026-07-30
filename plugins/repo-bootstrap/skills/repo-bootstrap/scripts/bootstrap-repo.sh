@@ -35,6 +35,12 @@
 #                              existing version (package.json / pyproject.toml / Cargo.toml / VERSION
 #                              / README **Version:**), seeding a bare VERSION 0.1.0 only on a
 #                              greenfield repo, plus a basic tests/run-tests.sh and CI to run it.
+#   --identity "Name <email>"  Declare the repo's commit identity: written to .claude/commit-identity
+#                              (committed; the repo-bootstrap SessionStart hook auto-applies it to
+#                              git config each session, so agent commits land as the owner intends).
+#                              Without the flag, --portka-standard seeds the file from the repo's
+#                              existing git config user.name/email when set (never from a noreply@
+#                              default), and otherwise prints how to declare it.
 #   --scope <user|project|both>  Where --portka-standard writes the CLAUDE.md + permissions:
 #                              user = ~/.claude (your machine), project = ./.claude (committed; web
 #                              sessions + team), both = default. The version/sync scaffold is always
@@ -68,6 +74,8 @@ PORTKA_STANDARD=""        # ADDED (1.1.1): install the Portka standard setup (wo
 SCOPE=""                  # ADDED (1.1.1): user|project|both for --portka-standard (default: both)
 HOME_DIR="${HOME:-}"      # ADDED (1.1.1): home dir for user-scope writes; overridable with --home
 PRINT_ONLY=""             # ADDED (1.1.2, #59): print settings/CLAUDE.md to stdout for manual creation
+IDENTITY=""               # ADDED (1.14.0, #114/user): --identity "Name <email>" -> .claude/commit-identity
+_CI_WROTE_VALIDATE=""     # set when THIS run writes validate.yml (so later messages can say so, #114)
 
 # resolve where this script lives, so we can find the marketplace manifest when the
 # script is run from a checkout of the marketplace repo.
@@ -176,6 +184,7 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN="1"; shift ;;   # ADDED (1.0.0)
     --auto-update) AUTO_UPDATE="1"; shift ;;   # ADDED (1.0.3): set autoUpdate on the marketplace
     --portka-standard) PORTKA_STANDARD="1"; shift ;;   # ADDED (1.1.1)
+    --identity) IDENTITY="${2:-}"; shift 2 ;;          # ADDED (1.14.0): declared commit identity "Name <email>"
     --scope) SCOPE="${2:-}"; shift 2 ;;                # ADDED (1.1.1)
     --home) HOME_DIR="${2:-}"; shift 2 ;;              # ADDED (1.1.1)
     --print-only) PRINT_ONLY="1"; shift ;;            # ADDED (1.1.2, #59)
@@ -194,6 +203,21 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
   esac
 fi
 
+# --identity is part of the standard setup (it writes .claude/commit-identity, whose contract the
+# managed CLAUDE.md block documents). Without --portka-standard it was silently ignored — no file,
+# no validation, and the user believed the identity was declared (review finding). Fail loud, and
+# validate the value HERE so even a print-only/dry-run run rejects garbage up front.
+if [[ -n "$IDENTITY" ]]; then
+  if [[ -z "$PORTKA_STANDARD" ]]; then
+    echo "Error: --identity requires --portka-standard (it declares the standard's .claude/commit-identity)." >&2
+    exit 2
+  fi
+  if [[ ! "$IDENTITY" =~ ^[^\<]+\ \<[^@\>]+@[^\>]+\>$ ]]; then
+    echo "Error: --identity must look like 'Name <email@host>' (got '$IDENTITY')." >&2
+    exit 2
+  fi
+fi
+
 # --print-only and --dry-run are both no-write modes. Convention for which flag to test:
 # helpers that would WRITE gate on $NO_WRITE (either mode must suppress the write); code that
 # NARRATES what would happen gates on $DRY_RUN alone, because --print-only wants the file
@@ -210,43 +234,30 @@ STD_CLAUDE_BLOCK=""
 if [[ -n "$PORTKA_STANDARD" ]]; then
   read -r -d '' STD_CLAUDE_BLOCK <<'MD' || true
 # Portka standard workflow
+<!-- portka-standard-version: __PSV__ -->
 
-Standing conventions for how Claude Code works here. Follow them for every change, without being
-asked, so our back-and-forth stays on the code — not on process.
+**The contract.** Describe a feature, a fix, or a next step — that's the whole request. It is
+understood, without being asked, that Claude then runs the loop: **branch fresh from `main` → build
+it and test it fully → open the PR → merge it yourself once CI is green → hand back the short PR
+link.** The user deletes the branch when satisfied; that deletion is the confirmation the next
+round picks up. Two things stay with the user: **releasing** (tags / GitHub Releases) and the
+**go/no-go on outward-facing or irreversible production changes**. Commit identity comes from the
+committed `.claude/commit-identity` file, applied to git config automatically at session start by
+the repo-bootstrap plugin. Everything below is the fine print of that one loop — read it once,
+then just talk about the work.
 
-For each change you make **in this repository**:
+## The loop, step by step
 
-1. **Update `main` first.** Begin by switching to `main` and pulling the latest. A previous
-   change's branch being gone is the user's confirmation that they saw it (see step 5).
-   *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
-   anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
-   signal (step 5) all assume `main` exists and is the repo's **default** branch. Flipping the default
-   is a GitHub **Settings-only, human step** (no API for typical agent toolsets): create `main`, push
-   it, then hand the default-branch flip back to the owner explicitly.
-   *Branch-pinned session?* In a hosted/branch-pinned environment (e.g. Claude Code on the web) the
-   harness assigns you **one** feature branch and forbids **pushing directly to `main`** — so **skip
-   the `main` checkout** and work on that branch. Because the name is reused for the whole session,
-   step 2's "new branch per change" becomes: after each merge, **restart the pinned branch from
-   `origin/main`** and **prune the stale remote-tracking ref**:
-   `git fetch origin main && git checkout -B <pinned> origin/main && git remote prune origin`.
-   The prune matters: with "Automatically delete head branches" on, GitHub deletes the merged branch
-   server-side but your local `origin/<pinned>` ref lingers — and hosted git-check hooks that diff
-   against it will then flag **GitHub's own squash-merge commit** as unverified authorship on every
-   turn (a hard false positive; never rewrite it). Pruned, the next push is a plain
-   `git push -u origin <pinned>` that **recreates** the branch; `--force-with-lease` applies only
-   when the remote branch still exists carrying already-merged history. Nothing else changes: you
-   still open the PR and merge it on green — see the note after step 5.
+1. **Update `main` first.** Switch to `main` and pull the latest. A previous change's branch being
+   gone is the user's confirmation that they saw it (see step 5). (Hosted/branch-pinned session?
+   See the situational notes — you skip this checkout and restart the pinned branch instead.)
 2. **Branch for everything (in this repo).** Every fix, update, or change goes on a new branch here —
    never commit to `main` directly. If another repo is open in the same session (e.g. a plugin
    marketplace you installed tools from), it is **read-only reference**: do all your branches and PRs
    on *this* repo, never on it.
-   *Session spanning several repos you own?* These steps are per-repo: give each its own branch and PR,
-   keep each repo's tests/`CHANGELOG`/version in its own tree, and **coordinate the merges** rather than
-   firing each the instant it's green — a feature split across services should land in the order (and at
-   the time) the owner intends. See step 4's production carve-out.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
-   request (opening it is pre-authorized — see the note after step 5; don't stop at "branch pushed"
-   to ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
+   request (opening it is pre-authorized — see the note below; don't stop at "branch pushed" to
+   ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
 4. **Green, then merge — with one carve-out.** Wait until every check has **registered and finished**
    — an empty or still-populating check list is *not* green — then merge the PR. Never merge on red or
    before CI completes. **Merge routine changes yourself on green.** But when the merge itself triggers
@@ -255,29 +266,49 @@ For each change you make **in this repository**:
    specifics and let the owner make the go/no-go call. This mirrors the harness's own "confirm first for
    hard-to-reverse / outward-facing actions" rule and any repo `HANDOFF.md` that asks to validate on a
    preview deploy before flipping production.
-5. **Hand back a short PR link.** Give the user a short link to the PR — merged if you were able to,
-   otherwise green and ready for them to merge, saying which. They delete the branch when satisfied —
-   which you pick up next time you update `main` (step 1). *Branch-pinned caveat:* with a single
-   reused branch name, deletion can't happen mid-session, so this confirmation signal only fires
-   **between** sessions — don't wait on it within one.
+5. **Hand back a short PR link.** Merged if you were able to, otherwise green and ready for them to
+   merge — say which. They delete the branch when satisfied, which step 1 picks up next round.
 
 **Opening the PR and merging are authorized — this file is the "explicit ask."** Some hosted
 harnesses default to *"don't open a pull request unless the user explicitly asks for one."* The repo
 owner committed this standard, so **its presence is that standing instruction**: open the PR
-proactively at step 3 for every change — do **not** stop at "branch pushed" and ask whether to open
-one. Then **merge it yourself once CI is green.** Merging a PR happens through GitHub, not a local
-push to `main`, so a branch-pin usually doesn't block it — but that's not guaranteed: branch
-protection (e.g. a required approving review you can't give as the PR's author), the harness's token
-scope, or org policy can still refuse a merge on a green PR. So **attempt the merge; if GitHub
-refuses, hand back the green PR** and say it's ready for them to merge — never self-approve, bypass
-protection, or admin/force-merge around a refusal. The owner's expected flow is open → green → you
-merge → they delete the branch.
+proactively at step 3 for every change. Then **merge it yourself once CI is green.** Merging happens
+through GitHub, not a local push to `main`, so a branch-pin usually doesn't block it — but branch
+protection (e.g. a required approving review you can't give as the PR's author), token scope, or org
+policy can still refuse a merge on a green PR. So **attempt the merge; if GitHub refuses, hand back
+the green PR** and say it's ready — never self-approve, bypass protection, or admin/force-merge
+around a refusal.
 
 **Releasing is the user's manual step — don't tag or cut releases.** Merging the PR is *not*
 releasing. Prepare the release *in the PR* (bump the version, update `CHANGELOG.md`), but do **not**
 create or push a git tag and do **not** run `gh release` / publish a GitHub Release. Hosted/sandbox
 environments block tag pushes, so it just fails. After the PR merges, the user tags the release and
 cuts it from the GitHub web UI.
+
+## Situational notes (read the one that applies)
+
+- *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
+  anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
+  signal all assume `main` exists and is the repo's **default** branch. Flipping the default is a
+  GitHub **Settings-only, human step** (no API for typical agent toolsets): create `main`, push it,
+  then hand the default-branch flip back to the owner explicitly.
+- *Branch-pinned session?* (e.g. Claude Code on the web) The harness assigns **one** feature branch
+  and forbids **pushing directly to `main`** — so skip the `main` checkout and work on that branch.
+  Because the name is reused all session, "new branch per change" becomes: after each merge,
+  **restart the pinned branch from `origin/main` and prune the stale remote-tracking ref**:
+  `git fetch origin main && git checkout -B <pinned> origin/main && git remote prune origin`.
+  The prune matters: with "Automatically delete head branches" on, GitHub deletes the merged branch
+  server-side but your local `origin/<pinned>` ref lingers — and hosted git-check hooks that diff
+  against it will then flag **GitHub's own squash-merge commit** as unverified authorship on every
+  turn (a hard false positive; never rewrite it). Pruned, the next push is a plain
+  `git push -u origin <pinned>` that **recreates** the branch; `--force-with-lease` applies only
+  when the remote branch still exists carrying already-merged history. *Branch-pinned caveat:* with
+  a single reused branch name, deletion can't happen mid-session, so step 5's confirmation signal
+  only fires **between** sessions — don't wait on it within one.
+- *Session spanning several repos you own?* These steps are per-repo: give each its own branch and
+  PR, keep each repo's tests/`CHANGELOG`/version in its own tree, and **coordinate the merges**
+  rather than firing each the instant it's green — a feature split across services should land in
+  the order (and at the time) the owner intends. See step 4's production carve-out.
 
 ## Reporting feedback on the tools you use
 
@@ -317,14 +348,18 @@ stable release (for a library, typically its first registry publish).
 
 ## Commit identity
 
-Set git's author/committer identity **before your first commit**, from the identity this repo
-declares (see the repo-specific note below; ask the owner if none is set yet):
+The repo declares its commit identity in the committed **`.claude/commit-identity`** file
+(`Name <email>` on the first non-comment line). The repo-bootstrap plugin's SessionStart hook
+applies it to git config automatically; if it hasn't (plugin not loaded, fresh clone), set it
+**before your first commit**:
 
 ```
 git config user.name  "<declared name>"
 git config user.email "<declared email>"
 ```
 
+No `.claude/commit-identity` in the repo yet? **Ask the owner** which identity commits should use
+(then declare it: `bootstrap-repo.sh --portka-standard --identity "Name <email>"`) — don't guess.
 Use that same identity for every automated/agent commit so history stays consistent — don't fall
 back to a generic `noreply@` default. Follow any trailer convention the repo names (e.g. a
 `Co-authored-by:` line). In hosted/sandbox environments commit **signing** is often unavailable (an
@@ -338,6 +373,15 @@ The `repo-bootstrap` plugin ships a corrected hook (scoped to unpushed+unmerged 
 repo's configured identity, treats signatures as informational) and refreshes a stock
 `~/.claude/stop-hook-git-check.sh` automatically at session start.
 MD
+  # Stamp the block with the plugin version (1.14.0): the SessionStart hook compares this stamp to
+  # the installed plugin and flags a stale block — pre-1.14 repos carry old standards that never
+  # learned the prune/identity fixes, which is exactly why authorship problems kept recurring.
+  # `|| true` matters under set -euo pipefail: a vendored/relocated copy of this script has no
+  # plugin.json at the fallback path, and sed's failure would otherwise silently abort the whole
+  # run right here (review finding) — the 'unknown' stamp exists for exactly that case.
+  _psv="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/.claude-plugin/plugin.json" 2>/dev/null | head -n1 || true)"
+  STD_CLAUDE_BLOCK="${STD_CLAUDE_BLOCK//__PSV__/${_psv:-unknown}}"
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -360,6 +404,16 @@ fi
 if [[ ! -d "$DIR" ]]; then
   echo "Error: target dir not found: $DIR" >&2
   exit 1
+fi
+
+# --portka-standard always enables the repo-bootstrap plugin itself (1.14.0, user directive): its
+# SessionStart hook is what applies the declared commit identity, heals a stock stop-hook, and flags
+# a stale standard block — none of which reach a repo whose settings only enable OTHER plugins.
+# That gap is why 1.13.0's authorship fixes never arrived in pre-1.13 repos.
+if [[ -n "$PORTKA_STANDARD" ]]; then
+  _has_rb=""
+  for _p in ${PLUGINS[@]+"${PLUGINS[@]}"}; do [[ "$_p" == "repo-bootstrap" ]] && _has_rb=1; done
+  [[ -z "$_has_rb" ]] && PLUGINS+=("repo-bootstrap")
 fi
 
 # warn (non-fatal) about --plugin names that aren't in the marketplace, when we can
@@ -420,6 +474,15 @@ PY
     echo ""
     echo "===== .claude/CLAUDE.md (append this block) ====="
     printf '%s\n%s\n%s\n' "$BEGIN_MARK" "$STD_CLAUDE_BLOCK" "$END_MARK"
+    # The block above references the committed .claude/commit-identity — print it too (review
+    # finding: with --identity the value otherwise appeared NOWHERE in print-only output, so the
+    # hand-created contract pointed at a file the user was never given).
+    if [[ -n "$IDENTITY" ]]; then
+      echo ""
+      echo "===== .claude/commit-identity ====="
+      echo "# Commit identity for this repo (Portka standard) — applied to git config at session start."
+      echo "$IDENTITY"
+    fi
   fi
   echo ""
   echo "Create the file(s) above by hand (or have the user paste them) and commit them — a"
@@ -491,6 +554,7 @@ elif [[ -n "$ADD_CI" ]]; then
   if [[ -f "$WF" && -z "$FORCE" ]]; then
     echo "CI workflow already exists (use --force to overwrite): $WF" >&2
   else
+    _CI_WROTE_VALIDATE=1   # so --portka-standard's CI-collision message can say "the one above" (#114)
     cat > "$WF" <<'YAML'
 name: validate
 
@@ -529,28 +593,58 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
     both) WANT_USER="1"; WANT_PROJECT="1" ;;
   esac
 
-  # Default-branch normalization (1.9.0, kevin-website field report): the standard assumes `main`
-  # (the workflow CLAUDE.md says "Update main first"; PRs merge to main), but a fresh `git init`
-  # can default to `master` — and then the standard silently never engages. Rename when it can't
-  # break anything (unborn branch, or no remote); otherwise print the exact fix.
+  # Default-branch normalization (1.9.0, kevin-website; rewritten 1.14.0, #114): the standard
+  # assumes `main`. Rename only when it can't break anything (unborn branch, or local-only with no
+  # existing main). Crucially (#114): when origin/main ALREADY EXISTS, being on another branch is
+  # the NORMAL branch-pinned/feature state — the old "fix" recipe (rename the branch, push main,
+  # delete the old branch) would have an agent pushing directly to main and deleting its own pinned
+  # session branch. Print the branch-pinned guidance instead; the rename recipe is reserved for the
+  # true greenfield-flip case (a remote with no main anywhere). Dry-run resolves the SAME conditions
+  # and prints the one outcome that would actually happen (#114 con 3).
   if git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     _cur_branch="$(git -C "$DIR" symbolic-ref --short HEAD 2>/dev/null || true)"
     if [[ -n "$_cur_branch" && "$_cur_branch" != "main" ]]; then
-      if [[ -n "$NO_WRITE" ]]; then
-        echo "[dry-run] repo is on '$_cur_branch', not 'main' — would rename it (unborn/local-only) or print the fix commands"
-      elif ! git -C "$DIR" rev-parse --verify -q HEAD >/dev/null 2>&1; then
-        git -C "$DIR" symbolic-ref HEAD refs/heads/main
-        echo "Renamed the unborn branch '$_cur_branch' -> 'main' (the standard's default branch)."
-      elif [[ -z "$(git -C "$DIR" remote 2>/dev/null)" ]] \
-           && ! git -C "$DIR" rev-parse --verify -q refs/heads/main >/dev/null 2>&1; then
-        # The main-absent guard matters: `branch -m` onto an EXISTING main is fatal under set -e and
-        # aborted the bootstrap mid-run with partial state (audit, reproduced). With main present,
-        # fall through to the NOTE path below instead.
-        git -C "$DIR" branch -m "$_cur_branch" main
-        echo "Renamed local branch '$_cur_branch' -> 'main' (the standard's default branch; no remote yet)."
+      # main "exists" if any local head or ANY remote's tracking ref has it (review finding: an
+      # `upstream`-named remote or a fork layout must not fall into the rename recipe).
+      _main_exists=""
+      if git -C "$DIR" rev-parse --verify -q refs/heads/main >/dev/null 2>&1 \
+         || [[ -n "$(git -C "$DIR" for-each-ref 'refs/remotes/*/main' 2>/dev/null)" ]]; then
+        _main_exists=1
+      fi
+      _has_remote=""; [[ -n "$(git -C "$DIR" remote 2>/dev/null)" ]] && _has_remote=1
+      _is_unborn=""; git -C "$DIR" rev-parse --verify -q HEAD >/dev/null 2>&1 || _is_unborn=1
+      # ORDER MATTERS (review finding): main-exists is checked FIRST — an unborn ORPHAN branch in
+      # a repo that already has main (git checkout --orphan gh-pages) is a deliberate state; the
+      # old order re-pointed HEAD onto main, losing the orphan and mislabeling it "renamed".
+      if [[ -n "$_main_exists" ]]; then
+        if [[ -n "$_is_unborn" ]]; then
+          echo "NOTE: you're on the unborn branch '$_cur_branch' while 'main' exists — an orphan branch (e.g. gh-pages) is usually deliberate; leaving it alone." >&2
+        else
+          # A pinned/feature branch, not a repo that needs normalizing.
+          echo "NOTE: 'main' exists; you're on '$_cur_branch' (a pinned/feature branch — normal for a hosted session)." >&2
+          echo "      The standard's branch-pinned flow applies: work HERE, open the PR, merge on green. No rename needed." >&2
+        fi
+      elif [[ -n "$_is_unborn" ]]; then
+        if [[ -n "$NO_WRITE" ]]; then
+          echo "[dry-run] repo is on the unborn branch '$_cur_branch' — would rename it to 'main'"
+        else
+          git -C "$DIR" symbolic-ref HEAD refs/heads/main
+          echo "Renamed the unborn branch '$_cur_branch' -> 'main' (the standard's default branch)."
+        fi
+      elif [[ -z "$_has_remote" ]]; then
+        if [[ -n "$NO_WRITE" ]]; then
+          echo "[dry-run] local-only repo on '$_cur_branch' with no 'main' — would rename it to 'main'"
+        else
+          git -C "$DIR" branch -m "$_cur_branch" main
+          echo "Renamed local branch '$_cur_branch' -> 'main' (the standard's default branch; no remote yet)."
+        fi
       else
-        echo "NOTE: this repo is on '$_cur_branch', but the Portka standard workflow assumes 'main'." >&2
-        echo "      Fix (safe order):" >&2
+        # A remote exists but no main is VISIBLE locally: usually the greenfield default-flip case
+        # — but a single-branch/partial clone can hide a server-side main, so the printed recipe
+        # leads with the authoritative remote check (review finding) instead of trusting local refs.
+        echo "NOTE: this repo is on '$_cur_branch', but the Portka standard workflow assumes 'main' (none visible locally)." >&2
+        echo "      Fix (safe order — step 1 guards against a server-side main a narrow clone can't see):" >&2
+        echo "        git ls-remote --exit-code origin main  # SUCCEEDS => main exists remotely: SKIP the rename, work on this branch and PR into main" >&2
         echo "        git branch -m $_cur_branch main && git push -u origin main" >&2
         echo "        gh repo edit --default-branch main   # or GitHub Settings -> General -> Default branch" >&2
         echo "        git push origin --delete $_cur_branch  # after the default flips" >&2
@@ -691,6 +785,37 @@ PY
 
   # Repo scaffold: bind the version sync to the repo's existing source of truth (#59) — a project
   # manifest if present, else a bare VERSION — and enforce it with a basic test runner. Always
+  # Declared commit identity (1.14.0, user directive): a committed, MACHINE-READABLE
+  # .claude/commit-identity ("Name <email>") is the contract's identity source — the plugin's
+  # SessionStart hook applies it to git config each session, so agent commits land as the owner
+  # intends with zero per-session setup, and the corrected stop-hook reads the same config.
+  # Precedence: an explicit --identity always writes; else an existing file is kept; else seed from
+  # the repo's own git config (never a noreply@ harness default); else say how to declare it.
+  _idfile="$DIR/.claude/commit-identity"
+  _write_identity() {  # $1 = "Name <email>", $2 = provenance note
+    if [[ -n "$DRY_RUN" ]]; then
+      echo "[dry-run] would write $_idfile: $1  ($2)"
+    else
+      mkdir -p "$DIR/.claude"
+      { echo "# Commit identity for this repo (Portka standard) — applied to git config at session start."
+        echo "$1"; } > "$_idfile"
+      echo "Wrote $_idfile: $1  ($2)"
+    fi
+  }
+  if [[ -n "$IDENTITY" ]]; then
+    _write_identity "$IDENTITY" "--identity"   # value already validated at argparse (exit 2 there)
+  elif [[ -f "$_idfile" ]]; then
+    echo "commit identity already declared: $(grep -v '^#' "$_idfile" | head -1) ($_idfile — pass --identity to change)"
+  else
+    _cfg_name="$(git -C "$DIR" config user.name 2>/dev/null || true)"
+    _cfg_email="$(git -C "$DIR" config user.email 2>/dev/null || true)"
+    if [[ -n "$_cfg_name" && -n "$_cfg_email" && "$_cfg_email" != noreply@* ]]; then
+      _write_identity "$_cfg_name <$_cfg_email>" "seeded from this repo's git config"
+    else
+      echo "NOTE: no commit identity declared — run again with --identity \"Name <email>\" (writes .claude/commit-identity, which sessions auto-apply)." >&2
+    fi
+  fi
+
   # written to the repo (the sync is a property of the repo, not a scope). Existing
   # VERSION/CHANGELOG/README are never clobbered; the test runner only with --force.
   TODAY="$(date +%F)"
@@ -734,6 +859,43 @@ CHANGELOG.md and the line above — enforced by:
 
     bash tests/run-tests.sh
 EOF
+
+  # Greenfield + an EXISTING README with no **Version:** line (#114 con 4): the three-way sync
+  # (source ↔ CHANGELOG ↔ README) otherwise starts life as a two-way sync, and the line never
+  # appears on its own since READMEs are never clobbered. Insert ONLY the single version line,
+  # right after the first H1 — nothing else in the file is touched. Skipped when a native
+  # manifest is the version source (a README line is optional there) or a Version line exists.
+  if [[ -z "${NATIVE_SRC:-}" && -f "$DIR/README.md" ]] \
+     && ! grep -q '\*\*Version:\*\*' "$DIR/README.md"; then
+    # Dry-run resolves the SAME condition as the real run (review finding: it used to promise an
+    # insertion on setext-heading READMEs the real run would then skip with a NOTE).
+    if ! grep -q '^# ' "$DIR/README.md"; then
+      echo "NOTE: README.md has no **Version:** line and no H1 to anchor one — add '> **Version:** $SYNC_VER' by hand so the suite's three-way sync covers it." >&2
+    elif [[ -n "$NO_WRITE" ]]; then
+      echo "[dry-run] README.md exists without a **Version:** line — would insert '> **Version:** $SYNC_VER' after the first H1"
+    else
+      python3 - "$DIR/README.md" "$SYNC_VER" <<'PY'
+import sys
+path, ver = sys.argv[1], sys.argv[2]
+# newline='' keeps the file's own line endings: a CRLF README must not be rewritten to LF
+# wholesale for a one-line insert ("nothing else touched" has to be literally true).
+with open(path, newline='') as fh:
+    text = fh.read()
+lines = text.splitlines(keepends=True)
+for i, ln in enumerate(lines):
+    if ln.startswith("# "):
+        eol = "\r\n" if ln.endswith("\r\n") else "\n"
+        if not ln.endswith(("\n", "\r")):        # H1 is the last line, unterminated
+            lines[i] = ln + eol
+        lines.insert(i + 1, eol)
+        lines.insert(i + 2, f"> **Version:** {ver}{eol}")
+        break
+with open(path, "w", newline='') as fh:
+    fh.write("".join(lines))
+PY
+      echo "Inserted '> **Version:** $SYNC_VER' after README.md's first H1 (the third sync point; nothing else touched)."
+    fi
+  fi
 
   # A basic, dependency-light test runner that binds to the repo's version source (manifest /
   # VERSION / README) and checks SemVer + CHANGELOG/README agreement.
@@ -1016,16 +1178,28 @@ PYT
     # portka-standard.yml is skipped. _existing_wf was globbed before that hypothetical write, so add it
     # back here for the dry-run count, else dry-run over-promises "would write portka-standard.yml".
     _eff_wf=${#_existing_wf[@]}
-    if [[ -n "$ADD_CI" && ! -f "$DIR/.github/workflows/validate.yml" ]]; then _eff_wf=$((_eff_wf + 1)); fi
+    _dry_own_ci=""
+    if [[ -n "$ADD_CI" && ! -f "$DIR/.github/workflows/validate.yml" ]]; then _eff_wf=$((_eff_wf + 1)); _dry_own_ci=1; fi
     if [[ "$_eff_wf" -gt 0 && -z "$FORCE" ]]; then
-      echo "[dry-run] existing CI detected (${_eff_wf} workflow(s)) — would NOT add portka-standard.yml (use --force to add it anyway)"
+      if [[ -n "$_dry_own_ci" && "$_eff_wf" -eq 1 ]]; then
+        echo "[dry-run] would use the validate.yml written by --ci above (it already runs tests/run-tests.sh) — would NOT add portka-standard.yml"
+      else
+        echo "[dry-run] existing CI detected (${_eff_wf} workflow(s)) — would NOT add portka-standard.yml (use --force to add it anyway)"
+      fi
     elif [[ -f "$WF_STD" && -z "$FORCE" ]]; then
       echo "[dry-run] $WF_STD already exists — would leave it as-is (use --force to overwrite)"
     else
       echo "[dry-run] would write $WF_STD (runs tests/run-tests.sh)"
     fi
   elif [[ ${#_existing_wf[@]} -gt 0 && -z "$FORCE" ]]; then
-    echo "existing CI detected (${#_existing_wf[@]} workflow(s)); not adding portka-standard.yml — make sure your CI runs 'bash tests/run-tests.sh' (use --force to add it anyway)." >&2
+    # When the ONLY "existing CI" is the validate.yml this very run just wrote, say that — the old
+    # message read as "unknown pre-existing CI found; go verify it runs the suite" (#114 con 2).
+    if [[ -n "$_CI_WROTE_VALIDATE" && ${#_existing_wf[@]} -eq 1 \
+          && "${_existing_wf[0]}" == "$DIR/.github/workflows/validate.yml" ]]; then
+      echo "using the validate.yml written above — it already runs tests/run-tests.sh; not adding portka-standard.yml."
+    else
+      echo "existing CI detected (${#_existing_wf[@]} workflow(s)); not adding portka-standard.yml — make sure your CI runs 'bash tests/run-tests.sh' (use --force to add it anyway)." >&2
+    fi
   elif [[ -f "$WF_STD" && -z "$FORCE" ]]; then
     echo "CI workflow already exists (use --force to overwrite): $WF_STD" >&2
   else
@@ -1054,13 +1228,12 @@ YAML
   fi
 fi
 
-# Claude Code's auto-permission classifier may DENY the committed-settings
-# path (it flags enabling a third-party plugin as self-modification / untrusted integration)
-# until the user approves. Emit the one-paste CLI fallback that needs no settings write.
+# One compact line, not a warning banner (#114 con 5: the old multi-line classifier warning printed
+# even on clean successful runs — noise). The fallback matters only if a permission prompt blocked
+# the settings write, which this script can't observe; state it as a conditional, once.
 {
   echo ""
-  echo "Note: committing .claude/settings.json may be blocked by Claude Code's permission"
-  echo "classifier (enabling a third-party plugin) until you approve it. One-paste CLI fallback:"
+  echo "(If a permission prompt blocked the .claude/settings.json write, the no-write fallback is:"
   echo "  /plugin marketplace add ${MARKET_REPO}"
   if [[ ${#PLUGINS[@]} -gt 0 ]]; then
     for _p in "${PLUGINS[@]}"; do
@@ -1069,6 +1242,7 @@ fi
   else
     echo "  /plugin install <name>@${MARKET_NAME}"
   fi
+  echo " — a human-run /plugin command isn't permission-gated.)"
 } >&2
 
 if [[ -n "$DRY_RUN" ]]; then

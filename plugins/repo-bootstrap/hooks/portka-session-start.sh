@@ -21,17 +21,27 @@ set -uo pipefail
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
+# Jobs 1 and 3 are about THE REPO, not the cwd — a session can start in a subdirectory (review
+# finding: cwd-relative paths silently no-op'd there). Resolve the work-tree root once.
+REPO_TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+
 # --- 1. declared commit identity -------------------------------------------------------
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1 && [[ -f .claude/commit-identity ]]; then
-  _decl="$(grep -v '^[[:space:]]*#' .claude/commit-identity | grep -v '^[[:space:]]*$' | head -1)"
+if [[ -n "$REPO_TOP" && -f "$REPO_TOP/.claude/commit-identity" ]]; then
+  _decl="$(grep -v '^[[:space:]]*#' "$REPO_TOP/.claude/commit-identity" | grep -v '^[[:space:]]*$' | head -1 | tr -d '\r')"
   _name="${_decl%% <*}"
   _email="$(printf '%s' "$_decl" | sed -n 's/.*<\([^>]*\)>.*/\1/p')"
-  if [[ -n "$_name" && -n "$_email" ]]; then
+  # The name must be a real name: an email-only line like "<a@b.c>" leaves the whole bracketed
+  # string in _name (the %% pattern needs " <"), which would author commits as "<a@b.c> <a@b.c>".
+  if [[ -n "$_name" && -n "$_email" && "$_name" != *"<"* ]]; then
     _cur="$(git config user.email 2>/dev/null || true)"
     if [[ -z "$_cur" || "$_cur" == "noreply@anthropic.com" ]]; then
-      git config user.name "$_name" 2>/dev/null || true
-      git config user.email "$_email" 2>/dev/null || true
-      echo "repo-bootstrap: applied this repo's declared commit identity ($_name <$_email>) to git config — commits will land as the owner intends."
+      # Only claim success when the writes actually land (a config.lock / read-only .git fails
+      # them); a false "applied" line would talk the agent out of setting identity by hand.
+      if git config user.name "$_name" 2>/dev/null && git config user.email "$_email" 2>/dev/null; then
+        echo "repo-bootstrap: applied this repo's declared commit identity ($_name <$_email>) to git config — commits will land as the owner intends."
+      else
+        echo "repo-bootstrap: could NOT write git config (lock/permissions?) — set the declared identity by hand before committing: git config user.name \"$_name\"; git config user.email \"$_email\""
+      fi
     fi
   fi
 fi
@@ -40,8 +50,16 @@ fi
 CANON="$PLUGIN_ROOT/skills/repo-bootstrap/scripts/stop-hook-git-check.sh"
 STOCK_MARKER='user.email noreply@anthropic.com'
 if [[ -f "$CANON" ]]; then
+  # PORTKA_HOOK_DIRS (space-separated) overrides the search list — the test suite sets it so
+  # exercising this hook can never rewrite the REAL environment's stop-hook (review finding:
+  # the literal /root path escaped the tests' $HOME sandbox and healed the live hook).
+  if [[ -n "${PORTKA_HOOK_DIRS:-}" ]]; then
+    read -r -a _dirs <<<"$PORTKA_HOOK_DIRS"
+  else
+    _dirs=("${HOME:-/root}/.claude" /home/claude/.claude /root/.claude)
+  fi
   fixed_any=""
-  for dir in "${HOME:-/root}/.claude" /home/claude/.claude /root/.claude; do
+  for dir in ${_dirs[@]+"${_dirs[@]}"}; do
     hook="$dir/stop-hook-git-check.sh"
     [[ -f "$hook" && -w "$hook" ]] || continue
     grep -qF "$STOCK_MARKER" "$hook" 2>/dev/null || continue   # not the stock hook — leave it alone
@@ -57,13 +75,18 @@ if [[ -f "$CANON" ]]; then
 fi
 
 # --- 3. stale standard block -----------------------------------------------------------
-if [[ -f .claude/CLAUDE.md ]] && grep -q 'BEGIN portka-standard' .claude/CLAUDE.md 2>/dev/null; then
-  _stamp="$(sed -n 's/.*portka-standard-version: \([0-9][0-9.]*\).*/\1/p' .claude/CLAUDE.md | head -1)"
+if [[ -n "$REPO_TOP" && -f "$REPO_TOP/.claude/CLAUDE.md" ]] \
+   && grep -q 'BEGIN portka-standard' "$REPO_TOP/.claude/CLAUDE.md" 2>/dev/null; then
+  # The stamp may carry a pre-release suffix (this marketplace has shipped 1.0.0-rc.N releases):
+  # capture it whole, but COMPARE on the MAJOR.MINOR.PATCH base only — sort -V orders "1.14.0"
+  # before "1.14.0-rc1" (the inverse of SemVer precedence), so base-equality reads as current.
+  _stamp="$(sed -n 's/.*portka-standard-version: \([0-9][0-9A-Za-z.-]*\).*/\1/p' "$REPO_TOP/.claude/CLAUDE.md" | head -1)"
   _pver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$PLUGIN_ROOT/.claude-plugin/plugin.json" 2>/dev/null | head -1)"
   if [[ -n "$_pver" ]]; then
+    _sbase="${_stamp%%-*}"; _pbase="${_pver%%-*}"
     if [[ -z "$_stamp" ]]; then
       echo "repo-bootstrap: this repo's Portka standard block predates 1.14.0 (no version stamp) — it lacks the current authorship/branch-restart guidance. Fold a refresh into your next PR: bootstrap-repo.sh --portka-standard --scope project, commit the updated .claude/CLAUDE.md."
-    elif [[ "$_stamp" != "$_pver" && "$(printf '%s\n%s\n' "$_stamp" "$_pver" | sort -V | head -1)" == "$_stamp" ]]; then
+    elif [[ "$_sbase" != "$_pbase" && "$(printf '%s\n%s\n' "$_sbase" "$_pbase" | sort -V | head -1)" == "$_sbase" ]]; then
       echo "repo-bootstrap: this repo's Portka standard block is from $_stamp; the installed plugin is $_pver — fold a refresh into your next PR: bootstrap-repo.sh --portka-standard --scope project, commit the updated .claude/CLAUDE.md."
     fi
   fi

@@ -69,16 +69,41 @@ pre-1.13 repos still running stale standard blocks with the plugin never enabled
   arithmetic), feeding every mode `--crop` feeds — `--stack --edge right:60` is the edge-band
   time-stack (#112). Mutually exclusive with `--crop`; validated (exit 2 on bad side/px). The
   conversion resolves *before* `--stack`'s needs-a-crop check so the pairing it exists for works.
-- **A 0-frame extraction now warns with the likely cause** (window too tight for `--fps` / past
-  EOF) instead of exiting silently as if it succeeded (#112).
+- **A 0-frame extraction now warns with the likely cause** — per mode: the `--start/--end` window
+  too tight for `--fps` / past EOF, `--timestamps` past the clip or `--window` too narrow, or no
+  scene cuts above `--scene` — instead of exiting silently as if it succeeded (#113).
 - **Contact sheets end with a tile→source mapping footer** (tile px × factor = `--crop` coords;
-  tile N → t) closing the sheet → zoom loop without probe arithmetic (#113).
-- **Portrait + `--text` drops to `--cols 1`** (640px tiles in 2 columns were still illegible for
-  code/transcript UIs); an explicit `--cols` always wins (#113).
+  tile N → t) closing the sheet → zoom loop without probe arithmetic; on cropped or scene-driven
+  sheets the parts that would mislead (full-width ratio, fixed-fps times) are replaced with the
+  right guidance (#113).
+- **Portrait + `--text` drops to `--cols 1`** (even 640px tiles in 2 portrait columns left ~13px
+  phone-UI text illegible); an explicit `--cols` always wins (#112).
 - **Both palette modes state the lossy-capture caveat** (yuv420 chroma subsampling shifts
   saturated colours) and SKILL.md gains the art-reference steer: palette hexes from a compressed
   capture are approximate — ask for the source asset for exact colours; lead "match this
   animation" requests with `--unique` (#113).
+
+### Hardened (pre-merge adversarial review — findings fixed before this release shipped)
+- **SessionStart hook:** resolves the repo *top* so identity/staleness work from a subdirectory;
+  only claims "applied" when the git-config writes actually land (else prints the set-it-by-hand
+  fallback); rejects a nameless `<email>` declaration; compares version stamps on the
+  `MAJOR.MINOR.PATCH` base so a `-rc` suffix can't invert the staleness order; and honors
+  `PORTKA_HOOK_DIRS` so the test suite can never rewrite a real environment's stop-hook (the
+  suite's own run had healed this sandbox's live hook through the hardcoded `/root` path).
+- **bootstrap:** `--identity` without `--portka-standard` is a loud exit 2 (it was silently
+  ignored, validation and all) and the value is validated up front + printed by `--print-only`;
+  main-exists detection covers **any** remote's `main`, and an unborn *orphan* branch beside an
+  existing `main` (`git checkout --orphan gh-pages`) is left alone instead of having HEAD
+  re-pointed onto `main`; the greenfield rename recipe now leads with a `git ls-remote` guard (a
+  single-branch clone can hide a server-side `main`); the version-stamp read can't abort a
+  vendored copy under `set -e`; the README insert preserves CRLF endings and its dry-run resolves
+  the no-H1 case to the same NOTE as the real run; the managed block tells agents to **ask the
+  owner** when no `.claude/commit-identity` exists yet.
+- **video `--unique`:** the CSV/verdict reconcile to the files actually written at the 200 cap
+  (showinfo logs a few pts past `-frames:v`), and a hard ffmpeg failure (e.g. an `--edge` band
+  wider than the frame) surfaces with the real error instead of reading as "static region". The
+  contact mapping footer prints only on whole-frame sheets — cropped sheets get a
+  region-coordinates note, scene-driven sheets drop the fixed-fps time formula.
 
 ## [1.13.0] - 2026-07-22
 

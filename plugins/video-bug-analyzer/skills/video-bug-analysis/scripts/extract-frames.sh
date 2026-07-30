@@ -2148,14 +2148,26 @@ run_unique() {
   fi
   mkdir -p "$OUT"
   local base; base="$(disp_base)"
-  local log
+  local log _rc=0
   log="$(ffmpeg -hide_banner -nostats ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" ${VFR[@]+"${VFR[@]}"} \
-    -vf "$vf" -frames:v 200 "$OUT/uniq_%04d.png" 2>&1 || true)"
+    -vf "$vf" -frames:v 200 "$OUT/uniq_%04d.png" 2>&1)" || _rc=$?
+  # Count the files ACTUALLY written: showinfo sits before the -frames:v cap, so its log carries a
+  # few pts lines past frame 200 (review finding — the CSV named PNGs that don't exist), and a hard
+  # ffmpeg failure (e.g. an --edge band wider than the frame) must surface as an error, not read as
+  # "no frames survived dedup" (mpdecimate always keeps frame 1, so a true static region yields 1).
+  local nfiles
+  nfiles="$(find "$OUT" -maxdepth 1 -name 'uniq_*.png' | wc -l | tr -d ' ')"
+  if [[ "$_rc" -ne 0 && "$nfiles" -eq 0 ]]; then
+    echo "Error: --unique's ffmpeg pass failed (is the --crop/--edge region within the frame? --probe shows the size):" >&2
+    printf '%s\n' "$log" | tail -3 >&2
+    exit 1
+  fi
   printf '%s\n' "$log" | sed -n 's/.*pts_time:\([0-9.][0-9.]*\).*/\1/p' > "$OUT/.uniq_times"
-  python3 - "$OUT/.uniq_times" "$base" "$OUT" <<'PY'
+  python3 - "$OUT/.uniq_times" "$base" "$nfiles" <<'PY'
 import sys
 times = [float(x) for x in open(sys.argv[1]).read().split()]
-base, out = float(sys.argv[2]), sys.argv[3]
+base, nfiles = float(sys.argv[2]), int(sys.argv[3])
+times = times[:nfiles]          # trust the muxer, not the filter log, for what exists on disk
 e = sys.stderr
 n = len(times)
 if n == 0:
@@ -2797,9 +2809,12 @@ else
   COUNT=$(find "$OUT" -maxdepth 1 -type f -name '*.png' | wc -l | tr -d ' ')
   echo "Extracted ${COUNT} image(s) to: ${OUT}"
   if [[ "$COUNT" -eq 0 ]]; then
-    # Loud, not silent (1.14.0, #113): a too-tight --start/--end at low --fps produces an empty dir
-    # with exit 0 — easy to mistake for success. Say so and say why (scene mode's why differs).
-    if [[ -n "$SCENE" ]]; then
+    # Loud, not silent (1.14.0, #113): an empty output dir with exit 0 is easy to mistake for
+    # success. Say so — and name the knobs THIS mode actually uses (review finding: the
+    # --start/--end wording misled in --timestamps and --scene runs, which don't use them).
+    if [[ -n "$TIMESTAMPS" ]]; then
+      echo "WARNING: 0 frames extracted — are the --timestamps within the clip's duration (--probe shows it)? A too-narrow --window (${WINDOW}s) at --fps ${FPS} can also span <1 frame." >&2
+    elif [[ -n "$SCENE" ]]; then
       echo "WARNING: 0 frames extracted — no scene cuts scored above --scene ${SCENE} in this window. Lower the threshold (e.g. --scene 0.1) or use --fps sampling instead." >&2
     else
       echo "WARNING: 0 frames extracted — the --start/--end window is likely too tight for --fps ${FPS} (or past the clip's end). Widen the window, raise --fps, or check the duration with --probe." >&2
@@ -2808,9 +2823,21 @@ else
     echo "Each contact sheet tiles frames left-to-right, top-to-bottom in time order."
     # Tile -> source mapping footer (1.14.0, #113): finding a feature on a tile means converting
     # tile px back to source px by hand; print the ratio + the tile->time formula once per run.
-    _swh="$(probe_wh || true)"; _sw="${_swh%% *}"
-    if [[ -n "${_sw:-}" && "$_sw" -gt 0 ]]; then
-      echo "tile->source mapping: tiles are ${TILEW}px wide = scale $(awk -v t="$TILEW" -v s="$_sw" 'BEGIN{printf "%.3f", t/s}') of the ${_sw}px source (multiply tile px by $(awk -v t="$TILEW" -v s="$_sw" 'BEGIN{printf "%.2f", s/t}') for --crop coords); tile N (row-major) ≈ t = start + (N-1)/${FPS}s."
+    # Whole-frame sheets only (review finding): with --crop/--edge active the tiles show the
+    # cropped REGION, so a full-width ratio (and no x/y offset) would convert coordinates wrongly;
+    # scene-driven sheets tile at cut times, so the fixed-fps time formula is dropped there too.
+    if [[ -z "$CROP" ]]; then
+      _swh="$(probe_wh || true)"; _sw="${_swh%% *}"
+      if [[ -n "${_sw:-}" && "$_sw" -gt 0 ]]; then
+        _tmap="tile->source mapping: tiles are ${TILEW}px wide = scale $(awk -v t="$TILEW" -v s="$_sw" 'BEGIN{printf "%.3f", t/s}') of the ${_sw}px source (multiply tile px by $(awk -v t="$TILEW" -v s="$_sw" 'BEGIN{printf "%.2f", s/t}') for --crop coords)"
+        if [[ -n "$SCENE" ]]; then
+          echo "${_tmap}; tiles sit at the detected scene-cut times (--list-scenes prints them)."
+        else
+          echo "${_tmap}; tile N (row-major) ≈ t = start + (N-1)/${FPS}s."
+        fi
+      fi
+    else
+      echo "(tiles show the --crop/--edge region ${CROP}, scaled to ${TILEW}px wide — read coordinates relative to that region)"
     fi
   else
     echo "Read them in filename order to reconstruct the timeline."

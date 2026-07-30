@@ -203,6 +203,21 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
   esac
 fi
 
+# --identity is part of the standard setup (it writes .claude/commit-identity, whose contract the
+# managed CLAUDE.md block documents). Without --portka-standard it was silently ignored — no file,
+# no validation, and the user believed the identity was declared (review finding). Fail loud, and
+# validate the value HERE so even a print-only/dry-run run rejects garbage up front.
+if [[ -n "$IDENTITY" ]]; then
+  if [[ -z "$PORTKA_STANDARD" ]]; then
+    echo "Error: --identity requires --portka-standard (it declares the standard's .claude/commit-identity)." >&2
+    exit 2
+  fi
+  if [[ ! "$IDENTITY" =~ ^[^\<]+\ \<[^@\>]+@[^\>]+\>$ ]]; then
+    echo "Error: --identity must look like 'Name <email@host>' (got '$IDENTITY')." >&2
+    exit 2
+  fi
+fi
+
 # --print-only and --dry-run are both no-write modes. Convention for which flag to test:
 # helpers that would WRITE gate on $NO_WRITE (either mode must suppress the write); code that
 # NARRATES what would happen gates on $DRY_RUN alone, because --print-only wants the file
@@ -343,6 +358,8 @@ git config user.name  "<declared name>"
 git config user.email "<declared email>"
 ```
 
+No `.claude/commit-identity` in the repo yet? **Ask the owner** which identity commits should use
+(then declare it: `bootstrap-repo.sh --portka-standard --identity "Name <email>"`) — don't guess.
 Use that same identity for every automated/agent commit so history stays consistent — don't fall
 back to a generic `noreply@` default. Follow any trailer convention the repo names (e.g. a
 `Co-authored-by:` line). In hosted/sandbox environments commit **signing** is often unavailable (an
@@ -359,8 +376,11 @@ MD
   # Stamp the block with the plugin version (1.14.0): the SessionStart hook compares this stamp to
   # the installed plugin and flags a stale block — pre-1.14 repos carry old standards that never
   # learned the prune/identity fixes, which is exactly why authorship problems kept recurring.
+  # `|| true` matters under set -euo pipefail: a vendored/relocated copy of this script has no
+  # plugin.json at the fallback path, and sed's failure would otherwise silently abort the whole
+  # run right here (review finding) — the 'unknown' stamp exists for exactly that case.
   _psv="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/.claude-plugin/plugin.json" 2>/dev/null | head -n1)"
+    "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/.claude-plugin/plugin.json" 2>/dev/null | head -n1 || true)"
   STD_CLAUDE_BLOCK="${STD_CLAUDE_BLOCK//__PSV__/${_psv:-unknown}}"
 fi
 
@@ -454,6 +474,15 @@ PY
     echo ""
     echo "===== .claude/CLAUDE.md (append this block) ====="
     printf '%s\n%s\n%s\n' "$BEGIN_MARK" "$STD_CLAUDE_BLOCK" "$END_MARK"
+    # The block above references the committed .claude/commit-identity — print it too (review
+    # finding: with --identity the value otherwise appeared NOWHERE in print-only output, so the
+    # hand-created contract pointed at a file the user was never given).
+    if [[ -n "$IDENTITY" ]]; then
+      echo ""
+      echo "===== .claude/commit-identity ====="
+      echo "# Commit identity for this repo (Portka standard) — applied to git config at session start."
+      echo "$IDENTITY"
+    fi
   fi
   echo ""
   echo "Create the file(s) above by hand (or have the user paste them) and commit them — a"
@@ -575,35 +604,47 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
   if git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     _cur_branch="$(git -C "$DIR" symbolic-ref --short HEAD 2>/dev/null || true)"
     if [[ -n "$_cur_branch" && "$_cur_branch" != "main" ]]; then
+      # main "exists" if any local head or ANY remote's tracking ref has it (review finding: an
+      # `upstream`-named remote or a fork layout must not fall into the rename recipe).
       _main_exists=""
       if git -C "$DIR" rev-parse --verify -q refs/heads/main >/dev/null 2>&1 \
-         || git -C "$DIR" rev-parse --verify -q refs/remotes/origin/main >/dev/null 2>&1; then
+         || [[ -n "$(git -C "$DIR" for-each-ref 'refs/remotes/*/main' 2>/dev/null)" ]]; then
         _main_exists=1
       fi
       _has_remote=""; [[ -n "$(git -C "$DIR" remote 2>/dev/null)" ]] && _has_remote=1
       _is_unborn=""; git -C "$DIR" rev-parse --verify -q HEAD >/dev/null 2>&1 || _is_unborn=1
-      if [[ -n "$_is_unborn" ]]; then
+      # ORDER MATTERS (review finding): main-exists is checked FIRST — an unborn ORPHAN branch in
+      # a repo that already has main (git checkout --orphan gh-pages) is a deliberate state; the
+      # old order re-pointed HEAD onto main, losing the orphan and mislabeling it "renamed".
+      if [[ -n "$_main_exists" ]]; then
+        if [[ -n "$_is_unborn" ]]; then
+          echo "NOTE: you're on the unborn branch '$_cur_branch' while 'main' exists — an orphan branch (e.g. gh-pages) is usually deliberate; leaving it alone." >&2
+        else
+          # A pinned/feature branch, not a repo that needs normalizing.
+          echo "NOTE: 'main' exists; you're on '$_cur_branch' (a pinned/feature branch — normal for a hosted session)." >&2
+          echo "      The standard's branch-pinned flow applies: work HERE, open the PR, merge on green. No rename needed." >&2
+        fi
+      elif [[ -n "$_is_unborn" ]]; then
         if [[ -n "$NO_WRITE" ]]; then
           echo "[dry-run] repo is on the unborn branch '$_cur_branch' — would rename it to 'main'"
         else
           git -C "$DIR" symbolic-ref HEAD refs/heads/main
           echo "Renamed the unborn branch '$_cur_branch' -> 'main' (the standard's default branch)."
         fi
-      elif [[ -z "$_has_remote" && -z "$_main_exists" ]]; then
+      elif [[ -z "$_has_remote" ]]; then
         if [[ -n "$NO_WRITE" ]]; then
           echo "[dry-run] local-only repo on '$_cur_branch' with no 'main' — would rename it to 'main'"
         else
           git -C "$DIR" branch -m "$_cur_branch" main
           echo "Renamed local branch '$_cur_branch' -> 'main' (the standard's default branch; no remote yet)."
         fi
-      elif [[ -n "$_main_exists" ]]; then
-        # main exists — this is a pinned/feature branch, not a repo that needs normalizing.
-        echo "NOTE: 'main' exists; you're on '$_cur_branch' (a pinned/feature branch — normal for a hosted session)." >&2
-        echo "      The standard's branch-pinned flow applies: work HERE, open the PR, merge on green. No rename needed." >&2
       else
-        # A remote exists but no main anywhere: the true greenfield default-flip case.
-        echo "NOTE: this repo is on '$_cur_branch', but the Portka standard workflow assumes 'main' (none exists yet)." >&2
-        echo "      Fix (safe order):" >&2
+        # A remote exists but no main is VISIBLE locally: usually the greenfield default-flip case
+        # — but a single-branch/partial clone can hide a server-side main, so the printed recipe
+        # leads with the authoritative remote check (review finding) instead of trusting local refs.
+        echo "NOTE: this repo is on '$_cur_branch', but the Portka standard workflow assumes 'main' (none visible locally)." >&2
+        echo "      Fix (safe order — step 1 guards against a server-side main a narrow clone can't see):" >&2
+        echo "        git ls-remote --exit-code origin main  # SUCCEEDS => main exists remotely: SKIP the rename, work on this branch and PR into main" >&2
         echo "        git branch -m $_cur_branch main && git push -u origin main" >&2
         echo "        gh repo edit --default-branch main   # or GitHub Settings -> General -> Default branch" >&2
         echo "        git push origin --delete $_cur_branch  # after the default flips" >&2
@@ -762,12 +803,7 @@ PY
     fi
   }
   if [[ -n "$IDENTITY" ]]; then
-    if [[ "$IDENTITY" =~ ^[^\<]+\ \<[^@\>]+@[^\>]+\>$ ]]; then
-      _write_identity "$IDENTITY" "--identity"
-    else
-      echo "Error: --identity must look like 'Name <email@host>' (got '$IDENTITY')." >&2
-      exit 2
-    fi
+    _write_identity "$IDENTITY" "--identity"   # value already validated at argparse (exit 2 there)
   elif [[ -f "$_idfile" ]]; then
     echo "commit identity already declared: $(grep -v '^#' "$_idfile" | head -1) ($_idfile — pass --identity to change)"
   else
@@ -831,23 +867,33 @@ EOF
   # manifest is the version source (a README line is optional there) or a Version line exists.
   if [[ -z "${NATIVE_SRC:-}" && -f "$DIR/README.md" ]] \
      && ! grep -q '\*\*Version:\*\*' "$DIR/README.md"; then
-    if [[ -n "$NO_WRITE" ]]; then
+    # Dry-run resolves the SAME condition as the real run (review finding: it used to promise an
+    # insertion on setext-heading READMEs the real run would then skip with a NOTE).
+    if ! grep -q '^# ' "$DIR/README.md"; then
+      echo "NOTE: README.md has no **Version:** line and no H1 to anchor one — add '> **Version:** $SYNC_VER' by hand so the suite's three-way sync covers it." >&2
+    elif [[ -n "$NO_WRITE" ]]; then
       echo "[dry-run] README.md exists without a **Version:** line — would insert '> **Version:** $SYNC_VER' after the first H1"
-    elif grep -q '^# ' "$DIR/README.md"; then
+    else
       python3 - "$DIR/README.md" "$SYNC_VER" <<'PY'
 import sys
 path, ver = sys.argv[1], sys.argv[2]
-lines = open(path).read().split("\n")
+# newline='' keeps the file's own line endings: a CRLF README must not be rewritten to LF
+# wholesale for a one-line insert ("nothing else touched" has to be literally true).
+with open(path, newline='') as fh:
+    text = fh.read()
+lines = text.splitlines(keepends=True)
 for i, ln in enumerate(lines):
     if ln.startswith("# "):
-        lines.insert(i + 1, "")
-        lines.insert(i + 2, f"> **Version:** {ver}")
+        eol = "\r\n" if ln.endswith("\r\n") else "\n"
+        if not ln.endswith(("\n", "\r")):        # H1 is the last line, unterminated
+            lines[i] = ln + eol
+        lines.insert(i + 1, eol)
+        lines.insert(i + 2, f"> **Version:** {ver}{eol}")
         break
-open(path, "w").write("\n".join(lines))
+with open(path, "w", newline='') as fh:
+    fh.write("".join(lines))
 PY
       echo "Inserted '> **Version:** $SYNC_VER' after README.md's first H1 (the third sync point; nothing else touched)."
-    else
-      echo "NOTE: README.md has no **Version:** line and no H1 to anchor one — add '> **Version:** $SYNC_VER' by hand so the suite's three-way sync covers it." >&2
     fi
   fi
 

@@ -124,6 +124,8 @@ git config user.name  "<declared name>"
 git config user.email "<declared email>"
 ```
 
+No `.claude/commit-identity` in the repo yet? **Ask the owner** which identity commits should use
+(then declare it: `bootstrap-repo.sh --portka-standard --identity "Name <email>"`) — don't guess.
 Use that same identity for every automated/agent commit so history stays consistent — don't fall
 back to a generic `noreply@` default. Follow any trailer convention the repo names (e.g. a
 `Co-authored-by:` line). In hosted/sandbox environments commit **signing** is often unavailable (an

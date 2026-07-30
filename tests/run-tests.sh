@@ -451,13 +451,19 @@ if command -v ffmpeg >/dev/null 2>&1; then
     else
       fail "scene mode errored"
     fi
-    # 1.14.0 (#112): a window that yields nothing must SAY WHY (too-tight/past-EOF window), not
-    # exit silently as if it succeeded.
+    # 1.14.0 (#113): a window that yields nothing must SAY WHY (too-tight/past-EOF window), not
+    # exit silently as if it succeeded — and each mode names ITS OWN knobs (--timestamps mode
+    # must not blame --start/--end, which it never uses).
     bash "$SCRIPT" --video "$clip" --start 3.5 --end 3.6 --fps 2 --out "$tmp/zf" >/dev/null 2>"$tmp/zf.err" || true
-    if grep -q 'WARNING: 0 frames extracted' "$tmp/zf.err"; then
-      pass "0-frame extraction warns with the likely cause (#112)"
+    bash "$SCRIPT" --video "$clip" --timestamps 45 --out "$tmp/zft" >/dev/null 2>"$tmp/zft.err" || true
+    if grep -q 'WARNING: 0 frames extracted' "$tmp/zf.err" \
+       && grep -q 'the --start/--end window' "$tmp/zf.err" \
+       && grep -q 'WARNING: 0 frames extracted' "$tmp/zft.err" \
+       && grep -q 'are the --timestamps within' "$tmp/zft.err" \
+       && ! grep -q 'the --start/--end window' "$tmp/zft.err"; then
+      pass "0-frame extraction warns per mode with the right knobs (#113)"
     else
-      fail "0-frame extraction did not warn (stderr: $(tail -1 "$tmp/zf.err" 2>/dev/null))"
+      fail "0-frame warning wrong (dense: $(tail -1 "$tmp/zf.err" 2>/dev/null); ts: $(tail -1 "$tmp/zft.err" 2>/dev/null))"
     fi
     # Contact-sheet mode: should tile frames into at least one contact_*.png.
     if bash "$SCRIPT" --video "$clip" --start 0 --end 3 --fps 4 --contact --out "$tmp/contact" >/dev/null 2>&1 \
@@ -534,28 +540,34 @@ if command -v ffmpeg >/dev/null 2>&1; then
       else
         fail "portrait auto-cols did not fire"
       fi
-      # 1.14.0 (#113): portrait + --text drops to --cols 1 (640px tiles in 2 columns were still
-      # illegible for text); an explicit --cols always wins over the preset.
+      # 1.14.0 (#112): portrait + --text drops to --cols 1 (2 portrait columns left phone-UI
+      # text illegible even at 640px tiles); an explicit --cols always wins over the preset.
       bash "$SCRIPT" --video "$tmp/tall.mp4" --start 0 --end 1 --fps 2 --contact --text --out "$tmp/pt1" \
         >/dev/null 2>"$tmp/pt1.err" || true
       bash "$SCRIPT" --video "$tmp/tall.mp4" --start 0 --end 1 --fps 2 --contact --text --cols 3 --out "$tmp/pt3" \
         >/dev/null 2>"$tmp/pt3.err" || true
       if grep -qi 'Portrait + --text: using --cols 1' "$tmp/pt1.err" \
          && ! grep -qi 'using --cols 1' "$tmp/pt3.err"; then
-        pass "portrait + --text drops to --cols 1; explicit --cols wins (#113)"
+        pass "portrait + --text drops to --cols 1; explicit --cols wins (#112)"
       else
         fail "portrait + --text cols-1 preset wrong"
       fi
       # 1.14.0 (#113): contact runs end with a tile->source mapping footer (tile px * factor =
       # --crop coords; tile N -> t), closing the sheet -> zoom loop without probe arithmetic.
       # It's read-guidance, so it lands on STDOUT with the other "how to read this" lines.
+      # CROPPED sheets must NOT get it (the full-width ratio would convert coordinates wrongly —
+      # review finding); they get the region note instead.
       bash "$SCRIPT" --video "$clip" --start 0 --end 2 --fps 2 --contact --out "$tmp/cmap" \
         >"$tmp/cmap.out" 2>/dev/null || true
+      bash "$SCRIPT" --video "$clip" --start 0 --end 2 --fps 2 --contact --crop 80:40:0:0 --out "$tmp/cmapc" \
+        >"$tmp/cmapc.out" 2>/dev/null || true
       if grep -q 'tile->source mapping' "$tmp/cmap.out" \
-         && grep -q 'for --crop coords' "$tmp/cmap.out"; then
-        pass "contact sheet prints the tile->source mapping footer (#113)"
+         && grep -q 'for --crop coords' "$tmp/cmap.out" \
+         && ! grep -q 'tile->source mapping' "$tmp/cmapc.out" \
+         && grep -q 'tiles show the --crop/--edge region' "$tmp/cmapc.out"; then
+        pass "contact mapping footer on whole-frame sheets; region note on cropped ones (#113)"
       else
-        fail "contact tile->source mapping footer missing"
+        fail "contact tile->source mapping footer gating wrong"
       fi
       # Legibility guard: a wide hi-res source warns that contact tiles will be illegible.
       ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=duration=1:size=1280x720:rate=4" \
@@ -961,6 +973,33 @@ if command -v ffmpeg >/dev/null 2>&1; then
         pass "--unique dedups to the distinct poses + cadence verdict; static clip reads 1 (#113)"
       else
         fail "--unique wrong (n=$_uqn static='$(head -1 <<<"$_uqs")')"
+      fi
+      # Review findings: at the 200-frame cap the CSV must name only files that EXIST (showinfo
+      # logs a few pts past -frames:v), and a hard ffmpeg failure (--edge wider than the frame)
+      # must error out, not read as "no frames survived dedup".
+      # Temporal noise makes EVERY frame differ (bare testsrc's small moving regions let
+      # mpdecimate drop ~half, never reaching the cap — verified while writing this test).
+      if ffmpeg -hide_banner -loglevel error -f lavfi \
+           -i "testsrc=duration=8:size=160x120:rate=30" -vf "noise=alls=40:allf=t" "$tmp/ulong.mp4" -y 2>/dev/null; then
+        bash "$SCRIPT" --video "$tmp/ulong.mp4" --unique --out "$tmp/uqcap" >"$tmp/uqcap.out" 2>"$tmp/uqcap.err" || true
+        _uqcn="$(find "$tmp/uqcap" -name 'uniq_*.png' | wc -l)"
+        _uqcr="$(grep -c ',' "$tmp/uqcap.out")"   # data rows + header
+        if [[ "$_uqcn" -eq 200 ]] && [[ "$_uqcr" -eq 201 ]] \
+           && grep -q 'capped at 200' "$tmp/uqcap.err"; then
+          pass "--unique at the cap: CSV rows == written files (200) + cap note (review)"
+        else
+          fail "--unique cap reconciliation wrong (files=$_uqcn csv_lines=$_uqcr)"
+        fi
+      else
+        skip "could not build the long --unique clip (cap test)"
+      fi
+      bash "$SCRIPT" --video "$tmp/uposes.mp4" --unique --edge right:2000 --out "$tmp/uqerr" \
+        >/dev/null 2>"$tmp/uqerr.err"; _uqerc=$?
+      if [[ "$_uqerc" -ne 0 ]] && grep -q "unique's ffmpeg pass failed" "$tmp/uqerr.err" \
+         && ! grep -q 'no frames survived dedup' "$tmp/uqerr.err"; then
+        pass "--unique surfaces an ffmpeg failure (oversized --edge) instead of a static misdiagnosis (review)"
+      else
+        fail "--unique failure path wrong (rc=$_uqerc: $(tail -1 "$tmp/uqerr.err" 2>/dev/null))"
       fi
     else
       skip "could not build --unique test clips (#113)"
@@ -1719,13 +1758,14 @@ PY
     fi
     rm -rf "$hb" "$hbh"
     # The plugin's SessionStart hook (portka-session-start.sh since 1.14.0; replaces
-    # refresh-stop-hook.sh): job 2 = same replace-stock semantics, driven by $HOME. Run from a
-    # NEUTRAL cwd (the temp dir, not this repo) so jobs 1/3 — which read the cwd repo's
-    # .claude/commit-identity and CLAUDE.md — can't touch the real checkout's git config.
+    # refresh-stop-hook.sh): job 2 = same replace-stock semantics. EVERY invocation below sets
+    # PORTKA_HOOK_DIRS: without it the hook also walks the literal /root/.claude and
+    # /home/claude/.claude — and a suite run as root REPLACED the real environment's stop-hook
+    # (review finding, observed in this very sandbox). The override confines job 2 to the sandbox.
     RHOOK="plugins/repo-bootstrap/hooks/portka-session-start.sh"
     rh="$(mktemp -d)"; mkdir -p "$rh/.claude"
     printf '#!/bin/bash\necho "git config user.email noreply@anthropic.com"\n' > "$rh/.claude/stop-hook-git-check.sh"
-    _rh_out="$( cd "$rh" && HOME="$rh" bash "$OLDPWD/$RHOOK" 2>&1 )"
+    _rh_out="$( cd "$rh" && HOME="$rh" PORTKA_HOOK_DIRS="$rh/.claude" bash "$OLDPWD/$RHOOK" 2>&1 )"
     if grep -q 'Portka corrected edition' "$rh/.claude/stop-hook-git-check.sh" \
        && [[ -f "$rh/.claude/stop-hook-git-check.sh.stock.bak" ]] \
        && grep -q 'replaced the stock stop-hook' <<<"$_rh_out"; then
@@ -1735,36 +1775,49 @@ PY
     fi
     rm -rf "$rh"
     # 1.14.0 job 1: the hook applies the DECLARED .claude/commit-identity to git config when the
-    # current identity is unset or the hosted noreply@anthropic.com default — and leaves a
-    # deliberately different identity alone. This is the end of per-session identity setup.
+    # current identity is unset or the hosted noreply@anthropic.com default — including from a
+    # SUBDIRECTORY of the repo (it resolves the work-tree root) — and leaves a deliberately
+    # different identity alone. This is the end of per-session identity setup.
     ih="$(mktemp -d)"
     git init -q "$ih/repo" 2>/dev/null
-    mkdir -p "$ih/repo/.claude"
+    mkdir -p "$ih/repo/.claude" "$ih/repo/sub/dir"
     printf '# who agent commits land as\nDeclared Person <declared@example.com>\n' > "$ih/repo/.claude/commit-identity"
     ( cd "$ih/repo" && git config user.name Claude && git config user.email noreply@anthropic.com )
-    _ih1="$( cd "$ih/repo" && HOME="$ih" bash "$OLDPWD/$RHOOK" 2>&1 )"
+    _ih1="$( cd "$ih/repo/sub/dir" && HOME="$ih" PORTKA_HOOK_DIRS="$ih/.claude" bash "$OLDPWD/$RHOOK" 2>&1 )"
     _ih1e="$( cd "$ih/repo" && git config user.email )"
     ( cd "$ih/repo" && git config user.email deliberate@example.com )
-    _ih2="$( cd "$ih/repo" && HOME="$ih" bash "$OLDPWD/$RHOOK" 2>&1 )"
+    _ih2="$( cd "$ih/repo" && HOME="$ih" PORTKA_HOOK_DIRS="$ih/.claude" bash "$OLDPWD/$RHOOK" 2>&1 )"
     _ih2e="$( cd "$ih/repo" && git config user.email )"
     if grep -q 'applied this repo.s declared commit identity' <<<"$_ih1" \
        && [[ "$_ih1e" == "declared@example.com" ]] \
        && [[ "$_ih2e" == "deliberate@example.com" ]] \
        && ! grep -q 'applied' <<<"$_ih2"; then
-      pass "SessionStart hook applies .claude/commit-identity over noreply, keeps a deliberate identity (1.14.0)"
+      pass "SessionStart hook applies .claude/commit-identity (even from a subdir), keeps a deliberate identity (1.14.0)"
     else
       fail "SessionStart identity apply wrong (out='$_ih1' email1='$_ih1e' email2='$_ih2e')"
     fi
+    # An email-only declaration ("<a@b.c>", no name) must NOT be applied as a bracketed name.
+    printf '<nameless@example.com>\n' > "$ih/repo/.claude/commit-identity"
+    ( cd "$ih/repo" && git config user.email noreply@anthropic.com )
+    _ih3="$( cd "$ih/repo" && HOME="$ih" PORTKA_HOOK_DIRS="$ih/.claude" bash "$OLDPWD/$RHOOK" 2>&1 )"
+    _ih3e="$( cd "$ih/repo" && git config user.email )"
+    if [[ "$_ih3e" == "noreply@anthropic.com" ]] && ! grep -q 'applied' <<<"$_ih3"; then
+      pass "SessionStart hook rejects a nameless commit-identity declaration (1.14.0)"
+    else
+      fail "nameless declaration wrongly applied (out='$_ih3' email='$_ih3e')"
+    fi
+    printf '# who agent commits land as\nDeclared Person <declared@example.com>\n' > "$ih/repo/.claude/commit-identity"
     # 1.14.0 job 3: staleness — an older version stamp gets a refresh note, the current stamp is
-    # silent, a stampless (pre-1.14) block gets the predates note. This is how pre-1.13 repos
-    # finally LEARN about the authorship fixes instead of running an old standard forever.
+    # silent (compared on the MAJOR.MINOR.PATCH base, so a -rc suffix can't invert the order), a
+    # stampless (pre-1.14) block gets the predates note. This is how pre-1.13 repos finally LEARN
+    # about the authorship fixes instead of running an old standard forever.
     _pver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' plugins/repo-bootstrap/.claude-plugin/plugin.json | head -1)"
     printf '<!-- BEGIN portka-standard -->\n# Portka standard workflow\n<!-- portka-standard-version: 1.0.0 -->\n<!-- END portka-standard -->\n' > "$ih/repo/.claude/CLAUDE.md"
-    _st1="$( cd "$ih/repo" && HOME="$ih" bash "$OLDPWD/$RHOOK" 2>&1 )"
+    _st1="$( cd "$ih/repo" && HOME="$ih" PORTKA_HOOK_DIRS="$ih/.claude" bash "$OLDPWD/$RHOOK" 2>&1 )"
     printf '<!-- BEGIN portka-standard -->\n# Portka standard workflow\n<!-- portka-standard-version: %s -->\n<!-- END portka-standard -->\n' "$_pver" > "$ih/repo/.claude/CLAUDE.md"
-    _st2="$( cd "$ih/repo" && HOME="$ih" bash "$OLDPWD/$RHOOK" 2>&1 )"
+    _st2="$( cd "$ih/repo" && HOME="$ih" PORTKA_HOOK_DIRS="$ih/.claude" bash "$OLDPWD/$RHOOK" 2>&1 )"
     printf '<!-- BEGIN portka-standard -->\n# Portka standard workflow\n<!-- END portka-standard -->\n' > "$ih/repo/.claude/CLAUDE.md"
-    _st3="$( cd "$ih/repo" && HOME="$ih" bash "$OLDPWD/$RHOOK" 2>&1 )"
+    _st3="$( cd "$ih/repo" && HOME="$ih" PORTKA_HOOK_DIRS="$ih/.claude" bash "$OLDPWD/$RHOOK" 2>&1 )"
     if grep -q 'is from 1.0.0' <<<"$_st1" && grep -q 'fold a refresh' <<<"$_st1" \
        && ! grep -q 'fold a refresh' <<<"$_st2" \
        && grep -q 'predates 1.14.0' <<<"$_st3"; then
@@ -1940,18 +1993,26 @@ if [[ -f "$BOOTSTRAP" ]]; then
   else
     fail "commit-identity not seeded from git config"
   fi
-  # (3b) An existing declaration is KEPT on re-run; --identity overrides it; garbage exits 2.
+  # (3b) An existing declaration is KEPT on re-run; --identity overrides it; garbage exits 2;
+  # --identity without --portka-standard is a loud error, not a silent no-op (review finding);
+  # and --print-only prints the commit-identity file alongside settings + block (review finding).
   _c14re="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$c14" --home "$c14h" 2>&1 || true)"
   bash "$BOOTSTRAP" --portka-standard --scope project --dir "$c14" --home "$c14h" \
     --identity "Chris Portka <chrisportka@gmail.com>" >/dev/null 2>&1
   bash "$BOOTSTRAP" --portka-standard --scope project --dir "$c14" --home "$c14h" \
     --identity "not-an-identity" >/dev/null 2>&1; _c14bad=$?
+  bash "$BOOTSTRAP" --plugin video-bug-analyzer --dir "$c14" --home "$c14h" \
+    --identity "Jane Doe <jane@example.com>" >/dev/null 2>&1; _c14solo=$?
+  _c14po="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$c14" --home "$c14h" \
+    --identity "Print Me <print@example.com>" --print-only 2>/dev/null || true)"
   if grep -q 'commit identity already declared' <<<"$_c14re" \
      && grep -q 'Chris Portka <chrisportka@gmail.com>' "$c14/.claude/commit-identity" \
-     && [[ "$_c14bad" -eq 2 ]]; then
-    pass "commit-identity precedence: kept on re-run, --identity overrides, garbage exits 2"
+     && [[ "$_c14bad" -eq 2 ]] && [[ "$_c14solo" -eq 2 ]] \
+     && grep -q '===== .claude/commit-identity =====' <<<"$_c14po" \
+     && grep -q 'Print Me <print@example.com>' <<<"$_c14po"; then
+    pass "commit-identity precedence: kept / overridden / garbage=2 / needs standard / printed in print-only"
   else
-    fail "commit-identity precedence wrong (re='$_c14re' bad-rc=$_c14bad)"
+    fail "commit-identity precedence wrong (re-rc bad=$_c14bad solo=$_c14solo)"
   fi
   # (3c) noreply@ git config must NOT seed — the NOTE asks for --identity instead.
   nr="$(mktemp -d)"; nrh="$(mktemp -d)"
@@ -1976,24 +2037,61 @@ if [[ -f "$BOOTSTRAP" ]]; then
     fail "README Version insertion wrong or scaffolded suite red (#114)"
   fi
   rm -rf "$r14" "$r14h"
+  # (4b) Review findings: a setext-heading README (no ATX H1) gets the add-by-hand NOTE in dry-run
+  # AND real run (dry-run used to promise an insertion the real run skipped); a CRLF README keeps
+  # its line endings — the insert really touches nothing else.
+  r14b="$(mktemp -d)"; r14bh="$(mktemp -d)"
+  printf 'My App\n======\n\nStuff.\n' > "$r14b/README.md"
+  _r14bd="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$r14b" --home "$r14bh" --dry-run 2>&1 || true)"
+  if grep -q 'no H1 to anchor one' <<<"$_r14bd" && ! grep -q 'would insert' <<<"$_r14bd"; then
+    pass "setext-heading README: dry-run states the real outcome (NOTE, no insertion promise) (review)"
+  else
+    fail "setext README dry-run parity wrong"
+  fi
+  rm -rf "$r14b" "$r14bh"
+  r14c="$(mktemp -d)"; r14ch="$(mktemp -d)"
+  printf '# My App\r\n\r\nCRLF stuff.\r\n' > "$r14c/README.md"
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$r14c" --home "$r14ch" >/dev/null 2>&1
+  if grep -q $'> \*\*Version:\*\* 0\.1\.0\r$' "$r14c/README.md" \
+     && grep -q $'CRLF stuff.\r$' "$r14c/README.md"; then
+    pass "CRLF README keeps its line endings through the Version insert (review)"
+  else
+    fail "CRLF README was rewritten (endings changed or line missing)"
+  fi
+  rm -rf "$r14c" "$r14ch"
   # (5) Branch-pinned repo (main EXISTS, session is on a claude/* branch): the old rename recipe
   # would have pushed the pinned branch AS main — 1.14.0 must instead say the pinned flow applies
   # and NOT emit a rename, in both the real run and --dry-run (#114 con 1/3).
   pb="$(mktemp -d)"; pbh="$(mktemp -d)"
   git init -q "$pb" 2>/dev/null
+  # -c commit.gpgsign=false: same guard as the stop-hook tests — CI's real gpg + a bogus key
+  # would fail the setup commit and silently invalidate the scenario (review finding).
   ( cd "$pb" && git config user.name t && git config user.email t@example.com \
-    && git checkout -qb main && git commit -q --allow-empty -m init \
+    && git checkout -qb main && git -c commit.gpgsign=false commit -q --allow-empty -m init \
     && git checkout -qb claude/some-task-var123 )
   _pbdry="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$pb" --home "$pbh" --dry-run 2>&1 || true)"
   _pbout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$pb" --home "$pbh" 2>&1 || true)"
+  # Negative: the rename recipe's command line is `git branch -m <branch> main ...` — grep its
+  # PREFIX (the old '... branch -m main' pattern matched nothing, a dead assertion; review finding).
   if grep -q "'main' exists" <<<"$_pbout" \
      && grep -q 'branch-pinned flow applies' <<<"$_pbout" \
-     && ! grep -q 'branch -m main' <<<"$_pbout" \
+     && ! grep -q 'git branch -m ' <<<"$_pbout" \
      && grep -q "branch-pinned flow applies" <<<"$_pbdry" \
-     && ! grep -q 'branch -m main' <<<"$_pbdry"; then
+     && ! grep -q 'git branch -m ' <<<"$_pbdry"; then
     pass "pinned branch + existing main: pinned-flow note, NO rename recipe (real + dry-run) (#114)"
   else
     fail "pinned-branch normalization wrong (#114): real='$(grep -iE "main|branch" <<<"$_pbout" | head -3)'"
+  fi
+  # An unborn ORPHAN branch beside an existing main (git checkout --orphan gh-pages) must be left
+  # alone — the old order re-pointed HEAD onto main and lost the orphan (review finding).
+  ( cd "$pb" && git checkout -q claude/some-task-var123 2>/dev/null; git checkout -q --orphan gh-pages )
+  _pborph="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$pb" --home "$pbh" 2>&1 || true)"
+  _pbhead="$( cd "$pb" && git symbolic-ref --short HEAD )"
+  if grep -q 'unborn branch .gh-pages. while .main. exists' <<<"$_pborph" \
+     && [[ "$_pbhead" == "gh-pages" ]]; then
+    pass "orphan branch beside main is left alone (no HEAD re-point) (1.14.0 review)"
+  else
+    fail "orphan-branch handling wrong (HEAD='$_pbhead' out='$(grep -i unborn <<<"$_pborph" | head -1)')"
   fi
   rm -rf "$pb" "$pbh"
   # (6) --portka-standard --ci in ONE run: the CI message must recognize the validate.yml IT just

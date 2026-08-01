@@ -124,13 +124,16 @@ hard way — see the issue numbers in comments):
 - **`PRIVACY.md` / `SECURITY.md` / `.well-known/security.txt`** — posture: local-only scripts, no
   data collection; vulnerabilities via GitHub private reporting.
 
-## State at handoff (refreshed each release — this stamp: 1.14.0, 2026-07-30)
+## State at handoff (refreshed each release — this stamp: 1.14.1, 2026-08-01)
 
 - Versions: the README header + plugin table and each `plugins/*/.claude-plugin/plugin.json` are
   the live source of truth (per-plugin versions diverge by design). Suite size/green-ness: run
   `bash tests/run-tests.sh`; CI mirrors it.
-- All feedback issues through #114 triaged; deferred items live in `IMPROVEMENTS.md` with issue
-  numbers. Tags/GitHub Releases are the human's manual step and may lag main — that's expected.
+- All feedback issues through #118 triaged; deferred items live in `IMPROVEMENTS.md` with issue
+  numbers. Tags/GitHub Releases are the human's manual step and may lag main — that's expected
+  (v1.10.0–v1.14.1 are all untagged as of this stamp; the marketplace installs from `main`, so the
+  code is live regardless, and **that** is why the version-bump-guard still requires a bump between
+  merged releases even when the earlier tag was never cut).
 - 1.14.0 made the standard **self-updating**: the managed block carries a
   `portka-standard-version` stamp, `.claude/commit-identity` is committed + auto-applied by the
   SessionStart hook (`plugins/repo-bootstrap/hooks/portka-session-start.sh`), and

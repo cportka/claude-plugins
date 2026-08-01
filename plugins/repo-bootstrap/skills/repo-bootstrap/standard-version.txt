@@ -1,0 +1,10 @@
+# The release in which the MANAGED CLAUDE.md BLOCK TEXT last changed — not the plugin version.
+#
+# The block carries this as its `portka-standard-version` stamp, and the SessionStart hook compares
+# a repo's stamp against it to decide whether the standard is stale. Keeping it separate from
+# plugin.json is what stops an unrelated plugin fix (a bug in a video flag, a dry-run message) from
+# telling every bootstrapped repo to commit a stamp-only refresh diff (1.14.1 review finding).
+#
+# BUMP THIS whenever you edit STD_CLAUDE_BLOCK in scripts/bootstrap-repo.sh — use the version of
+# the release that carries the edit. Leave it alone for every other change.
+1.14.0

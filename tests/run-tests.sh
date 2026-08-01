@@ -1966,10 +1966,12 @@ if [[ -f "$BOOTSTRAP" ]]; then
   ( cd "$c14" && git config user.name "Repo Owner" && git config user.email owner@example.com )
   _c14out="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$c14" --home "$c14h" 2>&1 || true)"
   _c14cm="$(tr '\n' ' ' < "$c14/.claude/CLAUDE.md")"
-  _pv14="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' plugins/repo-bootstrap/.claude-plugin/plugin.json | head -1)"
+  # The stamp is the version in which the BLOCK TEXT last changed (standard-version.txt), which is
+  # <= the plugin version — see the (3d-iii) case for why they're deliberately decoupled.
+  _pv14="$(grep -v '^[[:space:]]*#' plugins/repo-bootstrap/skills/repo-bootstrap/standard-version.txt | tr -d '[:space:]' | head -1)"
   # (1) The block LEADS with the contract (describe work -> branch/build/test/PR/merge-on-green/
-  # hand back the link; deletion = confirmation) and carries a version stamp == the plugin version,
-  # which the SessionStart hook compares for staleness.
+  # hand back the link; deletion = confirmation) and carries the block-version stamp the
+  # SessionStart hook compares for staleness.
   if grep -q 'The contract\.' <<<"$_c14cm" \
      && grep -q 'hand back the short PR' <<<"$_c14cm" \
      && grep -q 'deletion is the confirmation' <<<"$_c14cm" \
@@ -2025,6 +2027,110 @@ if [[ -f "$BOOTSTRAP" ]]; then
     fail "noreply git config wrongly seeded commit-identity"
   fi
   rm -rf "$nr" "$nrh" "$c14" "$c14h"
+  # (3d) 1.14.1 (#116): the declaration is applied to git config BY THIS RUN, not only by the next
+  # session's hook — the bootstrapping session is usually the one whose first commits land. Same
+  # rule as the hook (unset or a harness noreply@ default), so a deliberate identity survives; and
+  # --dry-run says it would apply without touching anything.
+  ia="$(mktemp -d)"; iah="$(mktemp -d)"
+  git init -q "$ia" 2>/dev/null
+  ( cd "$ia" && git config user.name Claude && git config user.email noreply@anthropic.com )
+  _iaout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ia" --home "$iah" \
+    --identity "Declared Person <declared@example.com>" 2>&1 || true)"
+  _iae="$( cd "$ia" && git config user.email )"; _ian="$( cd "$ia" && git config user.name )"
+  ( cd "$ia" && git config user.name Deliberate && git config user.email deliberate@example.com )
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ia" --home "$iah" >/dev/null 2>&1
+  _iae2="$( cd "$ia" && git config user.email )"
+  # Dry-run parity: back to a harness default (a deliberate identity legitimately suppresses the
+  # apply entirely), so the preview line must appear — and still change nothing.
+  ( cd "$ia" && git config user.email noreply@anthropic.com )
+  _iadry="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ia" --home "$iah" \
+    --identity "Other P <other@example.com>" --dry-run 2>&1 || true)"
+  _iae3="$( cd "$ia" && git config user.email )"
+  if grep -q "Applied it to this repo's git config now" <<<"$_iaout" \
+     && [[ "$_iae" == "declared@example.com" && "$_ian" == "Declared Person" ]] \
+     && [[ "$_iae2" == "deliberate@example.com" ]] \
+     && grep -q 'would also apply it to this repo.s git config now' <<<"$_iadry" \
+     && [[ "$_iae3" == "noreply@anthropic.com" ]]; then
+    pass "--identity applies to git config in the SAME run; deliberate identity kept; dry-run writes nothing (#116)"
+  else
+    fail "immediate identity apply wrong (email='$_iae' after-deliberate='$_iae2' dry='$_iae3')"
+  fi
+  # (3d-ii) Review findings on the #116 fix: a comment-only/empty declaration must NOT abort the
+  # run (the unguarded grep pipeline died under `set -euo pipefail`, leaving the repo
+  # half-bootstrapped with no scaffold or CI), and bootstrapping a SUBDIRECTORY of an enclosing
+  # repo must not rewrite the PARENT repo's identity (--is-inside-work-tree is true for any subdir).
+  ib="$(mktemp -d)"; ibh="$(mktemp -d)"
+  git init -q "$ib" 2>/dev/null; mkdir -p "$ib/.claude"
+  printf '# TODO: ask the owner which identity to use\n\n' > "$ib/.claude/commit-identity"
+  _ibout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ib" --home "$ibh" 2>&1)"; _ibrc=$?
+  git init -q "$ib/outer" 2>/dev/null; mkdir -p "$ib/outer/sub"
+  ( cd "$ib/outer" && git config user.email keep@example.com && git config user.name Keep )
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ib/outer/sub" --home "$ibh" \
+    --identity "Sub P <sub@example.com>" >/dev/null 2>&1
+  _iboe="$( cd "$ib/outer" && git config user.email )"
+  if [[ "$_ibrc" -eq 0 ]] && [[ -x "$ib/tests/run-tests.sh" ]] \
+     && grep -q 'no declaration line' <<<"$_ibout" \
+     && [[ "$_iboe" == "keep@example.com" ]]; then
+    pass "comment-only commit-identity doesn't abort the run; a subdir bootstrap can't re-identify the parent repo (review)"
+  else
+    fail "identity edge cases wrong (rc=$_ibrc parent-email='$_iboe')"
+  fi
+  rm -rf "$ib" "$ibh"
+  # (3d-iii) Review finding: the block's stamp tracks the version in which the BLOCK TEXT last
+  # changed (standard-version.txt), NOT the plugin version — otherwise every unrelated plugin fix
+  # nags every bootstrapped repo to commit a stamp-only refresh. So a repo stamped at the block
+  # version must stay SILENT even when the installed plugin version is higher.
+  SVFILE="plugins/repo-bootstrap/skills/repo-bootstrap/standard-version.txt"
+  _bver="$(grep -v '^[[:space:]]*#' "$SVFILE" 2>/dev/null | tr -d '[:space:]' | head -1)"
+  _plugver="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' plugins/repo-bootstrap/.claude-plugin/plugin.json | head -1)"
+  sb="$(mktemp -d)"; sbh="$(mktemp -d)"
+  git init -q "$sb" 2>/dev/null
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$sb" --home "$sbh" >/dev/null 2>&1
+  _sbstamp="$(sed -n 's/.*portka-standard-version: \([0-9][0-9A-Za-z.-]*\).*/\1/p' "$sb/.claude/CLAUDE.md" | head -1)"
+  _sbhook="$( cd "$sb" && HOME="$sbh" PORTKA_HOOK_DIRS="$sbh/.claude" \
+    CLAUDE_PLUGIN_ROOT="$OLDPWD/plugins/repo-bootstrap" bash "$OLDPWD/$RHOOK" 2>&1 )"
+  if [[ -n "$_bver" ]] && [[ "$_sbstamp" == "$_bver" ]] \
+     && [[ "$(printf '%s\n%s\n' "$_bver" "$_plugver" | sort -V | head -1)" == "$_bver" ]] \
+     && ! grep -q 'fold a refresh' <<<"$_sbhook"; then
+    pass "block stamp tracks standard-version.txt ($_bver), not plugin $_plugver — no nag on an unrelated bump (review)"
+  else
+    fail "block-version stamping wrong (stamp='$_sbstamp' block='$_bver' plugin='$_plugver')"
+  fi
+  rm -rf "$sb" "$sbh"
+  rm -rf "$ia" "$iah"
+  # (3e) 1.14.1 (#117): a VERSION file shadowed by a manifest is called out — as a redundancy note
+  # when they agree, and as a hard scaffolded-suite FAILURE when they disagree (bumping the ignored
+  # file otherwise keeps CI green while shipping the old version everywhere).
+  sv="$(mktemp -d)"; svh="$(mktemp -d)"
+  printf '0.1.0\n' > "$sv/VERSION"
+  printf '{\n  "name": "x",\n  "version": "0.9.0"\n}\n' > "$sv/package.json"
+  printf '# Changelog\n\n## [0.9.0]\n- x\n' > "$sv/CHANGELOG.md"
+  _svout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$sv" --home "$svh" 2>&1 || true)"
+  _svsuite="$(bash "$sv/tests/run-tests.sh" 2>&1 || true)"
+  printf '0.9.0\n' > "$sv/VERSION"                      # now they AGREE -> note, and green again
+  _svok="$(bash "$sv/tests/run-tests.sh" 2>&1 || true)"
+  if grep -q 'VERSION is SHADOWED and disagrees' <<<"$_svout" \
+     && grep -q 'VERSION says 0.1.0 but package.json' <<<"$_svsuite" \
+     && grep -qE 'note: VERSION is redundant' <<<"$_svok" \
+     && grep -q '0 failed' <<<"$_svok"; then
+    pass "shadowed VERSION: bootstrap NOTEs it, scaffolded suite fails on disagreement, notes when redundant (#117)"
+  else
+    fail "shadowed VERSION handling wrong"
+  fi
+  rm -rf "$sv" "$svh"
+  # (3f) 1.14.1 (#117): --dry-run LISTS the permission rules it would add (a bare count made the
+  # permissions half of the preview unreviewable next to the full settings.json it prints).
+  dp="$(mktemp -d)"; dph="$(mktemp -d)"
+  _dpout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$dp" --home "$dph" --dry-run 2>&1 || true)"
+  if grep -q 'would add 17 permission rule(s)' <<<"$_dpout" \
+     && grep -qF '[dry-run]   + Bash(git status:*)' <<<"$_dpout" \
+     && grep -qF '[dry-run]   + Bash(gh issue:*)' <<<"$_dpout" \
+     && [[ "$(find "$dp" -type f | wc -l)" -eq 0 ]]; then
+    pass "--dry-run lists each permission rule it would add, still writing nothing (#117)"
+  else
+    fail "dry-run permission listing missing"
+  fi
+  rm -rf "$dp" "$dph"
   # (4) Greenfield repo WITH a README but no **Version:** line: the third sync point is inserted
   # under the first H1 (#114 con 4) — and the scaffolded suite is green with it.
   r14="$(mktemp -d)"; r14h="$(mktemp -d)"

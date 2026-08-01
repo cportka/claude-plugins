@@ -36,8 +36,10 @@
 #                              / README **Version:**), seeding a bare VERSION 0.1.0 only on a
 #                              greenfield repo, plus a basic tests/run-tests.sh and CI to run it.
 #   --identity "Name <email>"  Declare the repo's commit identity: written to .claude/commit-identity
-#                              (committed; the repo-bootstrap SessionStart hook auto-applies it to
-#                              git config each session, so agent commits land as the owner intends).
+#                              (committed) AND applied to this repo's git config right away, so the
+#                              bootstrapping session's own commits land as the owner intends; the
+#                              SessionStart hook re-applies it every later session. Only when git
+#                              config is unset or a noreply@ default — a deliberate identity stays.
 #                              Without the flag, --portka-standard seeds the file from the repo's
 #                              existing git config user.name/email when set (never from a noreply@
 #                              default), and otherwise prints how to declare it.
@@ -373,14 +375,17 @@ The `repo-bootstrap` plugin ships a corrected hook (scoped to unpushed+unmerged 
 repo's configured identity, treats signatures as informational) and refreshes a stock
 `~/.claude/stop-hook-git-check.sh` automatically at session start.
 MD
-  # Stamp the block with the plugin version (1.14.0): the SessionStart hook compares this stamp to
-  # the installed plugin and flags a stale block — pre-1.14 repos carry old standards that never
-  # learned the prune/identity fixes, which is exactly why authorship problems kept recurring.
+  # Stamp the block with the version in which the BLOCK TEXT last changed (standard-version.txt),
+  # NOT the plugin version (1.14.1 review finding): the SessionStart hook compares a repo's stamp
+  # against the same file to flag a stale standard, so tying it to plugin.json would make every
+  # unrelated plugin fix nag every bootstrapped repo to commit a stamp-only refresh. Pre-1.14 repos
+  # (no stamp at all) still get flagged — they carry standards that never learned the prune/identity
+  # fixes, which is exactly why authorship problems kept recurring.
   # `|| true` matters under set -euo pipefail: a vendored/relocated copy of this script has no
-  # plugin.json at the fallback path, and sed's failure would otherwise silently abort the whole
-  # run right here (review finding) — the 'unknown' stamp exists for exactly that case.
-  _psv="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/.claude-plugin/plugin.json" 2>/dev/null | head -n1 || true)"
+  # plugin tree at the fallback path, and the read's failure would otherwise silently abort the
+  # whole run right here (earlier review finding) — the 'unknown' stamp exists for exactly that case.
+  _psv="$(grep -v '^[[:space:]]*#' "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/skills/repo-bootstrap/standard-version.txt" 2>/dev/null \
+    | tr -d '[:space:]' | head -n1 || true)"
   STD_CLAUDE_BLOCK="${STD_CLAUDE_BLOCK//__PSV__/${_psv:-unknown}}"
 fi
 
@@ -712,7 +717,12 @@ allow = data.setdefault("permissions", {}).setdefault("allow", [])
 added = [r for r in perms if r not in allow]
 allow.extend(added)
 if dry:
+    # List the rules, don't just count them (1.14.1, #117): the dry-run prints the full
+    # settings.json it would write, so a bare count made the permissions half of the preview
+    # the one thing you couldn't actually review before committing it.
     print(f"[dry-run] would add {len(added)} permission rule(s) to {path}")
+    for r in added:
+        print(f"[dry-run]   + {r}")
 else:
     with open(path, "w") as fh:
         json.dump(data, fh, indent=2)
@@ -786,9 +796,10 @@ PY
   # Repo scaffold: bind the version sync to the repo's existing source of truth (#59) — a project
   # manifest if present, else a bare VERSION — and enforce it with a basic test runner. Always
   # Declared commit identity (1.14.0, user directive): a committed, MACHINE-READABLE
-  # .claude/commit-identity ("Name <email>") is the contract's identity source — the plugin's
-  # SessionStart hook applies it to git config each session, so agent commits land as the owner
-  # intends with zero per-session setup, and the corrected stop-hook reads the same config.
+  # .claude/commit-identity ("Name <email>") is the contract's identity source — applied to git
+  # config by THIS run (1.14.1, #116) and re-applied by the plugin's SessionStart hook every later
+  # session, so agent commits land as the owner intends with zero manual setup in any session, and
+  # the corrected stop-hook reads the same config.
   # Precedence: an explicit --identity always writes; else an existing file is kept; else seed from
   # the repo's own git config (never a noreply@ harness default); else say how to declare it.
   _idfile="$DIR/.claude/commit-identity"
@@ -802,10 +813,21 @@ PY
       echo "Wrote $_idfile: $1  ($2)"
     fi
   }
+  _active_identity=""       # the declaration this run ends up with (applied to git config below)
   if [[ -n "$IDENTITY" ]]; then
     _write_identity "$IDENTITY" "--identity"   # value already validated at argparse (exit 2 there)
+    _active_identity="$IDENTITY"
   elif [[ -f "$_idfile" ]]; then
-    echo "commit identity already declared: $(grep -v '^#' "$_idfile" | head -1) ($_idfile — pass --identity to change)"
+    # `|| true`: under `set -euo pipefail` a STANDALONE assignment propagates the pipeline's
+    # status, so a comment-only/empty declaration (grep exits 1) or a SIGPIPE from `head` would
+    # abort the whole run right here, leaving the repo half-bootstrapped with no scaffold or CI
+    # (review finding — the same hazard already documented for the `_psv` read).
+    _active_identity="$(grep -v '^[[:space:]]*#' "$_idfile" | grep -v '^[[:space:]]*$' | head -1 | tr -d '\r' || true)"
+    if [[ -n "$_active_identity" ]]; then
+      echo "commit identity already declared: $_active_identity ($_idfile — pass --identity to change)"
+    else
+      echo "NOTE: $_idfile has no declaration line (comment-only/empty) — add 'Name <email>' or re-run with --identity \"Name <email>\"." >&2
+    fi
   else
     _cfg_name="$(git -C "$DIR" config user.name 2>/dev/null || true)"
     _cfg_email="$(git -C "$DIR" config user.email 2>/dev/null || true)"
@@ -813,6 +835,33 @@ PY
       _write_identity "$_cfg_name <$_cfg_email>" "seeded from this repo's git config"
     else
       echo "NOTE: no commit identity declared — run again with --identity \"Name <email>\" (writes .claude/commit-identity, which sessions auto-apply)." >&2
+    fi
+  fi
+
+  # Apply the declaration to git config RIGHT NOW (1.14.1, #116) — not only at the next session
+  # start. The SessionStart hook can't help the very run that declares the identity, and that run
+  # is usually the one whose first commits land (a fresh bootstrap in a hosted session). Same rule
+  # as the hook: only when git config is unset or a harness `noreply@` default, so a deliberate
+  # identity is never clobbered.
+  # `--show-toplevel` must EQUAL $DIR, not merely contain it (review finding): `--is-inside-work-tree`
+  # is true for any subdirectory, so bootstrapping `repo/sub` would have written the ENCLOSING repo's
+  # config — silently re-identifying a parent project the declaration doesn't belong to.
+  _dir_top="$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  _dir_abs="$( { cd "$DIR" && pwd -P; } 2>/dev/null || true )"
+  if [[ -n "$_active_identity" && -n "$_dir_top" && "$_dir_top" == "$_dir_abs" ]]; then
+    _cur_email="$(git -C "$DIR" config user.email 2>/dev/null || true)"
+    _an="${_active_identity%% <*}"
+    _ae="$(printf '%s' "$_active_identity" | sed -n 's/.*<\([^>]*\)>.*/\1/p')"
+    if [[ -z "$_cur_email" || "$_cur_email" == noreply@* ]] \
+       && [[ -n "$_an" && -n "$_ae" && "$_an" != *"<"* ]]; then
+      if [[ -n "$NO_WRITE" ]]; then
+        echo "[dry-run] would also apply it to this repo's git config now (user.email is currently ${_cur_email:-unset})"
+      elif git -C "$DIR" config user.name "$_an" 2>/dev/null \
+           && git -C "$DIR" config user.email "$_ae" 2>/dev/null; then
+        echo "Applied it to this repo's git config now — commits in THIS session already land as $_an <$_ae>."
+      else
+        echo "NOTE: could not write git config (lock/permissions?) — run before your first commit: git config user.name \"$_an\"; git config user.email \"$_ae\"" >&2
+      fi
     fi
   fi
 
@@ -825,6 +874,18 @@ PY
     NATIVE_SRC="$(printf '%s' "$_ver_line" | cut -f1)"
     SYNC_VER="$(printf '%s' "$_ver_line" | cut -f2-)"
     echo "Detected version $SYNC_VER from $NATIVE_SRC — binding the sync check to it (not seeding VERSION)."
+    # A SHADOWED VERSION file (1.14.1, #117): a greenfield run seeds VERSION, then the repo gains a
+    # manifest that outranks it — the leftover file is silently ignored, so a later editor bumping it
+    # sees the suite stay green while shipping the old version everywhere. Name it here; the
+    # scaffolded runner fails outright when the two disagree.
+    if [[ "$NATIVE_SRC" != "VERSION" && -f "$DIR/VERSION" ]]; then
+      _stale_v="$(tr -d '[:space:]' < "$DIR/VERSION" 2>/dev/null || true)"
+      if [[ -n "$_stale_v" && "$_stale_v" != "$SYNC_VER" ]]; then
+        echo "NOTE: VERSION says $_stale_v but $NATIVE_SRC (the source of truth) says $SYNC_VER — VERSION is SHADOWED and disagrees; delete it (the scaffolded suite fails on this)." >&2
+      else
+        echo "NOTE: a VERSION file exists but $NATIVE_SRC wins detection — VERSION is now redundant; delete it to avoid future drift." >&2
+      fi
+    fi
   else
     SYNC_VER="0.1.0"                             # greenfield: seed a bare VERSION as the source of truth
     seed_if_absent "$DIR/VERSION" "version source of truth" <<EOF
@@ -990,6 +1051,17 @@ else
       pass "README **Version:** line matches ($VER)"
     else
       fail "README **Version:** line disagrees with $SRC ($VER)"
+    fi
+  fi
+  # A SHADOWED VERSION file (#117): detection prefers a manifest, so a VERSION left over from a
+  # greenfield bootstrap is silently ignored once package.json/pyproject.toml/Cargo.toml appears.
+  # Bumping the ignored file would otherwise keep this suite green while shipping the old version.
+  if [[ "$SRC" != "VERSION" && -f VERSION ]]; then
+    _shadow_v="$(tr -d '[:space:]' < VERSION)"
+    if [[ -n "$_shadow_v" && "$_shadow_v" != "$VER" ]]; then
+      fail "VERSION says $_shadow_v but $SRC (the source of truth) says $VER — delete VERSION or sync it"
+    else
+      echo "  note: VERSION is redundant now that $SRC is the source of truth — delete it to avoid drift"
     fi
   fi
 fi

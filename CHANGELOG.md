@@ -5,6 +5,37 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.14.1] - 2026-08-01
+
+Field-report round from a full greenfield build (`cportka/design-a-home`, bootstrapped and shipped
+in one hosted session): the contract held end-to-end, and the two friction points it surfaced are
+fixed here. **repo-bootstrap → 1.14.1** (other plugins unchanged). Triage of #116/#117/#118. PATCH.
+
+### Fixed (repo-bootstrap → 1.14.1)
+- **`--identity` now applies to git config in the SAME run (#116).** The SessionStart hook could
+  only help the *next* session — but the run that declares the identity is usually the one whose
+  first commits land, so a fresh bootstrap left `user.email` on the harness default until someone
+  read the CLAUDE.md fine print. Bootstrap now writes `user.name`/`user.email` immediately (from
+  `--identity` or an existing `.claude/commit-identity`) and says so. Same guard as the hook: only
+  when git config is unset or a `noreply@` harness default, so a deliberate identity is never
+  clobbered; `--dry-run` states it would apply without touching anything. The hook's rule widened
+  from the literal `noreply@anthropic.com` to any `noreply@` address, keeping the two symmetric (a
+  personal `user@users.noreply.github.com` is unaffected — it doesn't start with `noreply@`).
+- **A `VERSION` file shadowed by a manifest is no longer silent (#117).** Greenfield runs seed
+  `VERSION`; when the repo later gains a `package.json`/`pyproject.toml`/`Cargo.toml`, that
+  manifest wins detection and the leftover file is ignored — so bumping it kept CI green while
+  shipping the old version everywhere. The scaffolded `tests/run-tests.sh` now **fails** when the
+  two disagree and notes the redundancy when they agree, and bootstrap itself flags the file at
+  detection time. (This was the deferred "all-present version sources should agree" item, #81.)
+- **`--dry-run` lists the permission rules it would add (#117).** It printed the full
+  `settings.json` but only a count for permissions — the one part of the preview you couldn't
+  actually review. Each rule is now printed on its own `[dry-run]   + …` line.
+
+### Notes
+- #118 (greenfield field report) needed no code change — the branch-pinned detection, superset
+  test-runner contract, CI dedupe, `tests/cases/*.sh` extension point, and the workflow contract
+  itself all behaved as designed on a real 3.5k-LOC project.
+
 ## [1.14.0] - 2026-07-30
 
 The contract release: the bootstrap's job is restated as **one well-defined loop between the user,
@@ -1622,6 +1653,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.14.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.14.1
 [1.14.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.14.0
 [1.13.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.13.0
 [1.12.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.12.1

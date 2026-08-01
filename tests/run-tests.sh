@@ -2025,6 +2025,68 @@ if [[ -f "$BOOTSTRAP" ]]; then
     fail "noreply git config wrongly seeded commit-identity"
   fi
   rm -rf "$nr" "$nrh" "$c14" "$c14h"
+  # (3d) 1.14.1 (#116): the declaration is applied to git config BY THIS RUN, not only by the next
+  # session's hook — the bootstrapping session is usually the one whose first commits land. Same
+  # rule as the hook (unset or a harness noreply@ default), so a deliberate identity survives; and
+  # --dry-run says it would apply without touching anything.
+  ia="$(mktemp -d)"; iah="$(mktemp -d)"
+  git init -q "$ia" 2>/dev/null
+  ( cd "$ia" && git config user.name Claude && git config user.email noreply@anthropic.com )
+  _iaout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ia" --home "$iah" \
+    --identity "Declared Person <declared@example.com>" 2>&1 || true)"
+  _iae="$( cd "$ia" && git config user.email )"; _ian="$( cd "$ia" && git config user.name )"
+  ( cd "$ia" && git config user.name Deliberate && git config user.email deliberate@example.com )
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ia" --home "$iah" >/dev/null 2>&1
+  _iae2="$( cd "$ia" && git config user.email )"
+  # Dry-run parity: back to a harness default (a deliberate identity legitimately suppresses the
+  # apply entirely), so the preview line must appear — and still change nothing.
+  ( cd "$ia" && git config user.email noreply@anthropic.com )
+  _iadry="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ia" --home "$iah" \
+    --identity "Other P <other@example.com>" --dry-run 2>&1 || true)"
+  _iae3="$( cd "$ia" && git config user.email )"
+  if grep -q "Applied it to this repo's git config now" <<<"$_iaout" \
+     && [[ "$_iae" == "declared@example.com" && "$_ian" == "Declared Person" ]] \
+     && [[ "$_iae2" == "deliberate@example.com" ]] \
+     && grep -q 'would also apply it to this repo.s git config now' <<<"$_iadry" \
+     && [[ "$_iae3" == "noreply@anthropic.com" ]]; then
+    pass "--identity applies to git config in the SAME run; deliberate identity kept; dry-run writes nothing (#116)"
+  else
+    fail "immediate identity apply wrong (email='$_iae' after-deliberate='$_iae2' dry='$_iae3')"
+  fi
+  rm -rf "$ia" "$iah"
+  # (3e) 1.14.1 (#117): a VERSION file shadowed by a manifest is called out — as a redundancy note
+  # when they agree, and as a hard scaffolded-suite FAILURE when they disagree (bumping the ignored
+  # file otherwise keeps CI green while shipping the old version everywhere).
+  sv="$(mktemp -d)"; svh="$(mktemp -d)"
+  printf '0.1.0\n' > "$sv/VERSION"
+  printf '{\n  "name": "x",\n  "version": "0.9.0"\n}\n' > "$sv/package.json"
+  printf '# Changelog\n\n## [0.9.0]\n- x\n' > "$sv/CHANGELOG.md"
+  _svout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$sv" --home "$svh" 2>&1 || true)"
+  _svsuite="$(bash "$sv/tests/run-tests.sh" 2>&1 || true)"
+  printf '0.9.0\n' > "$sv/VERSION"                      # now they AGREE -> note, and green again
+  _svok="$(bash "$sv/tests/run-tests.sh" 2>&1 || true)"
+  if grep -q 'VERSION is SHADOWED and disagrees' <<<"$_svout" \
+     && grep -q 'VERSION says 0.1.0 but package.json' <<<"$_svsuite" \
+     && grep -qE 'note: VERSION is redundant' <<<"$_svok" \
+     && grep -q '0 failed' <<<"$_svok"; then
+    pass "shadowed VERSION: bootstrap NOTEs it, scaffolded suite fails on disagreement, notes when redundant (#117)"
+  else
+    fail "shadowed VERSION handling wrong"
+  fi
+  rm -rf "$sv" "$svh"
+  # (3f) 1.14.1 (#117): --dry-run LISTS the permission rules it would add (a bare count made the
+  # permissions half of the preview unreviewable next to the full settings.json it prints).
+  dp="$(mktemp -d)"; dph="$(mktemp -d)"
+  _dpout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$dp" --home "$dph" --dry-run 2>&1 || true)"
+  if grep -q 'would add 17 permission rule(s)' <<<"$_dpout" \
+     && grep -qF '[dry-run]   + Bash(git status:*)' <<<"$_dpout" \
+     && grep -qF '[dry-run]   + Bash(gh issue:*)' <<<"$_dpout" \
+     && [[ "$(find "$dp" -type f | wc -l)" -eq 0 ]]; then
+    pass "--dry-run lists each permission rule it would add, still writing nothing (#117)"
+  else
+    fail "dry-run permission listing missing"
+  fi
+  rm -rf "$dp" "$dph"
   # (4) Greenfield repo WITH a README but no **Version:** line: the third sync point is inserted
   # under the first H1 (#114 con 4) — and the scaffolded suite is green with it.
   r14="$(mktemp -d)"; r14h="$(mktemp -d)"

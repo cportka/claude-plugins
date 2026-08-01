@@ -712,7 +712,12 @@ allow = data.setdefault("permissions", {}).setdefault("allow", [])
 added = [r for r in perms if r not in allow]
 allow.extend(added)
 if dry:
+    # List the rules, don't just count them (1.14.1, #117): the dry-run prints the full
+    # settings.json it would write, so a bare count made the permissions half of the preview
+    # the one thing you couldn't actually review before committing it.
     print(f"[dry-run] would add {len(added)} permission rule(s) to {path}")
+    for r in added:
+        print(f"[dry-run]   + {r}")
 else:
     with open(path, "w") as fh:
         json.dump(data, fh, indent=2)
@@ -802,10 +807,13 @@ PY
       echo "Wrote $_idfile: $1  ($2)"
     fi
   }
+  _active_identity=""       # the declaration this run ends up with (applied to git config below)
   if [[ -n "$IDENTITY" ]]; then
     _write_identity "$IDENTITY" "--identity"   # value already validated at argparse (exit 2 there)
+    _active_identity="$IDENTITY"
   elif [[ -f "$_idfile" ]]; then
-    echo "commit identity already declared: $(grep -v '^#' "$_idfile" | head -1) ($_idfile — pass --identity to change)"
+    _active_identity="$(grep -v '^[[:space:]]*#' "$_idfile" | grep -v '^[[:space:]]*$' | head -1 | tr -d '\r')"
+    echo "commit identity already declared: $_active_identity ($_idfile — pass --identity to change)"
   else
     _cfg_name="$(git -C "$DIR" config user.name 2>/dev/null || true)"
     _cfg_email="$(git -C "$DIR" config user.email 2>/dev/null || true)"
@@ -813,6 +821,28 @@ PY
       _write_identity "$_cfg_name <$_cfg_email>" "seeded from this repo's git config"
     else
       echo "NOTE: no commit identity declared — run again with --identity \"Name <email>\" (writes .claude/commit-identity, which sessions auto-apply)." >&2
+    fi
+  fi
+
+  # Apply the declaration to git config RIGHT NOW (1.14.1, #116) — not only at the next session
+  # start. The SessionStart hook can't help the very run that declares the identity, and that run
+  # is usually the one whose first commits land (a fresh bootstrap in a hosted session). Same rule
+  # as the hook: only when git config is unset or a harness `noreply@` default, so a deliberate
+  # identity is never clobbered.
+  if [[ -n "$_active_identity" ]] && git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    _cur_email="$(git -C "$DIR" config user.email 2>/dev/null || true)"
+    _an="${_active_identity%% <*}"
+    _ae="$(printf '%s' "$_active_identity" | sed -n 's/.*<\([^>]*\)>.*/\1/p')"
+    if [[ -z "$_cur_email" || "$_cur_email" == noreply@* ]] \
+       && [[ -n "$_an" && -n "$_ae" && "$_an" != *"<"* ]]; then
+      if [[ -n "$NO_WRITE" ]]; then
+        echo "[dry-run] would also apply it to this repo's git config now (user.email is currently ${_cur_email:-unset})"
+      elif git -C "$DIR" config user.name "$_an" 2>/dev/null \
+           && git -C "$DIR" config user.email "$_ae" 2>/dev/null; then
+        echo "Applied it to this repo's git config now — commits in THIS session already land as $_an <$_ae>."
+      else
+        echo "NOTE: could not write git config (lock/permissions?) — run before your first commit: git config user.name \"$_an\"; git config user.email \"$_ae\"" >&2
+      fi
     fi
   fi
 
@@ -825,6 +855,18 @@ PY
     NATIVE_SRC="$(printf '%s' "$_ver_line" | cut -f1)"
     SYNC_VER="$(printf '%s' "$_ver_line" | cut -f2-)"
     echo "Detected version $SYNC_VER from $NATIVE_SRC — binding the sync check to it (not seeding VERSION)."
+    # A SHADOWED VERSION file (1.14.1, #117): a greenfield run seeds VERSION, then the repo gains a
+    # manifest that outranks it — the leftover file is silently ignored, so a later editor bumping it
+    # sees the suite stay green while shipping the old version everywhere. Name it here; the
+    # scaffolded runner fails outright when the two disagree.
+    if [[ "$NATIVE_SRC" != "VERSION" && -f "$DIR/VERSION" ]]; then
+      _stale_v="$(tr -d '[:space:]' < "$DIR/VERSION" 2>/dev/null || true)"
+      if [[ -n "$_stale_v" && "$_stale_v" != "$SYNC_VER" ]]; then
+        echo "NOTE: VERSION says $_stale_v but $NATIVE_SRC (the source of truth) says $SYNC_VER — VERSION is SHADOWED and disagrees; delete it (the scaffolded suite fails on this)." >&2
+      else
+        echo "NOTE: a VERSION file exists but $NATIVE_SRC wins detection — VERSION is now redundant; delete it to avoid future drift." >&2
+      fi
+    fi
   else
     SYNC_VER="0.1.0"                             # greenfield: seed a bare VERSION as the source of truth
     seed_if_absent "$DIR/VERSION" "version source of truth" <<EOF
@@ -990,6 +1032,17 @@ else
       pass "README **Version:** line matches ($VER)"
     else
       fail "README **Version:** line disagrees with $SRC ($VER)"
+    fi
+  fi
+  # A SHADOWED VERSION file (#117): detection prefers a manifest, so a VERSION left over from a
+  # greenfield bootstrap is silently ignored once package.json/pyproject.toml/Cargo.toml appears.
+  # Bumping the ignored file would otherwise keep this suite green while shipping the old version.
+  if [[ "$SRC" != "VERSION" && -f VERSION ]]; then
+    _shadow_v="$(tr -d '[:space:]' < VERSION)"
+    if [[ -n "$_shadow_v" && "$_shadow_v" != "$VER" ]]; then
+      fail "VERSION says $_shadow_v but $SRC (the source of truth) says $VER — delete VERSION or sync it"
+    else
+      echo "  note: VERSION is redundant now that $SRC is the source of truth — delete it to avoid drift"
     fi
   fi
 fi

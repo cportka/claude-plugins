@@ -148,10 +148,11 @@ form and are triaged into the items below.
   docs/bash repo, but the moment a repo's `tests/cases/*.sh` invoke a real toolchain (`tsc`,
   `node --test`, `esbuild`) CI is red though green locally. When a manifest is detected, emit a
   matching setup + install step (or scaffold it commented) so buildable repos are green out of the box.
-- **All-present version sources should agree** (#81): a greenfield `VERSION` (0.1.0) plus a
-  later-added `package.json` silently drift — the runner binds to the top-priority source and stops
-  checking `VERSION`. On re-run / when a manifest appears, drop the redundant `VERSION` or assert all
-  present sources match.
+- **Auto-delete (not just flag) a shadowed `VERSION`** (1.14.1 follow-on to #81/#117): the
+  scaffolded suite now fails when a manifest-shadowed `VERSION` disagrees and notes it when
+  redundant, and bootstrap flags it at detection — but nothing removes the file. A `--force`-gated
+  cleanup (or a prompt) would finish the job; left manual because deleting a tracked file the user
+  may still reference is not a safe default.
 - **Optional `--pages` deploy scaffold** (field report): a large share of greenfield repos are static
   front-ends whose next question is "how does this ship?" An opt-in, collision-aware `--pages` that
   drops a Pages workflow (+ `.nojekyll`) would round out the "green PR that merges and ships" story.

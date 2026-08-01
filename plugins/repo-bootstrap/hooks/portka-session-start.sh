@@ -34,7 +34,10 @@ if [[ -n "$REPO_TOP" && -f "$REPO_TOP/.claude/commit-identity" ]]; then
   # string in _name (the %% pattern needs " <"), which would author commits as "<a@b.c> <a@b.c>".
   if [[ -n "$_name" && -n "$_email" && "$_name" != *"<"* ]]; then
     _cur="$(git config user.email 2>/dev/null || true)"
-    if [[ -z "$_cur" || "$_cur" == "noreply@anthropic.com" ]]; then
+    # Any `noreply@` address is a harness default, never a deliberate identity (1.14.1) — the same
+    # rule bootstrap-repo.sh uses to refuse SEEDING from one, so the two stay symmetric. A personal
+    # GitHub privacy address (user@users.noreply.github.com) does not start with `noreply@`.
+    if [[ -z "$_cur" || "$_cur" == noreply@* ]]; then
       # Only claim success when the writes actually land (a config.lock / read-only .git fails
       # them); a false "applied" line would talk the agent out of setting identity by hand.
       if git config user.name "$_name" 2>/dev/null && git config user.email "$_email" 2>/dev/null; then

@@ -51,7 +51,8 @@ fresh from `main`, builds + tests fully, opens the PR, merges on CI green, and h
 for the user to delete as confirmation. Concretely (all idempotent, never clobbering; full
 inventory in `--help`): the managed **workflow `CLAUDE.md`** block (version-stamped; the
 SessionStart hook flags a stale copy), the committed **`.claude/commit-identity`** declaration
-(auto-applied to git config each session — the end of per-session identity setup), a git/`gh`
+(applied to git config immediately by this run *and* each session after — the end of identity
+setup, including in the bootstrapping session itself), a git/`gh`
 **permissions allowlist**, an enforced **SemVer sync** with `tests/run-tests.sh` + CI (native
 `node --test`/`pytest` version-sync tests for JS/Python repos), and the **corrected
 `stop-hook-git-check.sh`** that stops hosted sessions false-flagging GitHub's squash-merge

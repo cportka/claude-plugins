@@ -36,8 +36,10 @@
 #                              / README **Version:**), seeding a bare VERSION 0.1.0 only on a
 #                              greenfield repo, plus a basic tests/run-tests.sh and CI to run it.
 #   --identity "Name <email>"  Declare the repo's commit identity: written to .claude/commit-identity
-#                              (committed; the repo-bootstrap SessionStart hook auto-applies it to
-#                              git config each session, so agent commits land as the owner intends).
+#                              (committed) AND applied to this repo's git config right away, so the
+#                              bootstrapping session's own commits land as the owner intends; the
+#                              SessionStart hook re-applies it every later session. Only when git
+#                              config is unset or a noreply@ default — a deliberate identity stays.
 #                              Without the flag, --portka-standard seeds the file from the repo's
 #                              existing git config user.name/email when set (never from a noreply@
 #                              default), and otherwise prints how to declare it.
@@ -373,14 +375,17 @@ The `repo-bootstrap` plugin ships a corrected hook (scoped to unpushed+unmerged 
 repo's configured identity, treats signatures as informational) and refreshes a stock
 `~/.claude/stop-hook-git-check.sh` automatically at session start.
 MD
-  # Stamp the block with the plugin version (1.14.0): the SessionStart hook compares this stamp to
-  # the installed plugin and flags a stale block — pre-1.14 repos carry old standards that never
-  # learned the prune/identity fixes, which is exactly why authorship problems kept recurring.
+  # Stamp the block with the version in which the BLOCK TEXT last changed (standard-version.txt),
+  # NOT the plugin version (1.14.1 review finding): the SessionStart hook compares a repo's stamp
+  # against the same file to flag a stale standard, so tying it to plugin.json would make every
+  # unrelated plugin fix nag every bootstrapped repo to commit a stamp-only refresh. Pre-1.14 repos
+  # (no stamp at all) still get flagged — they carry standards that never learned the prune/identity
+  # fixes, which is exactly why authorship problems kept recurring.
   # `|| true` matters under set -euo pipefail: a vendored/relocated copy of this script has no
-  # plugin.json at the fallback path, and sed's failure would otherwise silently abort the whole
-  # run right here (review finding) — the 'unknown' stamp exists for exactly that case.
-  _psv="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/.claude-plugin/plugin.json" 2>/dev/null | head -n1 || true)"
+  # plugin tree at the fallback path, and the read's failure would otherwise silently abort the
+  # whole run right here (earlier review finding) — the 'unknown' stamp exists for exactly that case.
+  _psv="$(grep -v '^[[:space:]]*#' "${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/../../..}/skills/repo-bootstrap/standard-version.txt" 2>/dev/null \
+    | tr -d '[:space:]' | head -n1 || true)"
   STD_CLAUDE_BLOCK="${STD_CLAUDE_BLOCK//__PSV__/${_psv:-unknown}}"
 fi
 
@@ -791,9 +796,10 @@ PY
   # Repo scaffold: bind the version sync to the repo's existing source of truth (#59) — a project
   # manifest if present, else a bare VERSION — and enforce it with a basic test runner. Always
   # Declared commit identity (1.14.0, user directive): a committed, MACHINE-READABLE
-  # .claude/commit-identity ("Name <email>") is the contract's identity source — the plugin's
-  # SessionStart hook applies it to git config each session, so agent commits land as the owner
-  # intends with zero per-session setup, and the corrected stop-hook reads the same config.
+  # .claude/commit-identity ("Name <email>") is the contract's identity source — applied to git
+  # config by THIS run (1.14.1, #116) and re-applied by the plugin's SessionStart hook every later
+  # session, so agent commits land as the owner intends with zero manual setup in any session, and
+  # the corrected stop-hook reads the same config.
   # Precedence: an explicit --identity always writes; else an existing file is kept; else seed from
   # the repo's own git config (never a noreply@ harness default); else say how to declare it.
   _idfile="$DIR/.claude/commit-identity"
@@ -812,8 +818,16 @@ PY
     _write_identity "$IDENTITY" "--identity"   # value already validated at argparse (exit 2 there)
     _active_identity="$IDENTITY"
   elif [[ -f "$_idfile" ]]; then
-    _active_identity="$(grep -v '^[[:space:]]*#' "$_idfile" | grep -v '^[[:space:]]*$' | head -1 | tr -d '\r')"
-    echo "commit identity already declared: $_active_identity ($_idfile — pass --identity to change)"
+    # `|| true`: under `set -euo pipefail` a STANDALONE assignment propagates the pipeline's
+    # status, so a comment-only/empty declaration (grep exits 1) or a SIGPIPE from `head` would
+    # abort the whole run right here, leaving the repo half-bootstrapped with no scaffold or CI
+    # (review finding — the same hazard already documented for the `_psv` read).
+    _active_identity="$(grep -v '^[[:space:]]*#' "$_idfile" | grep -v '^[[:space:]]*$' | head -1 | tr -d '\r' || true)"
+    if [[ -n "$_active_identity" ]]; then
+      echo "commit identity already declared: $_active_identity ($_idfile — pass --identity to change)"
+    else
+      echo "NOTE: $_idfile has no declaration line (comment-only/empty) — add 'Name <email>' or re-run with --identity \"Name <email>\"." >&2
+    fi
   else
     _cfg_name="$(git -C "$DIR" config user.name 2>/dev/null || true)"
     _cfg_email="$(git -C "$DIR" config user.email 2>/dev/null || true)"
@@ -829,7 +843,12 @@ PY
   # is usually the one whose first commits land (a fresh bootstrap in a hosted session). Same rule
   # as the hook: only when git config is unset or a harness `noreply@` default, so a deliberate
   # identity is never clobbered.
-  if [[ -n "$_active_identity" ]] && git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  # `--show-toplevel` must EQUAL $DIR, not merely contain it (review finding): `--is-inside-work-tree`
+  # is true for any subdirectory, so bootstrapping `repo/sub` would have written the ENCLOSING repo's
+  # config — silently re-identifying a parent project the declaration doesn't belong to.
+  _dir_top="$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  _dir_abs="$( { cd "$DIR" && pwd -P; } 2>/dev/null || true )"
+  if [[ -n "$_active_identity" && -n "$_dir_top" && "$_dir_top" == "$_dir_abs" ]]; then
     _cur_email="$(git -C "$DIR" config user.email 2>/dev/null || true)"
     _an="${_active_identity%% <*}"
     _ae="$(printf '%s' "$_active_identity" | sed -n 's/.*<\([^>]*\)>.*/\1/p')"

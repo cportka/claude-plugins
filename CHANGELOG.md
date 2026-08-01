@@ -31,6 +31,23 @@ fixed here. **repo-bootstrap → 1.14.1** (other plugins unchanged). Triage of #
   `settings.json` but only a count for permissions — the one part of the preview you couldn't
   actually review. Each rule is now printed on its own `[dry-run]   + …` line.
 
+### Hardened (pre-merge adversarial review)
+- **A comment-only or empty `.claude/commit-identity` no longer aborts the run.** The new
+  declaration read was an unguarded pipeline in a standalone assignment, so under
+  `set -euo pipefail` an empty/comment-only file (a `--print-only` paste, a "# ask the owner" stub)
+  killed bootstrap mid-run — leaving the repo with settings but no scaffold, no CI, and a bare
+  non-zero exit. It now completes and NOTEs the missing declaration.
+- **Bootstrapping a SUBDIRECTORY can't re-identify the parent repo.** `--is-inside-work-tree` is
+  true for any subdir, so `--dir repo/sub --identity …` wrote the *enclosing* repo's git config.
+  The apply now requires `--show-toplevel` to equal `--dir`.
+- **The block stamp tracks the block, not the plugin.** A new
+  `skills/repo-bootstrap/standard-version.txt` records the release in which the managed block TEXT
+  last changed (still 1.14.0); bootstrap stamps it and the hook compares against it. Previously
+  this 1.14.1 bump alone would have told *every* 1.14.0-bootstrapped repo to commit a refresh whose
+  only diff is the stamp comment. Bump that file only when editing the block.
+- Docs corrected where they still described next-session-only apply: `--help` for `--identity`, the
+  plugin/marketplace descriptions, and the hook's header.
+
 ### Notes
 - #118 (greenfield field report) needed no code change — the branch-pinned detection, superset
   test-runner contract, CI dedupe, `tests/cases/*.sh` extension point, and the workflow contract

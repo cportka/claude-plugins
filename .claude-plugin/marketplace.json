@@ -42,7 +42,7 @@
     {
       "name": "repo-bootstrap",
       "source": "./plugins/repo-bootstrap",
-      "description": "Onboard a repo to the portka-tools marketplace (committed .claude/settings.json + optional CI), and optionally install the Portka standard contract: a version-stamped workflow CLAUDE.md, a committed commit identity auto-applied each session, a git/gh permissions allowlist, an enforced SemVer sync with tests, and the corrected hosted git stop-hook.",
+      "description": "Onboard a repo to the portka-tools marketplace (committed .claude/settings.json + optional CI), and optionally install the Portka standard contract: a version-stamped workflow CLAUDE.md, a committed commit identity applied to git config at bootstrap and each session, a git/gh permissions allowlist, an enforced SemVer sync with tests, and the corrected hosted git stop-hook.",
       "category": "workflow",
       "tags": [
         "bootstrap",

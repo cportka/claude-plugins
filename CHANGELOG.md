@@ -5,6 +5,88 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.15.0] - 2026-08-06
+
+**The consent release.** A marketplace-review reading of these plugins found three things a
+reviewer treats as disqualifying, and they were right: an unattended `sudo`, a silent write outside
+the plugin directory, and an unverified binary download. All three are fixed by one rule — *nothing
+privileged, global, or unverified happens without an explicit, per-invocation opt-in* — and the
+capability itself is preserved behind that opt-in in every case. **repo-bootstrap +
+video-bug-analyzer → 1.15.0.** Triage of #120/#121. MINOR (behavior changes; no flags removed).
+
+### Changed — consent model (marketplace review)
+- **No unattended `sudo`, ever.** `video-bug-analyzer`'s SessionStart hook ran
+  `sudo apt-get install -y ffmpeg` automatically at every session start, and `extract-frames.sh` did
+  the same on first use. The hook now **only detects and reports**; the extractor reports what's
+  missing, names the exact commands, and stops. Installing on your behalf requires
+  `VBA_ALLOW_INSTALL=1` on that invocation.
+- **No silent writes outside the plugin directory.** `repo-bootstrap`'s SessionStart hook replaced
+  `~/.claude/stop-hook-git-check.sh` on every session — the exact pattern plugin review flags. It now
+  **reports** the stock hook and how to fix it; replacing it needs `bootstrap-repo.sh
+  --heal-stop-hook` (new flag) or `PORTKA_HEAL_STOP_HOOK=1`. The corrected hook and its `.stock.bak`
+  backup are unchanged. The one write the hook still makes by default — `git config` in the repo
+  that itself commits `.claude/commit-identity` — is now documented in full and opt-out-able with
+  `PORTKA_NO_IDENTITY=1`.
+- **No unverified binaries.** The static-`ffmpeg` fallback is gated behind `VBA_ALLOW_DOWNLOAD=1`
+  *and* checksum-verified: a `VBA_FFMPEG_SHA256` pin when you supply one, else the publisher's
+  `.sha256`/`.md5` sibling (integrity, not provenance — stated as such). An archive with no
+  obtainable checksum is **refused** unless `VBA_ALLOW_UNVERIFIED=1`. It installs into the plugin's
+  own cache dir and says so; nothing system-wide is touched.
+- **Full disclosure table in [SECURITY.md](./SECURITY.md#what-these-plugins-do-and-dont-do-on-your-machine)** —
+  every side effect, its default, and its opt-in, in one read. The suite now asserts structurally
+  that no shipped hook contains an executed `sudo`/package-manager/`curl` command, and behaviorally
+  that the stop-hook is untouched without consent.
+
+### Hardened (pre-merge adversarial review of this very release)
+A five-dimension review of the first cut found that the consent model leaked in several places and
+that the disclosure I had just written was **not true**. All fixed before merge:
+- **`--portka-standard` still replaced the stop-hook with no flag.** Its default scope is `both`, so
+  the canonical invocation wrote outside the plugin directory — exactly what SECURITY.md claimed
+  never happens. It now NOTEs and points at `--heal-stop-hook`. SECURITY.md also gained an honest
+  row for the `~/.claude/CLAUDE.md` + `settings.json` writes that `--scope user|both` performs.
+- **A cached static build shadowed the system ffmpeg.** The cache dir was *prepended* to `PATH`
+  every run, so an unverified binary a pre-1.15.0 version had downloaded kept executing in
+  preference to the distro package. It is now appended (system ffmpeg wins) and its use is announced.
+- **`$HOME` unset resolved the cache to world-writable `/tmp`** and executed whatever was there.
+  There is no `/tmp` fallback any more.
+- **Checksum verification was fragile and curl-only**: an uppercase or BSD-style
+  (`SHA256 (file) = …`) digest produced a hard MISMATCH on a byte-identical archive, and on a
+  wget-only host the publisher's checksum was never fetched (silently downgrading to "no checksum
+  published"). Digests are now normalized and fetched with either downloader.
+- **The two opt-ins were nested**: the *less* privileged capability (a verified build in the
+  plugin's own cache) required granting the *more* privileged one first. They are independent now.
+- **`--heal-stop-hook` ignored `--print-only`** (it really wrote), only ever healed `$HOME` while the
+  hook reported three directories, and could overwrite a good `.stock.bak` on a second run.
+- **A consented heal fanned out to other accounts' homes** (`/home/claude`, `/root`). It now writes
+  only inside your `$HOME`; hooks found elsewhere are reported, not modified.
+- **`PORTKA_HEAL_STOP_HOOK=0` counted as consent** (a bare `-n` test). `0`/`false`/`no`/`off` are off.
+- **Two tests were false security.** The structural grep for `sudo`/`curl` missed most realistic
+  idioms (`${#arr[@]}` even truncated the line at the `#`), and the extractor test passed on a build
+  that printed the consent help and then installed anyway. Both are now **behavioral**: the hooks and
+  the extractor run with sentinel shims ahead of `PATH`, and the assertion is that no installer or
+  downloader was ever invoked — plus a positive test that the opt-in really does reach one.
+- **Stale claims retracted**: the managed `CLAUDE.md` block still said the plugin "refreshes a stock
+  `~/.claude/stop-hook-git-check.sh` automatically at session start" (so `standard-version.txt` moves
+  to 1.15.0 and bootstrapped repos will be told to refresh), and the plugin/marketplace descriptions
+  plus SKILL.md/INTEGRATE.md still advertised "auto-installs where the sandbox allows".
+
+### Changed (video-bug-analyzer → 1.15.0, #121)
+- **The `smoothness:` header is now `playback cadence:` — a measurement, not a verdict.** It was the
+  first and only adjudicating line printed, before any frame existed, so "not choppy" read as "the
+  video is fine" on a *frozen-state* bug report. It now leads neutrally and always ends with
+  *"cadence only — says nothing about whether the CONTENT is correct: a frozen/wrong-state UI can
+  render at a perfectly healthy rate."* (The 25-fps reading of a stuck render loop is identical to a
+  healthy app's; the number cannot distinguish them.)
+- **`--text` guidance reframed around "is any part of the answer in the chrome?"** rather than "is
+  the UI text-heavy?" — an 11px button label or a selected-state pill decides many bugs on a clip
+  that is not text-heavy by any description.
+
+### Fixed (video-bug-analyzer → 1.15.0, #120)
+- **`ffprobe` is now first-class.** An ffmpeg-only PATH (npm `ffmpeg-static`) passed the
+  `command -v ffmpeg` check and then failed every ffprobe-backed mode (`--probe`, `--list-scenes`,
+  `--pacing`, `--stutter`, `--compare-videos`, duration/orientation lookups). Both the hook and the
+  extractor now detect that state specifically and name the fix (a distro package ships both).
+
 ## [1.14.1] - 2026-08-01
 
 Field-report round from a full greenfield build (`cportka/design-a-home`, bootstrapped and shipped
@@ -1670,6 +1752,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.15.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.15.0
 [1.14.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.14.1
 [1.14.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.14.0
 [1.13.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.13.0

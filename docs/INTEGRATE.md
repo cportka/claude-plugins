@@ -53,13 +53,16 @@ Enabling a plugin mid-session does **not** surface its skill.
 The method needs `ffmpeg`. The plugin tries `apt → brew → a static GitHub build`, **but two
 things commonly stop a silent install in a sandbox:**
 
+- **Nothing installs itself (1.15.0).** The plugin never runs a package manager, never uses
+  `sudo`, and never downloads a binary on its own. Install ffmpeg yourself (`sudo apt-get install
+  -y ffmpeg` / `brew install ffmpeg` — both ship **ffprobe**, which several modes need), or opt in
+  per run with `VBA_ALLOW_INSTALL=1` (package manager) and/or `VBA_ALLOW_DOWNLOAD=1` (a
+  **checksum-verified** static build into the plugin's own cache; pin it with `VBA_FFMPEG_SHA256`).
 - **Network allowlist.** `apt`/`johnvansickle` are often blocked; **GitHub release assets
-  usually aren't**, which is why the installer now prefers a GitHub build (override with the
-  `VBA_FFMPEG_URL` env var).
+  usually aren't**, which is why the opt-in download prefers a GitHub build (override with the
+  `VBA_FFMPEG_URL` env var — it is checksum-verified like any other source).
 - **The permission classifier.** Claude Code will **not silently download-and-run an external
-  binary** — you must approve it. A settings rule can't fully pre-authorize executing
-  downloaded code, so **approve the install when prompted** (one time). You can pre-allow the
-  *script* to cut prompts:
+  binary** — which matches the plugin's own rule. You can pre-allow the *script* to cut prompts:
 
   ```json
   { "permissions": { "allow": [
@@ -96,8 +99,8 @@ S=plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh
 
 | Symptom | Fix |
 | :-- | :-- |
-| `ffmpeg not found` / install blocked | Installer tries `apt → brew → GitHub static build`. If it's **denied for approval**, approve it (§3) or pre-allow the script. If the network is fully locked down, give Claude a **still screenshot** of the bad moment — no ffmpeg needed. |
-| Install download keeps getting denied | The classifier won't auto-run a downloaded binary; approve once, or use a screenshot (§3). |
+| `ffmpeg not found` | The script reports and stops — it installs nothing on its own. Install ffmpeg yourself, or re-run with `VBA_ALLOW_INSTALL=1` (package manager) or `VBA_ALLOW_DOWNLOAD=1` (verified static build). If the network is locked down, give Claude a **still screenshot** of the bad moment — no ffmpeg needed. |
+| `ffprobe` missing though ffmpeg works | An ffmpeg-only PATH (npm `ffmpeg-static`). `--probe`/`--list-scenes`/`--pacing`/`--stutter` need ffprobe — install a distro package, which ships both. |
 | Deprecation warnings / scene mode misbehaves | Fixed in ≥ 0.2.2 (`-fps_mode` on modern ffmpeg). `/plugin marketplace update portka-tools` or re-fetch in a fresh session. |
 | Scene mode writes 0 frames | Lower the threshold (`--scene 0.05`) or go dense (`--fps 4`). |
 | Too many frames / token blowup | Use `--fps 2 --contact` for the overview, then `--timestamps` to zoom. |

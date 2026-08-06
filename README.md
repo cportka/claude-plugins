@@ -2,7 +2,7 @@
 
 My own engineering contributions to the exciting and brand new field of cognitive instructions describing how to do a thing.
 
-> **Version:** 1.14.1 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md) · **Maintainers:** [docs/HANDOFF.md](./docs/HANDOFF.md) · **Privacy:** [PRIVACY.md](./PRIVACY.md) · **Security:** [SECURITY.md](./SECURITY.md)
+> **Version:** 1.15.0 · **Site:** [cportka.github.io/claude-plugins](https://cportka.github.io/claude-plugins/) · **License:** [MIT](./LICENSE) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md) · **Roadmap:** [IMPROVEMENTS.md](./IMPROVEMENTS.md) · **Maintainers:** [docs/HANDOFF.md](./docs/HANDOFF.md) · **Privacy:** [PRIVACY.md](./PRIVACY.md) · **Security:** [SECURITY.md](./SECURITY.md)
 
 The **`portka-tools`** [Claude Code](https://code.claude.com) plugin marketplace. Add it
 once; plugins then work in your local CLI and in ephemeral web sessions.
@@ -11,8 +11,8 @@ once; plugins then work in your local CLI and in ephemeral web sessions.
 
 | Plugin | Version | What it does |
 | :-- | :-- | :-- |
-| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.14.0 | Analyze a screen recording — or reason over any clip's **look + motion**. Extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips, ROI time-stack `--stack`, **deduped distinct poses + cadence `--unique`**) plus analysis modes: black-screen detection, ROI OCR, feature measurement, palettes (`--palette`, **`--palette --over-time`** for the colour *arc*), **`--loop-check`** (seamless-loop seam diff), cross-clip diff/compare, stutter / dropped-frame + freeze gaps (`--stutter`), **hang/loop detection (`--stall`)**, **blown-highlight + dropout (`--whiteout`)**, frame-pacing jitter (`--pacing`), motion, swirl-vs-suck flow (`--flow`), subject extent (`--occupancy`) & saturation timelines — with a coord-free **`--edge side:px`** crop for edge-clipping questions. Doubles as an art/colour-reference tool (GIF input works everywhere). Runs never overwrite a previous extraction; `--check-update` spots a stale install. |
-| [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.14.1 | Onboard a repo to this marketplace — safely merge `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run`/`--print-only` and a one-paste `/plugin` CLI fallback. With `--portka-standard`, install the **Portka contract**: describe a feature and it's understood Claude branches fresh from `main`, builds + tests, opens the PR, merges on CI green, and hands the link back (branch deletion = confirmation). Ships a version-stamped workflow `CLAUDE.md` (a SessionStart hook flags stale copies), a committed **`.claude/commit-identity`** applied to git config immediately at bootstrap and again each session, a git/`gh` permissions allowlist, an enforced SemVer sync bound to the repo's existing version + tests (native `node:test`/`unittest` for JS/Python), and the corrected stop-hook that ends squash-merge authorship false-flags. |
+| [`video-bug-analyzer`](./plugins/video-bug-analyzer) | 1.15.0 | Analyze a screen recording — or reason over any clip's **look + motion**. Extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips, ROI time-stack `--stack`, **deduped distinct poses + cadence `--unique`**) plus analysis modes: black-screen detection, ROI OCR, feature measurement, palettes (`--palette`, **`--palette --over-time`** for the colour *arc*), **`--loop-check`** (seamless-loop seam diff), cross-clip diff/compare, stutter / dropped-frame + freeze gaps (`--stutter`), **hang/loop detection (`--stall`)**, **blown-highlight + dropout (`--whiteout`)**, frame-pacing jitter (`--pacing`), motion, swirl-vs-suck flow (`--flow`), subject extent (`--occupancy`) & saturation timelines — with a coord-free **`--edge side:px`** crop for edge-clipping questions. Doubles as an art/colour-reference tool (GIF input works everywhere). Runs never overwrite a previous extraction; `--check-update` spots a stale install. |
+| [`repo-bootstrap`](./plugins/repo-bootstrap) | 1.15.0 | Onboard a repo to this marketplace — safely merge `.claude/settings.json` (+ optional CI), with `--list`/`--dry-run`/`--print-only` and a one-paste `/plugin` CLI fallback. With `--portka-standard`, install the **Portka contract**: describe a feature and it's understood Claude branches fresh from `main`, builds + tests, opens the PR, merges on CI green, and hands the link back (branch deletion = confirmation). Ships a version-stamped workflow `CLAUDE.md` (a SessionStart hook flags stale copies), a committed **`.claude/commit-identity`** applied to git config immediately at bootstrap and again each session, a git/`gh` permissions allowlist, an enforced SemVer sync bound to the repo's existing version + tests (native `node:test`/`unittest` for JS/Python), and the corrected stop-hook that ends squash-merge authorship false-flags. |
 | [`app-website-evaluator`](./plugins/app-website-evaluator) | 1.13.0 | Evaluate an app/website with a standardized, coverage-honest scorecard — each dimension 0–100 + letter grade, a weighted overall that's **starred** when unassessed weight is excluded, and optional `--json`. Scores a live `--url`, a local `--dir` build, or **pre-fetched `--html`** (a file or stdin, optionally `--headers`) so an agent behind a sandbox egress proxy still gets the full scorecard without curl reaching the origin. Security now credits **source-visible controls** a static host can ship (a `<meta>` CSP, `security.txt`, zero third-party `<script>` origins). AI-readiness parse-validates JSON-LD and credits rich schema types. Covers SEO, crawlability, AI-readiness, social/sharing, security, performance, and growth — tailored to the site's type and community. |
 | [`tab-chord-formatter`](./plugins/tab-chord-formatter) | 1.13.0 | Format a messy guitar tab/chord sheet into a clean, readable layout for screen, or render a consistent monospace **PDF songbook** (one or many songs, a target songs-per-page) — standardized `[Section]` labels, chords aligned over the right lyrics, a tidy metadata header, and well-formed 6-line ASCII tab blocks. |
 
@@ -71,10 +71,14 @@ S=plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh
 "$S" --video bug.mov --timestamps 0:12,0:34 --fps 8  # 2) zoom + before/after strip per moment
 ```
 
-Needs `ffmpeg`. The plugin tries to install it (apt → brew → a GitHub static build), **but a
-sandbox may block the download or require you to approve it** — see
-[docs/INTEGRATE.md](./docs/INTEGRATE.md). If it can't install, give Claude a **still
-screenshot** of the bad moment instead — that always works.
+Needs `ffmpeg` **and `ffprobe`** (the distro package ships both; an npm/static ffmpeg-only install
+does not, and the `--probe`/`--list-scenes`/`--pacing`/`--stutter` modes need ffprobe). **The plugin
+never installs it for you** — it reports what's missing and stops. Install it yourself
+(`sudo apt-get install -y ffmpeg` / `brew install ffmpeg`), or opt in explicitly per run with
+`VBA_ALLOW_INSTALL=1` (add `VBA_ALLOW_DOWNLOAD=1` to allow a **checksum-verified** static build when
+there's no package manager). See [docs/INTEGRATE.md](./docs/INTEGRATE.md) and
+[SECURITY.md](./SECURITY.md#what-these-plugins-do-and-dont-do-on-your-machine). If none of that is
+possible, give Claude a **still screenshot** of the bad moment instead — that always works.
 
 Beyond the two core modes, `extract-frames.sh` has ~20 focused analysis modes (stutter/hang/
 whiteout/content-flicker detectors, motion/flow/palette timelines, OCR, measurement, A/B compare,
@@ -83,7 +87,7 @@ are in the skill's `reference.md`.
 
 > **Not installed (web/headless/CI)?** Plugins load at session start, so if the skill isn't in
 > the registry yet, the script is fully standalone — the repo is public, so an agent can fetch and
-> run just `extract-frames.sh` (it self-installs ffmpeg and reports its own version):
+> run just `extract-frames.sh` (it reports its own version and what it needs):
 > ```
 > curl -fsSL https://raw.githubusercontent.com/cportka/claude-plugins/main/plugins/video-bug-analyzer/skills/video-bug-analysis/scripts/extract-frames.sh -o /tmp/extract-frames.sh
 > bash /tmp/extract-frames.sh --video bug.mov --intro     # or add --dry-run to just print the commands

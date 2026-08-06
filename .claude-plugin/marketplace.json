@@ -10,7 +10,7 @@
     {
       "name": "video-bug-analyzer",
       "source": "./plugins/video-bug-analyzer",
-      "description": "Extract and reason over frames from a screen recording to diagnose UI/rendering bugs \u2014 stutter, hangs (--stall), whiteouts, content flicker (--content-revert), black screens, motion character \u2014 or read any clip's look, palette, and pacing. Requires ffmpeg (auto-installs where the sandbox allows).",
+      "description": "Extract and reason over frames from a screen recording to diagnose UI/rendering bugs \u2014 stutter, hangs (--stall), whiteouts, content flicker (--content-revert), black screens, motion character \u2014 or read any clip's look, palette, and pacing. Requires ffmpeg + ffprobe; it never installs them for you (explicit opt-in only).",
       "category": "debugging",
       "tags": [
         "video",

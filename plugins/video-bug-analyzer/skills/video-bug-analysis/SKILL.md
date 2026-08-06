@@ -122,9 +122,11 @@ with `--unique` (the distinct poses + real cadence) rather than a fixed-fps burs
 duplicates or skips poses.
 
 **ffmpeg note:** ffmpeg is already on PATH in many environments (incl. many web containers).
-If it's missing the plugin tries apt → brew → a GitHub static build; a locked-down sandbox
-may block that or require approval. If it truly can't be installed, **don't keep retrying —
-ask the user to approve the install OR (simpler) paste a still screenshot of the bad moment.**
+If it's missing, **the script reports that and stops — it does not install anything.** Don't keep
+retrying: either ask the user to install it (`sudo apt-get install -y ffmpeg` / `brew install
+ffmpeg` — these ship `ffprobe` too), re-run once with the explicit opt-in `VBA_ALLOW_INSTALL=1`
+(or `VBA_ALLOW_DOWNLOAD=1` for a checksum-verified static build where no package manager exists),
+or — simplest — **ask for a still screenshot of the bad moment.**
 
 ## 3. Build a timeline
 

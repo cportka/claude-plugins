@@ -1,7 +1,7 @@
 {
   "name": "video-bug-analyzer",
   "version": "1.0.0",
-  "description": "Analyze a screen recording with Claude: extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips) and reason over them to diagnose UI/rendering bugs, plus analysis modes — black-screen detection, ROI OCR, feature measurement, palette, cross-clip diff/compare, cadence, motion & saturation timelines. Requires ffmpeg (auto-installs where the sandbox allows). Canonical source: cportka/claude-plugins (portka-tools marketplace).",
+  "description": "Analyze a screen recording with Claude: extract frames (contact sheet, scene cuts, per-timestamp zoom + before/after strips) and reason over them to diagnose UI/rendering bugs, plus analysis modes — black-screen detection, ROI OCR, feature measurement, palette, cross-clip diff/compare, cadence, motion & saturation timelines. Requires ffmpeg + ffprobe; it never installs them for you (explicit opt-in only). Canonical source: cportka/claude-plugins (portka-tools marketplace).",
   "author": {
     "name": "Chris Portka",
     "url": "https://github.com/cportka"

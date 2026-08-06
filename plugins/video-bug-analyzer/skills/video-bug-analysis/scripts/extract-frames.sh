@@ -731,37 +731,62 @@ fi
 [[ -z "$OUT_SET" && -n "$VIDEO" ]] && OUT=".frames/$(basename "${VIDEO%.*}")"
 
 # --- Ensure ffmpeg is available -------------------------------------------------------
-# Cache dir for a downloaded static ffmpeg; shared with the SessionStart hook so either
-# can populate it and this script will find it.
-FFMPEG_CACHE="${HOME:-/tmp}/.cache/portka-video-bug-analyzer/bin"
+# Cache dir for a user-approved static ffmpeg; shared with the SessionStart hook so either can
+# find it. NO /tmp FALLBACK (1.15.0 review): with $HOME unset the old default resolved to the
+# world-writable /tmp/.cache/portka-video-bug-analyzer/bin, which was then prepended to PATH and
+# executed — anyone on the box could plant an "ffmpeg" there and have this script run it. Empty
+# when $HOME is unset, and every use is guarded on non-empty.
+FFMPEG_CACHE=""
+[[ -n "${HOME:-}" ]] && FFMPEG_CACHE="$HOME/.cache/portka-video-bug-analyzer/bin"
 
 # Verify a downloaded archive (1.15.0). Real verification when the user pins $VBA_FFMPEG_SHA256;
 # otherwise the publisher's own .sha256/.md5 sibling, which catches truncation/corruption/a
 # tampered mirror but NOT a compromised origin (same host serves both) — so an unverifiable
 # download is REFUSED unless the user also sets VBA_ALLOW_UNVERIFIED=1. Echoes what it did.
+# Hex-normalize a checksum from any common publisher format (1.15.0 review): GNU "<hash>  file",
+# BSD "SHA256 (file) = <hash>", a bare hash, upper or lower case. Prints lowercase hex, or nothing.
+_norm_sum() {
+  printf '%s' "$1" | tr -d '\r' \
+    | sed -n 's/.*=[[:space:]]*\([0-9A-Fa-f]\{32,\}\).*/\1/p;s/^[[:space:]]*\([0-9A-Fa-f]\{32,\}\).*/\1/p' \
+    | head -n1 | tr '[:upper:]' '[:lower:]'
+}
+
+# Fetch a URL to stdout with whichever downloader exists (1.15.0 review): the checksum fetch used
+# curl unconditionally while the ARCHIVE download supports wget, so on a wget-only host a genuinely
+# published checksum was never retrieved — reported as "no checksum published" and the user steered
+# toward VBA_ALLOW_UNVERIFIED. Now both paths use the same capability.
+_fetch_stdout() {
+  if command -v curl >/dev/null 2>&1; then curl -fsSL --max-time 20 "$1" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then wget -q --timeout=20 -O - "$1" 2>/dev/null
+  fi
+}
+
 _verify_archive() {
-  local file="$1" url="$2" want got sums
+  local file="$1" url="$2" want got sums raw
   if [[ -n "${VBA_FFMPEG_SHA256:-}" ]]; then
-    got="$(sha256sum "$file" 2>/dev/null | cut -d' ' -f1)" || got=""
+    got="$(_norm_sum "$(sha256sum "$file" 2>/dev/null || true)")"
     [[ -n "$got" ]] || { echo "  cannot verify: sha256sum unavailable" >&2; return 1; }
-    if [[ "$got" == "${VBA_FFMPEG_SHA256}" ]]; then
+    want="$(_norm_sum "${VBA_FFMPEG_SHA256}")"     # accept the vendor's uppercase paste verbatim
+    if [[ -n "$want" && "$got" == "$want" ]]; then
       echo "  verified against \$VBA_FFMPEG_SHA256 (pinned)" >&2; return 0
     fi
     echo "  CHECKSUM MISMATCH vs \$VBA_FFMPEG_SHA256 — refusing to use this download." >&2
-    echo "    expected ${VBA_FFMPEG_SHA256}" >&2; echo "    got      ${got}" >&2
+    echo "    expected ${want:-<unparseable: not a hex digest>}" >&2; echo "    got      ${got}" >&2
     return 1
   fi
   for sums in sha256 md5; do
-    want="$(curl -fsSL --max-time 20 "${url}.${sums}" 2>/dev/null | tr -s ' ' | cut -d' ' -f1 | head -n1 || true)"
-    [[ -n "$want" ]] || continue
-    if [[ "$sums" == sha256 ]]; then got="$(sha256sum "$file" 2>/dev/null | cut -d' ' -f1)"
-    else                             got="$(md5sum   "$file" 2>/dev/null | cut -d' ' -f1)"; fi
+    raw="$(_fetch_stdout "${url}.${sums}" || true)"
+    want="$(_norm_sum "$raw")"
+    [[ -n "$want" ]] || continue                   # absent, or an HTML error page — not a digest
+    if [[ "$sums" == sha256 ]]; then got="$(_norm_sum "$(sha256sum "$file" 2>/dev/null || true)")"
+    else                             got="$(_norm_sum "$(md5sum   "$file" 2>/dev/null || true)")"; fi
     [[ -n "$got" ]] || continue
     if [[ "$got" == "$want" ]]; then
       echo "  verified against the publisher's ${sums} (${url}.${sums}) — integrity only, not provenance" >&2
       return 0
     fi
     echo "  CHECKSUM MISMATCH vs ${url}.${sums} — refusing to use this download." >&2
+    echo "    expected ${want}" >&2; echo "    got      ${got}" >&2
     return 1
   done
   if [[ -n "${VBA_ALLOW_UNVERIFIED:-}" ]]; then
@@ -830,9 +855,9 @@ Pick whichever you prefer:
      ffmpeg-only install does not (--probe/--list-scenes/--pacing/--stutter need ffprobe).
   2. Let this script run that package-manager install for you, just this once:
        VBA_ALLOW_INSTALL=1 <your extract-frames.sh command>
-  3. If there's no package manager (locked-down sandbox), additionally allow a
-     checksum-verified static build downloaded into this plugin's own cache dir:
-       VBA_ALLOW_INSTALL=1 VBA_ALLOW_DOWNLOAD=1 <your command>
+  3. If there's no package manager (locked-down sandbox), allow a checksum-verified static
+     build downloaded into this plugin's own cache dir — this does NOT require (2):
+       VBA_ALLOW_DOWNLOAD=1 <your command>
      Pin the hash with VBA_FFMPEG_SHA256=<sha256> for full verification.
   4. Skip video entirely: give Claude a still screenshot of the exact bad moment — for a
      "what's on screen at time T" question that is often faster anyway.
@@ -852,28 +877,37 @@ ensure_ffmpeg() {
   fi
   echo "Error: ffmpeg is required but not installed." >&2
   # CONSENT GATE (1.15.0): no install, no sudo, no download unless the user explicitly opted in.
-  if [[ -z "${VBA_ALLOW_INSTALL:-}" ]]; then
+  # The two opt-ins are INDEPENDENT (1.15.0 review): they were nested, so the LESS privileged
+  # capability (a checksum-verified build in this plugin's own cache) could not be used without
+  # first granting the MORE privileged one (a package install that may sudo). Either alone works.
+  if [[ -z "${VBA_ALLOW_INSTALL:-}" && -z "${VBA_ALLOW_DOWNLOAD:-}" ]]; then
     _ffmpeg_consent_help
     return 1
   fi
-  echo "VBA_ALLOW_INSTALL=1 — installing ffmpeg via the package manager (this may use sudo)..." >&2
-  if command -v apt-get >/dev/null 2>&1; then
-    if command -v sudo >/dev/null 2>&1; then
-      sudo apt-get update -y >/dev/null 2>&1 || true
-      sudo apt-get install -y ffmpeg >/dev/null 2>&1 || true
-    else
-      apt-get update -y >/dev/null 2>&1 || true
-      apt-get install -y ffmpeg >/dev/null 2>&1 || true
+  if [[ -n "${VBA_ALLOW_INSTALL:-}" ]]; then
+    echo "VBA_ALLOW_INSTALL=1 — installing ffmpeg via the package manager (this may use sudo)..." >&2
+    if command -v apt-get >/dev/null 2>&1; then
+      if command -v sudo >/dev/null 2>&1; then
+        sudo apt-get update -y >/dev/null 2>&1 || true
+        sudo apt-get install -y ffmpeg >/dev/null 2>&1 || true
+      else
+        apt-get update -y >/dev/null 2>&1 || true
+        apt-get install -y ffmpeg >/dev/null 2>&1 || true
+      fi
+    elif command -v brew >/dev/null 2>&1; then
+      brew install ffmpeg >/dev/null 2>&1 || true
     fi
-  elif command -v brew >/dev/null 2>&1; then
-    brew install ffmpeg >/dev/null 2>&1 || true
-  fi
-  if command -v ffmpeg >/dev/null 2>&1; then
-    return 0
+    if command -v ffmpeg >/dev/null 2>&1; then
+      return 0
+    fi
   fi
   if [[ -z "${VBA_ALLOW_DOWNLOAD:-}" ]]; then
     echo "Package manager unavailable or blocked, and the static-build download is NOT enabled." >&2
     echo "Re-run with VBA_ALLOW_DOWNLOAD=1 to allow a checksum-verified static build, or install ffmpeg yourself." >&2
+    return 1
+  fi
+  if [[ -z "$FFMPEG_CACHE" ]]; then
+    echo "Error: \$HOME is unset, so there is no safe per-user cache dir to install into. Set HOME, or install ffmpeg yourself." >&2
     return 1
   fi
   echo "VBA_ALLOW_DOWNLOAD=1 — trying a checksum-verified static ffmpeg build..." >&2
@@ -886,8 +920,19 @@ EOF
   return 1
 }
 
-# Reuse a previously cached static build (e.g. installed by the SessionStart hook).
-[[ -x "$FFMPEG_CACHE/ffmpeg" ]] && export PATH="$FFMPEG_CACHE:$PATH"
+# Reuse a previously approved static build. APPENDED, not prepended (1.15.0 review): prepending
+# made the cache shadow the system ffmpeg on every run, so a binary an OLDER version had downloaded
+# with no consent and no checksum kept executing silently in preference to the distro's verified
+# package. Appending means a system ffmpeg always wins and the cache is a genuine last resort; the
+# note below makes its use visible rather than silent.
+if [[ -n "$FFMPEG_CACHE" && -x "$FFMPEG_CACHE/ffmpeg" ]]; then
+  export PATH="$PATH:$FFMPEG_CACHE"
+  # Only announce it when the cached build is what will actually run.
+  if [[ -z "$DRY_RUN" ]] && [[ "$(command -v ffmpeg 2>/dev/null || true)" == "$FFMPEG_CACHE/ffmpeg" ]]; then
+    echo "Note: using the locally cached static ffmpeg at $FFMPEG_CACHE/ffmpeg (no system ffmpeg found)." >&2
+    echo "      Delete that directory to discard it; a distro package (apt/brew) is preferred where available." >&2
+  fi
+fi
 
 # skip install/diagnostic in --dry-run (no ffmpeg needed just to print commands).
 [[ -n "$DRY_RUN" ]] || ensure_ffmpeg

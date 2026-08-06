@@ -76,6 +76,10 @@ PORTKA_STANDARD=""        # ADDED (1.1.1): install the Portka standard setup (wo
 SCOPE=""                  # ADDED (1.1.1): user|project|both for --portka-standard (default: both)
 HOME_DIR="${HOME:-}"      # ADDED (1.1.1): home dir for user-scope writes; overridable with --home
 HEAL_STOP_HOOK=""         # ADDED (1.15.0): --heal-stop-hook — the consented stop-hook replacement
+
+# An env opt-in must be genuinely ON (1.15.0 review): `-n` treated PORTKA_HEAL_STOP_HOOK=0 as
+# consent, so a user disabling it by setting 0/false/no still got the write.
+_truthy() { case "${1:-}" in ""|0|false|FALSE|False|no|NO|off|OFF) return 1 ;; *) return 0 ;; esac; }
 PRINT_ONLY=""             # ADDED (1.1.2, #59): print settings/CLAUDE.md to stdout for manual creation
 IDENTITY=""               # ADDED (1.14.0, #114/user): --identity "Name <email>" -> .claude/commit-identity
 _CI_WROTE_VALIDATE=""     # set when THIS run writes validate.yml (so later messages can say so, #114)
@@ -215,24 +219,43 @@ if [[ -n "$HEAL_STOP_HOOK" ]]; then
   _canon="$SCRIPT_DIR/stop-hook-git-check.sh"
   [[ -f "$_canon" ]] || { echo "Error: corrected stop-hook not found at $_canon" >&2; exit 1; }
   [[ -n "$HOME_DIR" ]] || { echo "Error: no home dir (\$HOME unset and no --home)." >&2; exit 2; }
+  # --print-only is a NO-WRITE mode too (1.15.0 review): this block ran before NO_WRITE was
+  # computed and gated only on --dry-run, so `--heal-stop-hook --print-only` really overwrote the
+  # hook — the opposite of what that flag promises.
+  _hsh_nowrite=""; [[ -n "$DRY_RUN" || -n "$PRINT_ONLY" ]] && _hsh_nowrite=1
+  _healed=0
   _target="$HOME_DIR/.claude/stop-hook-git-check.sh"
   if [[ -f "$_target" ]] && ! grep -qF 'user.email noreply@anthropic.com' "$_target"; then
     echo "$_target is not the stock hook — left as-is (the corrected edition ships at $_canon)." >&2
-    exit 0
-  fi
-  if [[ -n "$DRY_RUN" ]]; then
+  elif [[ -n "$_hsh_nowrite" ]]; then
     if [[ -f "$_target" ]]; then echo "[dry-run] would replace the stock stop-hook at $_target (backup: $_target.stock.bak)"
     else echo "[dry-run] would install the corrected stop-hook at $_target"; fi
-    exit 0
+  else
+    mkdir -p "$(dirname "$_target")"
+    _bak_note=""
+    # Never clobber an existing .stock.bak with an already-corrected hook (that would destroy the
+    # only copy of the original on a second run).
+    if [[ -f "$_target" && ! -f "$_target.stock.bak" ]] && cp "$_target" "$_target.stock.bak" 2>/dev/null; then
+      _bak_note=" (backup: $_target.stock.bak)"
+    elif [[ -f "$_target.stock.bak" ]]; then
+      _bak_note=" (existing backup kept: $_target.stock.bak)"
+    fi
+    if cp "$_canon" "$_target" && chmod +x "$_target"; then
+      echo "Installed the corrected stop-hook: ${_target}${_bak_note}"
+      _healed=$((_healed + 1))
+    fi
   fi
-  mkdir -p "$HOME_DIR/.claude"
-  _bak_note=""
-  if [[ -f "$_target" ]] && cp "$_target" "$_target.stock.bak" 2>/dev/null; then
-    _bak_note=" (backup: $_target.stock.bak)"
-  fi
-  cp "$_canon" "$_target" && chmod +x "$_target" \
-    && echo "Installed the corrected stop-hook: ${_target}${_bak_note}"
-  echo "It scopes checks to unpushed AND unmerged commits, reads this repo's declared identity, and treats signatures as informational — so GitHub's own squash-merge commits stop being flagged."
+  # The SessionStart hook reports stock hooks in other well-known dirs too; this command only ever
+  # touches $HOME_DIR (writing into another account's home is not something a flag should imply).
+  # Name any others so the remedy can't silently miss what the hook reported (1.15.0 review).
+  for _other in /home/claude/.claude /root/.claude; do
+    _oh="$_other/stop-hook-git-check.sh"
+    [[ "$_other" == "$HOME_DIR/.claude" ]] && continue
+    [[ -f "$_oh" ]] || continue
+    grep -qF 'user.email noreply@anthropic.com' "$_oh" 2>/dev/null || continue
+    echo "NOTE: a stock stop-hook also exists at $_oh (another account's home) — NOT touched. Re-run with --home ${_other%/.claude} if you intend to heal that one too." >&2
+  done
+  [[ "$_healed" -gt 0 ]] && echo "It scopes checks to unpushed AND unmerged commits, reads this repo's declared identity, and treats signatures as informational — so GitHub's own squash-merge commits stop being flagged."
   exit 0
 fi
 
@@ -403,8 +426,10 @@ squash-merge commit (committer `noreply@github.com`, reachable from `main`).
 `noreply@anthropic.com`), the declared identity above still wins: never reset authorship to satisfy
 a hook, and never rewrite pushed/merged history — push your work; that empties the hook's range.
 The `repo-bootstrap` plugin ships a corrected hook (scoped to unpushed+unmerged commits, reads this
-repo's configured identity, treats signatures as informational) and refreshes a stock
-`~/.claude/stop-hook-git-check.sh` automatically at session start.
+repo's configured identity, treats signatures as informational). It is **not** installed
+automatically — replacing a file in `~/.claude` is outside the plugin's own directory, so it takes
+your explicit go-ahead: `bootstrap-repo.sh --heal-stop-hook` (a `.stock.bak` backup is kept). The
+SessionStart hook only *reports* that the stock hook is present.
 MD
   # Stamp the block with the version in which the BLOCK TEXT last changed (standard-version.txt),
   # NOT the plugin version (1.14.1 review finding): the SessionStart hook compares a repo's stamp
@@ -792,10 +817,23 @@ PY
       # edition (scoped to unpushed+unmerged; declared identity; signatures informational): replace
       # a recognizably-STOCK hook (backup kept) or install fresh if absent; leave a custom one alone.
       # Registration is the harness's side — hosted envs already invoke this path as a Stop hook.
+      # CONSENT (1.15.0 review): --portka-standard defaults to --scope both, so this ran on the
+      # canonical invocation and replaced a file outside the plugin directory with NO dedicated
+      # flag — contradicting SECURITY.md's "never automatically". Writing the stop-hook now needs
+      # the same explicit consent the SessionStart hook requires: --heal-stop-hook (or
+      # PORTKA_HEAL_STOP_HOOK=1). Without it we say what we found and what would fix it.
       _canon_hook="$SCRIPT_DIR/stop-hook-git-check.sh"
       _user_hook="$HOME_DIR/.claude/stop-hook-git-check.sh"
       if [[ -f "$_canon_hook" ]]; then
-        if [[ -n "$DRY_RUN" ]]; then
+        _hook_consent=""
+        _truthy "${PORTKA_HEAL_STOP_HOOK:-}" && _hook_consent=1
+        if [[ -z "$_hook_consent" ]]; then
+          if [[ -f "$_user_hook" ]] && grep -qF 'user.email noreply@anthropic.com' "$_user_hook"; then
+            echo "NOTE: the STOCK stop-hook is installed at $_user_hook — it false-flags GitHub's squash-merge commits every turn. Replacing it is a write outside this plugin, so it needs your explicit go-ahead: re-run with --heal-stop-hook (backup kept)." >&2
+          elif [[ ! -f "$_user_hook" ]]; then
+            echo "NOTE: no stop-hook at $_user_hook. The corrected edition ships at $_canon_hook — install it with --heal-stop-hook if your harness registers a Stop hook there." >&2
+          fi
+        elif [[ -n "$DRY_RUN" ]]; then
           if [[ -f "$_user_hook" ]] && grep -qF 'user.email noreply@anthropic.com' "$_user_hook"; then
             echo "[dry-run] $_user_hook is the stock hook — would replace it with the corrected edition (backup kept)"
           elif [[ -f "$_user_hook" ]]; then

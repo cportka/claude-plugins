@@ -37,6 +37,39 @@ video-bug-analyzer → 1.15.0.** Triage of #120/#121. MINOR (behavior changes; n
   that no shipped hook contains an executed `sudo`/package-manager/`curl` command, and behaviorally
   that the stop-hook is untouched without consent.
 
+### Hardened (pre-merge adversarial review of this very release)
+A five-dimension review of the first cut found that the consent model leaked in several places and
+that the disclosure I had just written was **not true**. All fixed before merge:
+- **`--portka-standard` still replaced the stop-hook with no flag.** Its default scope is `both`, so
+  the canonical invocation wrote outside the plugin directory — exactly what SECURITY.md claimed
+  never happens. It now NOTEs and points at `--heal-stop-hook`. SECURITY.md also gained an honest
+  row for the `~/.claude/CLAUDE.md` + `settings.json` writes that `--scope user|both` performs.
+- **A cached static build shadowed the system ffmpeg.** The cache dir was *prepended* to `PATH`
+  every run, so an unverified binary a pre-1.15.0 version had downloaded kept executing in
+  preference to the distro package. It is now appended (system ffmpeg wins) and its use is announced.
+- **`$HOME` unset resolved the cache to world-writable `/tmp`** and executed whatever was there.
+  There is no `/tmp` fallback any more.
+- **Checksum verification was fragile and curl-only**: an uppercase or BSD-style
+  (`SHA256 (file) = …`) digest produced a hard MISMATCH on a byte-identical archive, and on a
+  wget-only host the publisher's checksum was never fetched (silently downgrading to "no checksum
+  published"). Digests are now normalized and fetched with either downloader.
+- **The two opt-ins were nested**: the *less* privileged capability (a verified build in the
+  plugin's own cache) required granting the *more* privileged one first. They are independent now.
+- **`--heal-stop-hook` ignored `--print-only`** (it really wrote), only ever healed `$HOME` while the
+  hook reported three directories, and could overwrite a good `.stock.bak` on a second run.
+- **A consented heal fanned out to other accounts' homes** (`/home/claude`, `/root`). It now writes
+  only inside your `$HOME`; hooks found elsewhere are reported, not modified.
+- **`PORTKA_HEAL_STOP_HOOK=0` counted as consent** (a bare `-n` test). `0`/`false`/`no`/`off` are off.
+- **Two tests were false security.** The structural grep for `sudo`/`curl` missed most realistic
+  idioms (`${#arr[@]}` even truncated the line at the `#`), and the extractor test passed on a build
+  that printed the consent help and then installed anyway. Both are now **behavioral**: the hooks and
+  the extractor run with sentinel shims ahead of `PATH`, and the assertion is that no installer or
+  downloader was ever invoked — plus a positive test that the opt-in really does reach one.
+- **Stale claims retracted**: the managed `CLAUDE.md` block still said the plugin "refreshes a stock
+  `~/.claude/stop-hook-git-check.sh` automatically at session start" (so `standard-version.txt` moves
+  to 1.15.0 and bootstrapped repos will be told to refresh), and the plugin/marketplace descriptions
+  plus SKILL.md/INTEGRATE.md still advertised "auto-installs where the sandbox allows".
+
 ### Changed (video-bug-analyzer → 1.15.0, #121)
 - **The `smoothness:` header is now `playback cadence:` — a measurement, not a verdict.** It was the
   first and only adjudicating line printed, before any frame existed, so "not choppy" read as "the

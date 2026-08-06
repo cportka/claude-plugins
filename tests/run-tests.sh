@@ -234,22 +234,36 @@ done
 # plugin directory. These are structural assertions (grep the shipped hooks) plus behavioral ones,
 # because a reviewer reads the source, not our intentions.
 section "consent model (unattended hooks)"
+# BEHAVIORAL, not textual (1.15.0 review): an earlier version of this check grepped the source with
+# comments and quotes stripped, which a reviewer showed misses almost every realistic way a
+# privileged command could come back (`${#arr[@]}` even truncated the line at the `#`). Instead,
+# RUN each hook with sentinel shims ahead of everything on PATH and assert none were invoked —
+# that catches eval, $(...), variables holding the command, and calls into helper scripts alike.
+_spy_dir="$(mktemp -d)"
+mkdir -p "$_spy_dir/bin"
+for _cmd in sudo apt-get apt yum dnf apk brew pacman curl wget pip pip3 npm npx; do
+  cat > "$_spy_dir/bin/$_cmd" <<SPY
+#!/usr/bin/env bash
+echo "$_cmd \$*" >> "$_spy_dir/invoked.log"
+exit 0
+SPY
+  chmod +x "$_spy_dir/bin/$_cmd"
+done
 for hk in plugins/*/hooks/*.sh; do
   [[ -f "$hk" ]] || continue
-  # Strip comments and quoted strings (both kinds) so only EXECUTED commands remain — these hooks
-  # legitimately QUOTE "sudo apt-get install -y ffmpeg" as advice for the user to run themselves.
-  _live="$(sed 's/#.*//' "$hk" | sed "s/'[^']*'//g" | sed 's/"[^"]*"//g')"
-  if grep -qE '(^|[^_[:alnum:]])(sudo|apt-get|yum|dnf|brew)([^_[:alnum:]]|$)' <<<"$_live"; then
-    fail "unattended hook runs a package manager / sudo: $hk"
+  : > "$_spy_dir/invoked.log"
+  _spy_home="$(mktemp -d)"
+  # Run in a scratch cwd/HOME so a hook can't act on this repo or the real environment.
+  ( cd "$_spy_home" && PATH="$_spy_dir/bin:$PATH" HOME="$_spy_home" \
+      PORTKA_HOOK_DIRS="$_spy_home/.claude" bash "$OLDPWD/$hk" >/dev/null 2>&1 ) || true
+  if [[ -s "$_spy_dir/invoked.log" ]]; then
+    fail "unattended hook invoked a privileged/network command: $hk ($(tr '\n' ';' < "$_spy_dir/invoked.log"))"
   else
-    pass "no privilege escalation or package install in $(basename "$hk")"
+    pass "$(basename "$hk") invokes no sudo/package-manager/download command when run unattended"
   fi
-  if grep -qE '(^|[^_[:alnum:]])(curl|wget)([^_[:alnum:]]|$)' <<<"$_live"; then
-    fail "unattended hook downloads from the network: $hk"
-  else
-    pass "no network download in $(basename "$hk")"
-  fi
+  rm -rf "$_spy_home"
 done
+rm -rf "$_spy_dir"
 # The repo-bootstrap hook may only WRITE outside the plugin dir with explicit consent (#2 of the
 # marketplace review). Default run against a stock hook: reports, changes nothing, keeps no backup.
 CHOOK="plugins/repo-bootstrap/hooks/portka-session-start.sh"
@@ -295,14 +309,34 @@ if [[ -f "$VBASCRIPT" ]]; then
     _p="$(command -v "$t" 2>/dev/null)"; [[ -n "$_p" ]] && ln -sf "$_p" "$nb/bin/$t"
   done
   : > "$nb/clip.mp4"
+  # Sentinel shims again: assert the install/download commands are NEVER INVOKED, not merely that
+  # the help text appears (the earlier string-only assertion passed on a build that printed the
+  # help and then installed anyway — 1.15.0 review).
+  for _cmd in sudo apt-get brew curl wget; do
+    cat > "$nb/bin/$_cmd" <<SPY
+#!/usr/bin/env bash
+echo "$_cmd \$*" >> "$nb/invoked.log"
+exit 0
+SPY
+    chmod +x "$nb/bin/$_cmd"
+  done
+  : > "$nb/invoked.log"
   _noff="$(PATH="$nb/bin" HOME="$nb" bash "$VBASCRIPT" --video "$nb/clip.mp4" --fps 2 --out "$nb/o" 2>&1 || true)"
   if grep -q 'does not install software, escalate privileges, or download binaries on its own' <<<"$_noff" \
      && grep -q 'VBA_ALLOW_INSTALL=1' <<<"$_noff" \
      && grep -q 'VBA_ALLOW_DOWNLOAD=1' <<<"$_noff" \
-     && ! grep -q 'attempting to install' <<<"$_noff"; then
-    pass "extract-frames refuses to install ffmpeg without VBA_ALLOW_INSTALL, and names the opt-in"
+     && [[ ! -s "$nb/invoked.log" ]]; then
+    pass "extract-frames invokes no installer/downloader without an opt-in, and names the opt-in"
   else
-    fail "extract-frames still auto-installs (or doesn't explain the opt-in)"
+    fail "extract-frames ran an installer/downloader without consent ($(tr '\n' ';' < "$nb/invoked.log"))"
+  fi
+  # The opt-in must actually reach the package manager (proving the gate isn't just dead code).
+  : > "$nb/invoked.log"
+  PATH="$nb/bin" HOME="$nb" VBA_ALLOW_INSTALL=1 bash "$VBASCRIPT" --video "$nb/clip.mp4" --fps 2 --out "$nb/o2" >/dev/null 2>&1 || true
+  if grep -qE '^(apt-get|brew|sudo)' "$nb/invoked.log"; then
+    pass "VBA_ALLOW_INSTALL=1 does reach the package manager (the gate is live, not dead code)"
+  else
+    fail "VBA_ALLOW_INSTALL=1 never invoked a package manager"
   fi
   rm -rf "$nb"
 fi
@@ -1819,19 +1853,42 @@ PY
       fail "corrected stop-hook behavior wrong (A=$_a_rc/'$_a_out' B=$_b_rc C=$_c_rc/'$_c_out' push/fetch='$_c_push')"
     fi
     rm -rf "$hkt"
-    # Bootstrap user-scope install: a STOCK hook (hardcoded noreply@anthropic.com demand) is
-    # replaced with a backup; a CUSTOM hook is left alone; dry-run states the outcome.
+    # 1.15.0 (review): --portka-standard must NOT replace a stock stop-hook on its own — its
+    # default --scope is `both`, so that made the canonical invocation write outside the plugin
+    # dir with no flag, contradicting SECURITY.md. It now NOTEs and points at --heal-stop-hook;
+    # only that flag (or PORTKA_HEAL_STOP_HOOK=1) performs the write, keeping a .stock.bak.
     hb="$(mktemp -d)"; hbh="$(mktemp -d)"
     mkdir -p "$hbh/.claude"
     printf '#!/bin/bash\necho "git config user.email noreply@anthropic.com && git config user.name Claude"\n' > "$hbh/.claude/stop-hook-git-check.sh"
-    bash "$BOOTSTRAP" --portka-standard --scope user --dir "$hb" --home "$hbh" >/dev/null 2>&1
+    _hbsum="$(cksum < "$hbh/.claude/stop-hook-git-check.sh")"
+    _hbout="$(bash "$BOOTSTRAP" --portka-standard --scope user --dir "$hb" --home "$hbh" 2>&1 || true)"
+    if [[ "$(cksum < "$hbh/.claude/stop-hook-git-check.sh")" == "$_hbsum" ]] \
+       && [[ ! -f "$hbh/.claude/stop-hook-git-check.sh.stock.bak" ]] \
+       && grep -q 'heal-stop-hook' <<<"$_hbout"; then
+      pass "portka-standard does NOT replace the stock stop-hook; it points at --heal-stop-hook (1.15.0 review)"
+    else
+      fail "portka-standard still writes the stop-hook without consent"
+    fi
+    bash "$BOOTSTRAP" --heal-stop-hook --home "$hbh" >/dev/null 2>&1
     if [[ -f "$hbh/.claude/stop-hook-git-check.sh.stock.bak" ]] \
        && ! grep -qF 'user.email noreply@anthropic.com' "$hbh/.claude/stop-hook-git-check.sh" \
        && grep -q 'Portka corrected edition' "$hbh/.claude/stop-hook-git-check.sh"; then
-      pass "portka-standard replaces a stock stop-hook at user scope (backup kept) (#98/#109)"
+      pass "--heal-stop-hook replaces a stock stop-hook at user scope (backup kept) (#98/#109)"
     else
-      fail "portka-standard stock stop-hook replacement wrong"
+      fail "--heal-stop-hook replacement wrong"
     fi
+    # --print-only is a NO-WRITE mode: it must preview, never overwrite (1.15.0 review).
+    hp="$(mktemp -d)"; mkdir -p "$hp/.claude"
+    printf '#!/bin/bash\necho "git config user.email noreply@anthropic.com"\n' > "$hp/.claude/stop-hook-git-check.sh"
+    _hpsum="$(cksum < "$hp/.claude/stop-hook-git-check.sh")"
+    bash "$BOOTSTRAP" --heal-stop-hook --print-only --home "$hp" >/dev/null 2>&1
+    if [[ "$(cksum < "$hp/.claude/stop-hook-git-check.sh")" == "$_hpsum" ]] \
+       && [[ ! -f "$hp/.claude/stop-hook-git-check.sh.stock.bak" ]]; then
+      pass "--heal-stop-hook honours --print-only (previews, writes nothing) (1.15.0 review)"
+    else
+      fail "--heal-stop-hook wrote despite --print-only"
+    fi
+    rm -rf "$hp"
     printf '#!/bin/bash\n# my custom hook\nexit 0\n' > "$hbh/.claude/stop-hook-git-check.sh"
     bash "$BOOTSTRAP" --portka-standard --scope user --dir "$hb" --home "$hbh" >/dev/null 2>&1
     if grep -q 'my custom hook' "$hbh/.claude/stop-hook-git-check.sh"; then

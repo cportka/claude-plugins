@@ -244,7 +244,7 @@
 #                       timestamp. Needs ffprobe. (Names its own inputs; no --video.)
 #   --version           Print the plugin version and exit.
 #
-# Every run prints a one-line "smoothness:" header (effective vs nominal fps + a dropped-frame
+# Every run prints a one-line "playback cadence:" header (effective vs nominal fps + a dropped-frame
 # estimate) — the quickest "is it choppy?" read; --cadence / --motion localize it. A high-refresh
 # capture (>=90Hz) of a ~30/60fps app is called out as normal (expected frame duplication), not
 # choppy, so a 120Hz recording of a 60fps app doesn't read as a false "52% dropped".
@@ -287,7 +287,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.14.0"
+VBA_VERSION="1.15.0"
 
 VIDEO=""
 START=""
@@ -735,10 +735,49 @@ fi
 # can populate it and this script will find it.
 FFMPEG_CACHE="${HOME:-/tmp}/.cache/portka-video-bug-analyzer/bin"
 
-# Last resort when apt/brew aren't available: download a static ffmpeg build into the cache
-# dir and add it to PATH for this run. Tries GitHub release assets first (reachable in many
-# sandboxes where apt/other hosts are blocked), then johnvansickle. Override the source with
-# $VBA_FFMPEG_URL. Best-effort; returns non-zero if it can't (no network/curl/wget/tar).
+# Verify a downloaded archive (1.15.0). Real verification when the user pins $VBA_FFMPEG_SHA256;
+# otherwise the publisher's own .sha256/.md5 sibling, which catches truncation/corruption/a
+# tampered mirror but NOT a compromised origin (same host serves both) — so an unverifiable
+# download is REFUSED unless the user also sets VBA_ALLOW_UNVERIFIED=1. Echoes what it did.
+_verify_archive() {
+  local file="$1" url="$2" want got sums
+  if [[ -n "${VBA_FFMPEG_SHA256:-}" ]]; then
+    got="$(sha256sum "$file" 2>/dev/null | cut -d' ' -f1)" || got=""
+    [[ -n "$got" ]] || { echo "  cannot verify: sha256sum unavailable" >&2; return 1; }
+    if [[ "$got" == "${VBA_FFMPEG_SHA256}" ]]; then
+      echo "  verified against \$VBA_FFMPEG_SHA256 (pinned)" >&2; return 0
+    fi
+    echo "  CHECKSUM MISMATCH vs \$VBA_FFMPEG_SHA256 — refusing to use this download." >&2
+    echo "    expected ${VBA_FFMPEG_SHA256}" >&2; echo "    got      ${got}" >&2
+    return 1
+  fi
+  for sums in sha256 md5; do
+    want="$(curl -fsSL --max-time 20 "${url}.${sums}" 2>/dev/null | tr -s ' ' | cut -d' ' -f1 | head -n1 || true)"
+    [[ -n "$want" ]] || continue
+    if [[ "$sums" == sha256 ]]; then got="$(sha256sum "$file" 2>/dev/null | cut -d' ' -f1)"
+    else                             got="$(md5sum   "$file" 2>/dev/null | cut -d' ' -f1)"; fi
+    [[ -n "$got" ]] || continue
+    if [[ "$got" == "$want" ]]; then
+      echo "  verified against the publisher's ${sums} (${url}.${sums}) — integrity only, not provenance" >&2
+      return 0
+    fi
+    echo "  CHECKSUM MISMATCH vs ${url}.${sums} — refusing to use this download." >&2
+    return 1
+  done
+  if [[ -n "${VBA_ALLOW_UNVERIFIED:-}" ]]; then
+    echo "  NO checksum published by this source; proceeding because VBA_ALLOW_UNVERIFIED=1 is set." >&2
+    return 0
+  fi
+  echo "  no checksum published for this source — refusing an unverified binary." >&2
+  echo "  Pin one with VBA_FFMPEG_SHA256=<sha256>, or set VBA_ALLOW_UNVERIFIED=1 to accept the risk." >&2
+  return 1
+}
+
+# Download a static ffmpeg build into the plugin's own cache dir and add it to PATH for this run.
+# CONSENT (1.15.0): only runs when the user set VBA_ALLOW_DOWNLOAD=1 (checked by the caller), and
+# every archive is checksum-verified by _verify_archive before anything is executed. Tries GitHub
+# release assets first (reachable in many sandboxes where apt is blocked), then johnvansickle.
+# Override the source with $VBA_FFMPEG_URL. Returns non-zero if it can't (no network/curl/tar).
 install_ffmpeg_static() {
   local gh_a jv_a u tmp found bindir
   command -v tar >/dev/null 2>&1 || return 1
@@ -756,11 +795,13 @@ install_ffmpeg_static() {
   tmp="$(mktemp -d)" || return 1
   for u in "${urls[@]}"; do
     [[ -n "$u" ]] || continue
+    echo "Downloading a static ffmpeg build from: $u" >&2
     if command -v curl >/dev/null 2>&1; then
       curl -fsSL --max-time 300 "$u" -o "$tmp/ff.tar.xz" 2>/dev/null || continue
     else
       wget -q --timeout=300 -O "$tmp/ff.tar.xz" "$u" 2>/dev/null || continue
     fi
+    _verify_archive "$tmp/ff.tar.xz" "$u" || { rm -f "$tmp/ff.tar.xz"; continue; }
     tar -xJf "$tmp/ff.tar.xz" -C "$tmp" 2>/dev/null || continue
     found="$(find "$tmp" -type f -name ffmpeg -print -quit 2>/dev/null)"
     [[ -n "$found" ]] && break
@@ -771,16 +812,51 @@ install_ffmpeg_static() {
   cp "$bindir/ffmpeg" "$FFMPEG_CACHE/" 2>/dev/null || true
   if [[ -f "$bindir/ffprobe" ]]; then cp "$bindir/ffprobe" "$FFMPEG_CACHE/" 2>/dev/null || true; fi
   chmod +x "$FFMPEG_CACHE/ffmpeg" 2>/dev/null || true
+  [[ -f "$FFMPEG_CACHE/ffprobe" ]] && chmod +x "$FFMPEG_CACHE/ffprobe" 2>/dev/null
   rm -rf "$tmp"
   export PATH="$FFMPEG_CACHE:$PATH"
+  echo "Installed into $FFMPEG_CACHE (this plugin's cache; nothing system-wide was modified)." >&2
   command -v ffmpeg >/dev/null 2>&1
 }
 
+# What to tell the user when ffmpeg (or ffprobe) is missing and they have NOT opted in.
+_ffmpeg_consent_help() {
+  cat >&2 <<'EOF'
+This plugin does not install software, escalate privileges, or download binaries on its own.
+Pick whichever you prefer:
+  1. Install it yourself (recommended — your package manager verifies signatures):
+       sudo apt-get install -y ffmpeg      |      brew install ffmpeg
+     Note both ffmpeg AND ffprobe are needed; the distro package ships both, an npm/static
+     ffmpeg-only install does not (--probe/--list-scenes/--pacing/--stutter need ffprobe).
+  2. Let this script run that package-manager install for you, just this once:
+       VBA_ALLOW_INSTALL=1 <your extract-frames.sh command>
+  3. If there's no package manager (locked-down sandbox), additionally allow a
+     checksum-verified static build downloaded into this plugin's own cache dir:
+       VBA_ALLOW_INSTALL=1 VBA_ALLOW_DOWNLOAD=1 <your command>
+     Pin the hash with VBA_FFMPEG_SHA256=<sha256> for full verification.
+  4. Skip video entirely: give Claude a still screenshot of the exact bad moment — for a
+     "what's on screen at time T" question that is often faster anyway.
+EOF
+}
+
 ensure_ffmpeg() {
+  # ffmpeg present but ffprobe missing is its own failure mode (#120): extraction works, then
+  # every ffprobe-backed mode errors. Say so precisely instead of "ffmpeg not found".
   if command -v ffmpeg >/dev/null 2>&1; then
+    if ! command -v ffprobe >/dev/null 2>&1; then
+      echo "Note: ffmpeg is present but ffprobe is NOT (an ffmpeg-only PATH, e.g. npm ffmpeg-static)." >&2
+      echo "      Frame extraction works; --probe/--list-scenes/--pacing/--stutter/--compare-videos and" >&2
+      echo "      duration lookups need ffprobe — install a package that ships both (apt/brew ffmpeg)." >&2
+    fi
     return 0
   fi
-  echo "ffmpeg not found; attempting to install it..." >&2
+  echo "Error: ffmpeg is required but not installed." >&2
+  # CONSENT GATE (1.15.0): no install, no sudo, no download unless the user explicitly opted in.
+  if [[ -z "${VBA_ALLOW_INSTALL:-}" ]]; then
+    _ffmpeg_consent_help
+    return 1
+  fi
+  echo "VBA_ALLOW_INSTALL=1 — installing ffmpeg via the package manager (this may use sudo)..." >&2
   if command -v apt-get >/dev/null 2>&1; then
     if command -v sudo >/dev/null 2>&1; then
       sudo apt-get update -y >/dev/null 2>&1 || true
@@ -795,16 +871,17 @@ ensure_ffmpeg() {
   if command -v ffmpeg >/dev/null 2>&1; then
     return 0
   fi
-  echo "Package manager unavailable or blocked; trying a static ffmpeg build..." >&2
+  if [[ -z "${VBA_ALLOW_DOWNLOAD:-}" ]]; then
+    echo "Package manager unavailable or blocked, and the static-build download is NOT enabled." >&2
+    echo "Re-run with VBA_ALLOW_DOWNLOAD=1 to allow a checksum-verified static build, or install ffmpeg yourself." >&2
+    return 1
+  fi
+  echo "VBA_ALLOW_DOWNLOAD=1 — trying a checksum-verified static ffmpeg build..." >&2
   install_ffmpeg_static && return 0
   cat >&2 <<'EOF'
-Error: ffmpeg is required but could not be installed automatically (apt/brew and the static
-builds all failed — outbound network or the command's approval is likely restricted).
-Options:
-  - Approve / run the install yourself (see docs/INTEGRATE.md for the permission rule), or
-  - Install manually:  sudo apt-get install -y ffmpeg   |   brew install ffmpeg
-  - Static build (GitHub, often reachable): https://github.com/BtbN/FFmpeg-Builds/releases
-  - Or skip the video entirely: give Claude a still screenshot of the exact bad moment.
+Error: ffmpeg could not be installed (package manager blocked, and the static build failed
+verification or could not be fetched). Install it yourself, or give Claude a still screenshot
+of the exact bad moment instead of the video.
 EOF
   return 1
 }
@@ -873,19 +950,25 @@ print_smoothness() {
     mm="$(_mean_motion || true)"
     [[ -n "$mm" ]] && awk -v m="$mm" 'BEGIN{exit !(m < 2.5)}' && static=1
   fi
+  # Header framing (1.15.0, #121): this is a CADENCE MEASUREMENT, not a verdict on the bug. It was
+  # the first and only adjudicating line printed, before any frame exists, so "not choppy" read as
+  # "the video is fine" — and a stuck render loop produces exactly the same number as a healthy app
+  # (25 fps of the WRONG thing measures like 25 fps of the right thing). Lead with the neutral
+  # label, keep the interpretation, and say plainly what the number cannot tell you.
   awk -v R="$R" -v A="$A" -v branch="$branch" -v mm="${mm:-0}" -v static="$static" 'BEGIN{
-    printf "smoothness: effective %.1f fps vs nominal %.1f fps", A, R;
+    printf "playback cadence: effective %.1f fps vs nominal %.1f fps", A, R;
     if (branch=="near60"||branch=="near30"){ cad=(branch=="near60")?60:30;
-      printf "  (~%.0f fps content on a %.0f Hz capture — normal for a %d fps app, not choppy; --motion/--pacing to check for real stutter)", A, R, cad; }
+      printf "  (~%.0f fps content on a %.0f Hz capture — expected for a %d fps app, no cadence problem; --motion/--pacing to check for real stutter)", A, R, cad; }
     else if (branch=="vfr"){
       printf "  (VFR/high-refresh capture: nominal %.0f is the container timebase, not a target — effective ~%.0f fps; --stutter/--pacing for real stutter)", R, A; }
     else if (branch=="generic"){ d=(1-A/R)*100;
       if (static!="")
-        printf "  (~%.0f%% duplicate frames on a mostly-static capture (inter-frame motion ~%.1f/255) — a UI/text recording; a high duplicate ratio is expected here, not choppy; --motion/--stall to confirm)", d, mm+0;
+        printf "  (~%.0f%% duplicate frames on a mostly-static capture (inter-frame motion ~%.1f/255) — a UI/text recording; a high duplicate ratio is expected here; --motion/--stall to confirm)", d, mm+0;
       else
         printf "  (~%.0f%% frames dropped/duplicated — likely choppy; --cadence/--motion to localize)", d;
     }
     printf "\n";
+    printf "  (cadence only — says nothing about whether the CONTENT is correct: a frozen/wrong-state UI can render at a perfectly healthy rate)\n";
   }' >&2
 }
 [[ -n "$DRY_RUN" ]] || print_smoothness

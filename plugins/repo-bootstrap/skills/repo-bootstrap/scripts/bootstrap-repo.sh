@@ -75,6 +75,7 @@ AUTO_UPDATE=""   # ADDED (1.0.3): --auto-update sets "autoUpdate": true on the m
 PORTKA_STANDARD=""        # ADDED (1.1.1): install the Portka standard setup (workflow + sync scaffold)
 SCOPE=""                  # ADDED (1.1.1): user|project|both for --portka-standard (default: both)
 HOME_DIR="${HOME:-}"      # ADDED (1.1.1): home dir for user-scope writes; overridable with --home
+HEAL_STOP_HOOK=""         # ADDED (1.15.0): --heal-stop-hook — the consented stop-hook replacement
 PRINT_ONLY=""             # ADDED (1.1.2, #59): print settings/CLAUDE.md to stdout for manual creation
 IDENTITY=""               # ADDED (1.14.0, #114/user): --identity "Name <email>" -> .claude/commit-identity
 _CI_WROTE_VALIDATE=""     # set when THIS run writes validate.yml (so later messages can say so, #114)
@@ -189,6 +190,7 @@ while [[ $# -gt 0 ]]; do
     --identity) IDENTITY="${2:-}"; shift 2 ;;          # ADDED (1.14.0): declared commit identity "Name <email>"
     --scope) SCOPE="${2:-}"; shift 2 ;;                # ADDED (1.1.1)
     --home) HOME_DIR="${2:-}"; shift 2 ;;              # ADDED (1.1.1)
+    --heal-stop-hook) HEAL_STOP_HOOK=1; shift ;;       # ADDED (1.15.0): consented stop-hook replace
     --print-only) PRINT_ONLY="1"; shift ;;            # ADDED (1.1.2, #59)
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
@@ -203,6 +205,35 @@ if [[ -n "$PORTKA_STANDARD" ]]; then
     user|project|both) ;;
     *) echo "Error: --scope must be user|project|both (got '$SCOPE')." >&2; exit 2 ;;
   esac
+fi
+
+# --heal-stop-hook (1.15.0): the CONSENTED way to replace a stock ~/.claude/stop-hook-git-check.sh.
+# The SessionStart hook deliberately no longer does this on its own (it's a write outside the plugin
+# directory, and an unattended hook can't ask) — it reports and points here. Standalone: does this
+# one thing and exits, so the command you type is exactly the permission you grant.
+if [[ -n "$HEAL_STOP_HOOK" ]]; then
+  _canon="$SCRIPT_DIR/stop-hook-git-check.sh"
+  [[ -f "$_canon" ]] || { echo "Error: corrected stop-hook not found at $_canon" >&2; exit 1; }
+  [[ -n "$HOME_DIR" ]] || { echo "Error: no home dir (\$HOME unset and no --home)." >&2; exit 2; }
+  _target="$HOME_DIR/.claude/stop-hook-git-check.sh"
+  if [[ -f "$_target" ]] && ! grep -qF 'user.email noreply@anthropic.com' "$_target"; then
+    echo "$_target is not the stock hook — left as-is (the corrected edition ships at $_canon)." >&2
+    exit 0
+  fi
+  if [[ -n "$DRY_RUN" ]]; then
+    if [[ -f "$_target" ]]; then echo "[dry-run] would replace the stock stop-hook at $_target (backup: $_target.stock.bak)"
+    else echo "[dry-run] would install the corrected stop-hook at $_target"; fi
+    exit 0
+  fi
+  mkdir -p "$HOME_DIR/.claude"
+  _bak_note=""
+  if [[ -f "$_target" ]] && cp "$_target" "$_target.stock.bak" 2>/dev/null; then
+    _bak_note=" (backup: $_target.stock.bak)"
+  fi
+  cp "$_canon" "$_target" && chmod +x "$_target" \
+    && echo "Installed the corrected stop-hook: ${_target}${_bak_note}"
+  echo "It scopes checks to unpushed AND unmerged commits, reads this repo's declared identity, and treats signatures as informational — so GitHub's own squash-merge commits stop being flagged."
+  exit 0
 fi
 
 # --identity is part of the standard setup (it writes .claude/commit-identity, whose contract the

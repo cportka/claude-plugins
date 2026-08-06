@@ -55,8 +55,9 @@ Extraction: `--contact` `--timestamps` `--intro` `--scene`/`--list-scenes` `--di
 `--saturation` `--blackdetect` `--ocr-roi` `--measure` `--probe` `--palette`(`--over-time`)
 `--loop-check` `--ab` `--compare-videos`. Cross-cutting: `--start/--end` (scope), `--t0`
 (session-clock relabel for split captures, 1.11.0), `--marks` (perf-mark overlay on `--stutter`),
-`--check-update`, `--dry-run`. Every run prints a one-line `smoothness:` header (effective vs
-nominal fps, duplicate-vs-dropped aware).
+`--check-update`, `--dry-run`. Every run prints a one-line `playback cadence:` header (effective
+vs nominal fps, duplicate-vs-dropped aware) — a measurement of frame timing only, never a
+verdict on whether the content is correct.
 
 ## Interpretation guides (the part a flag listing can't teach)
 

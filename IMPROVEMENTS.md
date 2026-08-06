@@ -109,6 +109,12 @@ form and are triaged into the items below.
 **Hard constraints (not fixable in the plugin)**
 - Claude Code's auto-mode classifier won't silently download-and-execute an agent-chosen binary,
   so ffmpeg can't fully self-install in a fresh sandbox — approve the install or use a screenshot.
+  (Since 1.15.0 the plugin doesn't *try* to: installing requires `VBA_ALLOW_INSTALL=1` and
+  downloading a verified static build requires `VBA_ALLOW_DOWNLOAD=1`.)
+- **Not discoverable from inside a session** (#120): with no marketplace-add capability, a session
+  that doesn't already have the plugin can only find it by GitHub search. That's a distribution
+  problem (see `docs/DISTRIBUTION.md`), not a code one — the mitigation that works today is the
+  standalone `curl` one-liner for `extract-frames.sh` in the README.
 - Plugins load at session *start* (no hot-load), so a video dropped right after enabling can't use
   the skill until the next session — mitigated by `--dry-run` + "enable one session ahead".
 
@@ -173,6 +179,23 @@ form and are triaged into the items below.
   configured to **deploy from a branch root** instead — the two conflict (an Actions workflow fights a
   branch deploy). When `--pages` lands, detect which Pages mode the repo uses; for branch-deploy, skip the
   Actions workflow and just guarantee `.nojekyll` + root-served files.
+- **Scaffolded-runner reporting granularity** (#122): a suite whose `tests/cases/*.sh` carry 350+
+  assertions still summarizes as "8 passed, 0 failed" (one count per case file). Document (and
+  honour) a convention where case scripts emit `PASS <name>`/`FAIL <name>` lines — or accept TAP —
+  so the summary reflects real coverage.
+- **Greenfield first-PR CI ambiguity** (#122): on a brand-new repo the first PR shows
+  `total_count: 0` checks because the branch's workflow isn't registered yet — indistinguishable via
+  the API from "still queueing" and from "Actions disabled". The standard's step 4 says never merge
+  on an empty check list, which is right but leaves the agent stuck; add a situational note telling
+  it how to distinguish the three (and that the first merge to `main` registers the workflow).
+- **Python cache patterns in the scaffold's `.gitignore`** (#122): the test scaffold supports Python
+  but never adds `__pycache__/` / `*.py[cod]`, so the first `pytest` run dirties the tree. Append
+  idempotently when writing the Python scaffold.
+- **A managed-block skeleton matching the feedback issue FORM** (#122): the standard tells agents to
+  file feedback with `gh issue create` (freeform) or MCP `issue_write`, but this repo's
+  `plugin-feedback.yml` is a structured form with required dropdowns — an MCP-filed issue can't
+  populate them. Embed the field skeleton in the managed block so freeform reports still carry
+  Plugin/Version/Environment.
 - **Auto-refresh the stale block, not just flag it** (1.14.0 follow-on): the SessionStart hook now
   *detects* a stale `portka-standard-version` stamp and says how to refresh; a `--refresh-standard`
   one-shot (or hook-driven auto-PR) could fold the refresh in without the agent re-running the full
@@ -180,6 +203,26 @@ form and are triaged into the items below.
   guards, so the say-how-to note may remain the right default.
 
 ## app-website-evaluator
+
+**Next round — the #122 field report (a full Figma→Pages build).** Recorded here so the 1.15.0
+consent release stayed focused; these are the top of the queue, roughly in value order:
+
+- **An Accessibility dimension (~15% weight) — the primary gap.** A site scored 98/100 while
+  carrying nine WCAG AA contrast failures, 25 broken in-page anchors, unlabelled inputs and a
+  heading-order break. Almost all of it is statically detectable from source the evaluator already
+  parses: missing `alt`, inputs with no label/`aria-label`, `href="#foo"` with no matching `id`,
+  missing `html lang`, heading-level skips, multiple `<h1>`, and **computed contrast** from CSS
+  custom properties (the reporter hand-wrote ~120 lines of Python to do exactly this). Scoring it
+  changes every existing grade, so it needs the coverage-star treatment and a CHANGELOG callout.
+- **The CSP ↔ critical-CSS contradiction.** The perf check recommends inlining critical CSS while
+  the security check rewards a `style-src 'self'` CSP with no `'unsafe-inline'` — following one
+  advice guts the other. Soften/reframe the render-blocking warning when the page's own CSP forbids
+  inline styles, and mention the hash-based alternative instead.
+- **Design-fidelity / screenshot verification** (`--screenshots`, or a separate
+  `design-port-verifier` plugin): render N viewport×state combinations headlessly and fail on
+  console errors. The reporter's hand-rolled version caught a strict CSP silently blocking an inline
+  `style` attribute that carried the hero background — every static check passed while the hero
+  rendered flat. Chromium already ships for the tab-chord PDF path, so the dependency is paid for.
 
 **Strengths**
 - Self-referential: classifies the target (type/audience/goal) and judges every property — and

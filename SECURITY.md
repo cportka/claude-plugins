@@ -14,6 +14,24 @@ You'll get an acknowledgement within a few days. Once a fix is ready we'll coord
 credit you in the advisory unless you'd rather stay anonymous. There's no bounty — this is a small
 open-source project — but reports are genuinely appreciated.
 
+## What these plugins do and don't do on your machine
+
+The full disclosure, as of **1.15.0**. The governing rule: **nothing privileged, global, or
+unverified happens without an explicit, per-invocation opt-in.** A SessionStart hook runs unattended
+at every session start and can never ask you anything, so hooks here only ever *report*.
+
+| | Default behavior | Opt in with |
+| :-- | :-- | :-- |
+| Install software / run `sudo` | **Never.** `extract-frames.sh` reports missing `ffmpeg`/`ffprobe` and stops; the SessionStart hook only reports. | `VBA_ALLOW_INSTALL=1` (package manager, may use sudo) |
+| Download a binary | **Never.** | `VBA_ALLOW_DOWNLOAD=1` — and the archive must pass a checksum (`VBA_FFMPEG_SHA256` pin, else the publisher's `.sha256`/`.md5`); an unverifiable download is **refused** unless you also set `VBA_ALLOW_UNVERIFIED=1`. Installs into the plugin's own cache dir, never system-wide. |
+| Write outside the plugin directory | **Only inside the repository you're working in**, and only: `.claude/*` files that `repo-bootstrap` is explicitly invoked to write, plus `git config user.name/email` in that repo when it commits its own `.claude/commit-identity` and the identity is unset or a `noreply@` default. Opt out with `PORTKA_NO_IDENTITY=1`. | — |
+| Replace `~/.claude/stop-hook-git-check.sh` | **Never automatically** (this is outside the plugin directory). The hook reports that the stock hook is present and what it does wrong. | `bootstrap-repo.sh --heal-stop-hook`, or `PORTKA_HEAL_STOP_HOOK=1` for one session. A `.stock.bak` backup is always kept, and a customized hook is never touched. |
+| Network access | `--check-update` (a version string from raw.githubusercontent.com) and `app-website-evaluator --url` (the site you asked it to audit). No telemetry, ever. | — |
+
+Prior versions (≤ 1.14.1) installed `ffmpeg` via `sudo apt-get` from the SessionStart hook and
+replaced the stock stop-hook silently on every session. Both were removed in 1.15.0; the test suite
+now asserts that no shipped hook contains an executed `sudo`/package-manager/download command.
+
 ## What's in scope
 
 These plugins are local Claude Code tools (shell + Python scripts). The security-relevant surface:

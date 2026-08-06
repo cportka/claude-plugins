@@ -38,8 +38,12 @@ ${CLAUDE_PLUGIN_ROOT}/skills/video-bug-analysis/scripts/extract-frames.sh \
 Default workflow:
 
 1. **Overview:** `--fps 2 --contact` → one contact sheet of the whole span; read it to find
-   where the symptom is. For **text/code-heavy UIs add `--text`** (bigger tiles) or the sheet
-   will be illegible.
+   where the symptom is. **Add `--text` whenever any part of the answer lives in the chrome** —
+   a button label, a toggle's selected state, a status pill, a counter — not just for
+   "text-heavy" UIs. A pixel-art canvas with an 11px `☀️ day` button is exactly the case: the
+   canvas reads fine at any tile size, and the label that proves the bug does not. Cheap
+   insurance; the only cost is a bigger sheet. (Portrait captures additionally drop to
+   `--cols 1` under `--text`.)
 2. **Zoom:** `--timestamps 0:12,0:34 --fps 8` → per moment, a dense burst (catches
    sub-second transients) plus a **before/after strip** (`tsNN_strip.png`) that's the best
    way to show the user a one-frame change.
@@ -89,8 +93,17 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 
 Also: `--label` burns the source timestamp onto frames (now incl. contact tiles &
 `--compare-videos`); `--text`/`--tile-width` tune contact legibility; `--window`/`--frame-width`
-tune bursts. **Every run prints a one-line `smoothness:` header** (effective vs nominal fps + a
-dropped-frame estimate) — the quickest "is it choppy?" read.
+tune bursts. **Every run prints a one-line `playback cadence:` header** (effective vs nominal fps
++ a dropped-frame estimate) — the quickest "is it choppy?" read. Read it as a *measurement, not a
+verdict*: it describes frame timing only, so a frozen or wrong-state UI can post a perfectly
+healthy cadence. Never let it lower your prior on a "nothing responds" report.
+
+> **ffmpeg is not installed for you.** If it's missing, the script says so and stops: install it
+> yourself (`sudo apt-get install -y ffmpeg` / `brew install ffmpeg` — these ship **ffprobe** too,
+> which `--probe`/`--list-scenes`/`--pacing`/`--stutter` need), or re-run with the explicit opt-in
+> `VBA_ALLOW_INSTALL=1` (add `VBA_ALLOW_DOWNLOAD=1` to permit a checksum-verified static build in
+> a sandbox with no package manager). Nothing is installed, escalated, or downloaded without one
+> of those.
 
 **Key steer — frames can't see state.** If a tracked value changes (`--ocr-roi`) or you suspect
 a logic/timing bug but **nothing near it changes in the frame**, the cause is off-screen

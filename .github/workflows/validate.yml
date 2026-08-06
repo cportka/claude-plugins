@@ -48,10 +48,17 @@ jobs:
           if [ -n "${GITHUB_BASE_REF:-}" ]; then
             base="origin/${GITHUB_BASE_REF}"
             git fetch -q origin "${GITHUB_BASE_REF}"
-          else
-            # push to main only (see `on:`): HEAD^ is the pre-merge tip, correct for the
-            # squash-merges this repo uses. The PR event is the thorough diff-vs-base check.
+          elif [ "${GITHUB_REF_NAME:-}" = "main" ]; then
+            # push to main: HEAD^ is the pre-merge tip, correct for the squash-merges this repo
+            # uses. The PR event is the thorough diff-vs-base check.
             base="${GITHUB_SHA}^"
+          else
+            # workflow_dispatch on a feature branch (added 1.15.0): HEAD^ would be the previous
+            # commit ON THE BRANCH, so a second commit that touches a plugin already bumped by the
+            # first fails spuriously — the exact multi-commit false positive noted above. Compare
+            # against the default branch, which is what the PR event would do.
+            git fetch -q origin main
+            base="origin/main"
           fi
           fail=0
           for dir in plugins/*/; do

@@ -124,12 +124,12 @@ hard way — see the issue numbers in comments):
 - **`PRIVACY.md` / `SECURITY.md` / `.well-known/security.txt`** — posture: local-only scripts, no
   data collection; vulnerabilities via GitHub private reporting.
 
-## State at handoff (refreshed each release — this stamp: 1.15.0, 2026-08-06)
+## State at handoff (refreshed each release — this stamp: 1.16.0, 2026-08-07)
 
 - Versions: the README header + plugin table and each `plugins/*/.claude-plugin/plugin.json` are
   the live source of truth (per-plugin versions diverge by design). Suite size/green-ness: run
   `bash tests/run-tests.sh`; CI mirrors it.
-- All feedback issues through #122 triaged (#122 partly deferred — see IMPROVEMENTS.md); deferred items live in `IMPROVEMENTS.md` with issue
+- All feedback issues through #124 triaged (#122 partly deferred — see IMPROVEMENTS.md); deferred items live in `IMPROVEMENTS.md` with issue
   numbers. Tags/GitHub Releases are the human's manual step and may lag main — that's expected
   (v1.10.0–v1.14.1 are all untagged as of this stamp; the marketplace installs from `main`, so the
   code is live regardless, and **that** is why the version-bump-guard still requires a bump between

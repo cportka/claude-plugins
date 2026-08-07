@@ -84,6 +84,8 @@ Most of these are **analysis modes** that print a CSV/report and exit (no frames
 | Black / blank screen | `--blackdetect` (spans, flags PERMANENT vs transient) |
 | A readout *number* changing (4→5→4) | `--ocr-roi W:H:X:Y` → `t,text` (needs tesseract) |
 | How big / where is a feature, over time | `--measure W:H:X:Y` → diameter + center (% of viewport) |
+| Is it **expanding** or just **fading**? | `--measure` also emits `area_px,mean_luma,peak_luma` — area climbing = growing; area flat while luma falls = dimming in place (a static ball reads as "something happening" to the eye) |
+| Blown-white flash on a **dark** scene? | `--whiteout` flags ≥ `--white-rel` × the clip's own median luma (default 4), so a washout that never nears the absolute cutoff still trips it |
 | Capture size / aspect / orientation | `--probe` (also: which axis CSS `vmin` is) |
 | Dominant colours (palette) | `--palette [--colors n]` → hex swatches |
 | Colour *arc* over the clip (art reference) | `--palette --over-time [--segments n]` → `t,[hex…]` per window |

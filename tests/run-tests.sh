@@ -780,7 +780,7 @@ if command -v ffmpeg >/dev/null 2>&1; then
       _mrow="$(grep -m1 '^[0-9]' <<<"$_m" || true)"
       _mdiam="$(awk -F, 'NR==1{print $4+0}' <<<"$_mrow")"   # diam_px (col 4)
       _mcx="$(awk -F, 'NR==1{print $7+0}' <<<"$_mrow")"     # cx (col 7 since dual pct cols)
-      if [[ "$(head -n1 <<<"$_m")" == "t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy" ]] \
+      if [[ "$(head -n1 <<<"$_m")" == "t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy,area_px,mean_luma,peak_luma" ]] \
          && [[ -n "$_mdiam" ]] && (( _mdiam >= 60 && _mdiam <= 110 )) \
          && (( _mcx >= 75 && _mcx <= 125 )); then
         pass "--measure reports a feature diameter + center (bounding box)"
@@ -1283,6 +1283,66 @@ if command -v ffmpeg >/dev/null 2>&1; then
         fi
       else
         skip "could not build whiteout test clips (#102)"
+      fi
+      # 1.16.0 (#124): a live-recorded container (MediaRecorder WebM) declares no duration and no
+    # avg_frame_rate. Previously --probe printed "duration: 0.00s" and the cadence header vanished
+    # entirely, so a whole class of browser-captured clips silently got less output. Both must now
+    # recover from packet timestamps. (Built by stripping the duration/rate metadata from a clip.)
+    # The fixture MUST be written to a non-seekable stream (a pipe): that is what stops the muxer
+    # seeking back to stamp the duration into the header, which is exactly how a browser
+    # MediaRecorder file arrives. Writing to a regular file yields a normal duration and the test
+    # would pass without ever exercising the fallback (caught while writing this).
+    if ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc=duration=2:size=160x120:rate=10" \
+         -c:v libvpx -deadline realtime -f webm pipe:1 > "$tmp/nodur.webm" 2>/dev/null \
+       && [[ -s "$tmp/nodur.webm" ]] \
+       && [[ -z "$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$tmp/nodur.webm" 2>/dev/null | grep -E '^[0-9]' || true)" ]]; then
+      _pw="$(bash "$SCRIPT" --video "$tmp/nodur.webm" --probe 2>/dev/null || true)"
+      _cw="$(bash "$SCRIPT" --video "$tmp/nodur.webm" --probe 2>&1 >/dev/null || true)"
+      _pdur="$(sed -n 's/^duration: \([0-9.]*\)s/\1/p' <<<"$_pw" | head -1)"
+      if [[ -n "$_pdur" ]] && awk -v d="${_pdur:-0}" 'BEGIN{exit !(d+0 > 0.5)}' \
+         && grep -q 'measured from packet timestamps' <<<"$_pw" \
+         && grep -q 'playback cadence:' <<<"$_cw"; then
+        pass "duration recovers from packet timestamps on a live-recorded container (#124)"
+      else
+        fail "no-duration container handling wrong (probe duration='$_pdur')"
+      fi
+    else
+      skip "could not build a header-less WebM fixture (#124 duration fallback)"
+    fi
+    # 1.16.0 (#124): a DARK-SCENE washout. The reported miss was a full-frame flash at mean luma
+      # 218 on a median-44 scene reported as "No whiteout" because the cutoff was absolute-only.
+      # Here the flash peaks around 150 — below ANY absolute cutoff — so only the relative rule
+      # (>= --white-rel x the clip's own median, floored at 140) can catch it.
+      if ffmpeg -hide_banner -loglevel error \
+           -f lavfi -i "color=0x141414:s=160x120:rate=10:duration=2" \
+           -f lavfi -i "color=0xa0a0a0:s=160x120:rate=10:duration=1" \
+           -f lavfi -i "color=0x141414:s=160x120:rate=10:duration=2" \
+           -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1[v]" -map "[v]" "$tmp/darkwash.mp4" -y 2>/dev/null; then
+        _dw="$(bash "$SCRIPT" --video "$tmp/darkwash.mp4" --whiteout --fps 10 2>&1 >/dev/null || true)"
+        # Same clip with the relative rule disabled must NOT flag it (proves the rule is what fires).
+        _dwoff="$(bash "$SCRIPT" --video "$tmp/darkwash.mp4" --whiteout --fps 10 --white-rel 99 2>&1 >/dev/null || true)"
+        if grep -qi 'Whiteout(s)' <<<"$_dw" && grep -q 'the clip median' <<<"$_dw" \
+           && grep -qi 'No whiteout' <<<"$_dwoff"; then
+          pass "--whiteout catches a dark-scene washout via the relative rule (#124)"
+        else
+          fail "--whiteout relative detection wrong (#124)"
+        fi
+      else
+        skip "could not build the dark-scene washout clip (#124)"
+      fi
+      # 1.16.0 (#124): a near-miss must be stated as an actionable next step, not a bare verdict.
+      if ffmpeg -hide_banner -loglevel error \
+           -f lavfi -i "color=0x808080:s=160x120:rate=10:duration=2" \
+           -f lavfi -i "color=0xb4b4b4:s=160x120:rate=10:duration=1" \
+           -filter_complex "[0:v][1:v]concat=n=2:v=1[v]" -map "[v]" "$tmp/nearmiss.mp4" -y 2>/dev/null; then
+        _nm="$(bash "$SCRIPT" --video "$tmp/nearmiss.mp4" --whiteout --fps 10 2>&1 >/dev/null || true)"
+        if grep -q 'NEAR-MISS' <<<"$_nm" && grep -q -- '--white-thresh' <<<"$_nm"; then
+          pass "--whiteout reports a near-miss with the exact re-run knob (#124)"
+        else
+          fail "--whiteout near-miss message missing (#124)"
+        fi
+      else
+        skip "could not build the near-miss clip (#124)"
       fi
       # 1.12.0 (#102): the numeric knobs reject garbage up front (exit 2), like the other modes.
       bash "$SCRIPT" --video "$tmp/hang.mp4" --stall --stall-min banana >/dev/null 2>&1; _sm=$?
@@ -2837,7 +2897,8 @@ fi
 # --- 12. ffmpeg static fallback wired -------------------------------------------------
 section "ffmpeg static fallback"
 # the static download now lives ONLY in extract-frames.sh (the hook defers it to
-# first use to avoid its 120s timeout). So check the extractor for the installer, and the
+# first use; since 1.15.0 it doesn't install at all, and its hook timeout is 10s). Check the
+# extractor for the installer (now consent-gated), and the
 # hook for its immediate degraded-path message instead.
 EXTRACT="$SCRIPT"   # same file as SCRIPT (top of suite) — one source of truth for the path
 HOOK="plugins/video-bug-analyzer/hooks/ensure-ffmpeg.sh"

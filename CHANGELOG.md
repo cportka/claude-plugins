@@ -5,6 +5,60 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.16.0] - 2026-08-07
+
+Triage of #124, a field report from a WebGPU visualizer session. One real miss, one whole input
+class losing output, and three sharpenings. **video-bug-analyzer → 1.16.0** (other plugins
+unchanged). MINOR.
+
+### Fixed (video-bug-analyzer → 1.16.0, #124)
+- **`--whiteout` reported "No whiteout" on two sustained full-frame washouts.** The cutoff was
+  absolute-only at 220/255, which effectively means "almost pure white": a 1.5 s flash whose *mean*
+  frame luma hit 218 on a scene whose median is 44 was reported as clean. Two changes: the absolute
+  default drops to **200**, and a span is now also a washout when it sits at **≥ `--white-rel`
+  (default 4) × the clip's own median luma**, floored at 140/255. The relative rule is what
+  generalizes — on a dark-scene app (space, astronomy, a dark-mode UI) a genuine blowout never
+  approaches any absolute cutoff. Reports now name the multiple of the median for each span, and a
+  **NEAR-MISS line** states the brightest frame against the effective cutoff plus the exact re-run
+  knob, instead of leaving a correct-but-useless verdict.
+- **A live-recorded container reported `duration: 0.00s` and lost its cadence header.** A browser
+  `MediaRecorder`/`canvas.captureStream` WebM carries no duration and often no `avg_frame_rate` —
+  it's written as the stream arrives. `--probe` printed `0.00s`, and because the cadence classifier
+  bailed on a zero rate, an affected clip silently got *less* diagnostic output than a sibling that
+  happened to carry metadata. Duration now falls back to the **last packet's presentation
+  timestamp**, and the cadence line derives the rate from **packets ÷ duration**, labelling it as
+  measured rather than declared. Every duration-derived read benefits (`--palette --over-time`
+  windows, `--loop-check`'s tail seek).
+
+### Added (video-bug-analyzer → 1.16.0, #124)
+- **`--measure` gains `area_px,mean_luma,peak_luma`** — the "does it *expand* or merely *fade*?"
+  question, which the bounding box alone cannot answer because a slowly-dimming ball reads as
+  "something happening". `area_px` is the matched-pixel count (not the bbox area, which one stray
+  pixel inflates): a growing shell climbs, a fading one holds area while luma drops. Implemented as
+  columns on the existing mode rather than a separate `--growth`, per the reporter's own reading
+  that it is "possibly just `--measure` with an area/luma column"; luma stats subsample on a large
+  ROI so a native-resolution crop doesn't dominate the run.
+- **`--white-rel <n>`** exposes the relative whiteout cutoff.
+
+### Changed (video-bug-analyzer → 1.16.0, #124)
+- **A consented install that fails now says why.** Every stream went to `/dev/null`, so
+  `VBA_ALLOW_INSTALL=1` against a stale package index produced a bare "could not be installed" with
+  nothing to act on. The output is captured and its tail printed, with a pointer that a persistent
+  failure after `update` usually means a restricted mirror or missing sudo rights. The help text's
+  manual command now leads with `apt-get update &&` for the same reason.
+- **`--stutter` no longer ranks the recorder settling.** With no `--start`/`--end` and no detected
+  dead lead-in, the first ~1 s is excluded from the **ranking** (still scanned — a real early freeze
+  appears in the freeze gaps), because the opening second of a screen recording almost always wins
+  "choppiest window" on merit it didn't earn.
+
+## [1.15.1] - 2026-08-07
+
+### Changed (repo-bootstrap → 1.15.1)
+- **SessionStart hook timeouts cut to 10s** in both plugins' `hooks.json`. The video hook's 120s
+  budget existed for the static-build download it used to perform; since 1.15.0 it only detects and
+  reports, so neither hook can stall a session start. (video-bug-analyzer carries the same change
+  under its own 1.16.0 entry above.)
+
 ## [1.15.0] - 2026-08-06
 
 **The consent release.** A marketplace-review reading of these plugins found three things a
@@ -1752,6 +1806,8 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.16.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.16.0
+[1.15.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.15.1
 [1.15.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.15.0
 [1.14.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.14.1
 [1.14.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.14.0

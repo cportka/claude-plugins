@@ -122,7 +122,10 @@
 #                       readouts: counts, speeds, timers). Use with --ocr-roi.
 #   --measure <W:H:X:Y> Geometry/measurement: inside this ROI, measure the bounding box of a
 #                       dark feature (an event-horizon shadow, a dot, a blob) once per sampled
-#                       frame and print a CSV: t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy.
+#                       frame and print a CSV: t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy,
+#                       area_px,mean_luma,peak_luma. The last three answer EXPANDS vs merely
+#                       FADES (1.16.0, #124): area_px is the matched-pixel count, so a growing
+#                       shell climbs while a dimming ball holds area and loses luma.
 #                       diam_px is the major axis; diam_pct_w/h are % of viewport width/height
 #                       (vmin flips by orientation — see --probe); cx,cy are full-frame px.
 #                       For visual-tuning ("how big is this circle, over time"). Robust to a
@@ -199,6 +202,12 @@
 #                       (default 0.2s), each with start/end/duration/peak. For pixel-ratio black,
 #                       --blackdetect is more precise. Honors --crop/--start/--end/--t0. (ffmpeg
 #                       signalstats; python3.) (1.12.0, #102.)
+#   --white-rel <n>     (with --whiteout) ALSO flag a span sitting at >= n x the clip's OWN median
+#                       luma (default 4), floored at 140/255. An absolute-only cutoff means
+#                       "washout" = "almost pure white": a real full-frame flash at mean luma 218
+#                       on a scene whose median is 44 read as "No whiteout" (#124). The relative
+#                       rule also generalizes to dark-scene apps, where a genuine blowout never
+#                       approaches the absolute cutoff. A near-miss prints the exact re-run knob.
 #   --content-revert    NON-MONOTONIC content detector — flags A->B->A flicker: an element present in
 #                       frame N vanishes and REAPPEARS within --revert-window sec (default 1.5), e.g. a
 #                       transcript dropping words then restoring them. Samples at 10 fps by default
@@ -287,7 +296,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # locate plugin.jso
 # ADDED (1.0.3, issues #51/#52/#53): embedded version, used when this script is run standalone
 # (e.g. fetched raw with no repo tree, so the adjacent plugin.json isn't present). A test keeps
 # this in sync with plugin.json, so the feedback link never reports version=unknown.
-VBA_VERSION="1.15.0"
+VBA_VERSION="1.16.0"
 
 VIDEO=""
 START=""
@@ -340,7 +349,8 @@ WHITEOUT=""    # --whiteout flags blown-highlight (+ black-dropout) spans by mea
 CONTENT_REVERT="" # --content-revert flags A->B->A content flicker (words dropped + restored), exits (1.13.0, #108)
 REVERT_WINDOW="1.5" # --revert-window <sec>: how long a vanished element may take to reappear
 WHITE_MIN="0.2"  # --white-min <sec>: minimum whiteout/dropout span --whiteout reports
-WHITE_THRESH="220" # mean luma (0-255) at/above which a frame is a whiteout (--whiteout)
+WHITE_THRESH="200" # mean luma (0-255) at/above which a frame is a whiteout (--whiteout; lowered from 220 in 1.16.0, #124)
+WHITE_REL="4"      # or >= this multiple of the clip OWN median luma — catches dark-scene washouts (1.16.0, #124)
 BLACK_LUMA_THRESH="16" # mean luma (0-255) at/below which a frame is a black dropout (--whiteout)
 CMP_VIDEOS=""  # --compare-videos a,b -> one stacked phase-aligned contact sheet
 INTRO=""       # --intro = load/splash preset (first ~2s, dense contact + labels)
@@ -573,6 +583,7 @@ while [[ $# -gt 0 ]]; do
     --revert-window) REVERT_WINDOW="${2:-}"; shift 2 ;; # max seconds for the vanished content to return
     --white-min) WHITE_MIN="${2:-}"; shift 2 ;;       # min whiteout/dropout span (sec) to report
     --white-thresh) WHITE_THRESH="${2:-}"; shift 2 ;; # mean-luma cutoff for a whiteout (0-255)
+    --white-rel) WHITE_REL="${2:-}"; shift 2 ;;      # ADDED (1.16.0, #124): multiple-of-median cutoff
     --compare-videos) CMP_VIDEOS="${2:-}"; shift 2 ;; # A/B stacked contact sheet
     --intro) INTRO=1; shift ;;                        # first-seconds load preset
     --saturation) SATURATION=1; shift ;;             # colour-saturation timeline
@@ -655,7 +666,7 @@ if [[ -n "$STALL" ]]; then
   done
 fi
 if [[ -n "$WHITEOUT" ]]; then
-  for _nv in "--white-min:$WHITE_MIN" "--white-thresh:$WHITE_THRESH"; do
+  for _nv in "--white-min:$WHITE_MIN" "--white-thresh:$WHITE_THRESH" "--white-rel:$WHITE_REL"; do
     [[ "${_nv#*:}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: ${_nv%%:*} must be a non-negative number (got '${_nv#*:}')." >&2; exit 2; }
   done
 fi
@@ -850,7 +861,8 @@ _ffmpeg_consent_help() {
 This plugin does not install software, escalate privileges, or download binaries on its own.
 Pick whichever you prefer:
   1. Install it yourself (recommended — your package manager verifies signatures):
-       sudo apt-get install -y ffmpeg      |      brew install ffmpeg
+       sudo apt-get update && sudo apt-get install -y ffmpeg    |    brew install ffmpeg
+     (the `update` matters: on a container with a stale index the install 404s on a partial mirror)
      Note both ffmpeg AND ffprobe are needed; the distro package ships both, an npm/static
      ffmpeg-only install does not (--probe/--list-scenes/--pacing/--stutter need ffprobe).
   2. Let this script run that package-manager install for you, just this once:
@@ -886,20 +898,34 @@ ensure_ffmpeg() {
   fi
   if [[ -n "${VBA_ALLOW_INSTALL:-}" ]]; then
     echo "VBA_ALLOW_INSTALL=1 — installing ffmpeg via the package manager (this may use sudo)..." >&2
+    # SHOW THE FAILURE (1.16.0, #124): every stream was sent to /dev/null, so a consented install
+    # that failed (a stale apt index 404s on a partial mirror, a held package, no sudo rights) left
+    # the user with a bare "could not be installed" and nothing to act on. `update` already runs
+    # first; capture the output and print the tail when the install doesn't produce a working ffmpeg.
+    local _ilog; _ilog="$(mktemp)"
     if command -v apt-get >/dev/null 2>&1; then
       if command -v sudo >/dev/null 2>&1; then
-        sudo apt-get update -y >/dev/null 2>&1 || true
-        sudo apt-get install -y ffmpeg >/dev/null 2>&1 || true
+        # shellcheck disable=SC2024  # the redirect is deliberately OURS: the log is a mktemp file
+        # owned by the invoking user, and we only want apt's stdout/stderr in it, not root-owned output.
+        sudo apt-get update -y >>"$_ilog" 2>&1 || true
+        # shellcheck disable=SC2024
+        sudo apt-get install -y ffmpeg >>"$_ilog" 2>&1 || true
       else
-        apt-get update -y >/dev/null 2>&1 || true
-        apt-get install -y ffmpeg >/dev/null 2>&1 || true
+        apt-get update -y >>"$_ilog" 2>&1 || true
+        apt-get install -y ffmpeg >>"$_ilog" 2>&1 || true
       fi
     elif command -v brew >/dev/null 2>&1; then
-      brew install ffmpeg >/dev/null 2>&1 || true
+      brew install ffmpeg >>"$_ilog" 2>&1 || true
     fi
     if command -v ffmpeg >/dev/null 2>&1; then
-      return 0
+      rm -f "$_ilog"; return 0
     fi
+    if [[ -s "$_ilog" ]]; then
+      echo "The package-manager install did not produce a working ffmpeg. Last lines:" >&2
+      tail -n 6 "$_ilog" >&2
+      echo "If that mentions 404s or 'Unable to fetch some archives', the package index is stale — 'sudo apt-get update' then retry (this script already runs update first, so a persistent failure usually means a restricted mirror or missing sudo rights)." >&2
+    fi
+    rm -f "$_ilog"
   fi
   if [[ -z "${VBA_ALLOW_DOWNLOAD:-}" ]]; then
     echo "Package manager unavailable or blocked, and the static-build download is NOT enabled." >&2
@@ -965,6 +991,25 @@ print_smoothness() {
   rfr="$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate   -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
   afr="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
   [[ -n "$rfr" && -n "$afr" ]] || return 0
+  # NO DECLARED RATE (1.16.0, #124): a live-recorded WebM reports avg_frame_rate=0/0, so the awk
+  # classifier below bailed and the ENTIRE header disappeared — the clip silently got less
+  # diagnostic output than a sibling that happened to carry metadata. Derive the effective rate from
+  # packets ÷ duration instead, and say that the nominal figure is the container's, not the app's.
+  local _derived=""
+  if awk -v a="$afr" 'function fr(s,p){if(index(s,"/")){split(s,p,"/");return (p[2]+0)?p[1]/p[2]:0}return s+0} BEGIN{exit !(fr(a)<=0)}'; then
+    local _npk _dur
+    _npk="$(ffprobe -v error -select_streams v:0 -count_packets -show_entries stream=nb_read_packets \
+              -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    _dur="$(_video_duration)"
+    if [[ -n "$_npk" && "$_npk" != "N/A" && -n "$_dur" ]] \
+       && awk -v n="$_npk" -v d="$_dur" 'BEGIN{exit !(n+0>1 && d+0>0)}'; then
+      afr="$(awk -v n="$_npk" -v d="$_dur" 'BEGIN{printf "%.4f", n/d}')"
+      _derived=1
+      # With no nominal rate either, there is nothing to shortfall against — report the measured
+      # rate as both, so the branch is "ok" and the line still carries the useful number.
+      awk -v r="$rfr" 'function fr(s,p){if(index(s,"/")){split(s,p,"/");return (p[2]+0)?p[1]/p[2]:0}return s+0} BEGIN{exit !(fr(r)<=0)}' && rfr="$afr"
+    fi
+  fi
   # Classify from the rates alone first (cheap). Branch is one of ok|near60|near30|vfr|generic|minor.
   local cls
   cls="$(awk -v r="$rfr" -v a="$afr" '
@@ -1000,7 +1045,7 @@ print_smoothness() {
   # "the video is fine" — and a stuck render loop produces exactly the same number as a healthy app
   # (25 fps of the WRONG thing measures like 25 fps of the right thing). Lead with the neutral
   # label, keep the interpretation, and say plainly what the number cannot tell you.
-  awk -v R="$R" -v A="$A" -v branch="$branch" -v mm="${mm:-0}" -v static="$static" 'BEGIN{
+  awk -v R="$R" -v A="$A" -v branch="$branch" -v mm="${mm:-0}" -v static="$static" -v derived="$_derived" 'BEGIN{
     printf "playback cadence: effective %.1f fps vs nominal %.1f fps", A, R;
     if (branch=="near60"||branch=="near30"){ cad=(branch=="near60")?60:30;
       printf "  (~%.0f fps content on a %.0f Hz capture — expected for a %d fps app, no cadence problem; --motion/--pacing to check for real stutter)", A, R, cad; }
@@ -1013,6 +1058,8 @@ print_smoothness() {
         printf "  (~%.0f%% frames dropped/duplicated — likely choppy; --cadence/--motion to localize)", d;
     }
     printf "\n";
+    if (derived != "")
+      printf "  (this container declares no frame rate — a live-recorded WebM/MediaRecorder capture — so the rate above is MEASURED from packets over the real duration)\n";
     printf "  (cadence only — says nothing about whether the CONTENT is correct: a frozen/wrong-state UI can render at a perfectly healthy rate)\n";
   }' >&2
 }
@@ -1150,7 +1197,7 @@ run_measure() {
     printf 'ffmpeg'; printf ' %q' -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "$vf" "<tmp>/f_%05d.pgm"
     printf '\n'
     echo "# then threshold each PGM (limit ${MEASURE_LIMIT}, ${kind}) -> 2-D bounding box -> CSV"
-    echo "# t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy"
+    echo "# t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy,area_px,mean_luma,peak_luma"
     return 0
   fi
   if ! command -v python3 >/dev/null 2>&1; then
@@ -1194,7 +1241,7 @@ def read_pgm(p):
     except Exception:
         return 0,0,b''
 def pct(diam, dim): return ("%.2f" % (diam/dim*100)) if dim else ""
-print("t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy")
+print("t,w_px,h_px,diam_px,diam_pct_w,diam_pct_h,cx,cy,area_px,mean_luma,peak_luma")
 # Threshold via bytes.translate (a C-speed 256-entry LUT: matching luma -> 0x01, else 0x00), then
 # bound the box with per-row find/rfind — identical bbox to the old per-pixel Python loops but ~60x
 # faster on a native-resolution ROI (audit-verified; the loops cost ~9s per 120 full-res frames).
@@ -1213,11 +1260,23 @@ for n,p in enumerate(sorted(glob.glob(os.path.join(d,"f_*.pgm")))):
         if y<miny: miny=y
         maxy=y
     t=base+n/fps
+    # EXPANDS vs FADES (1.16.0, #124): the bbox alone can't tell a growing shell from a dimming
+    # ball — both keep "something happening" on screen. area_px is the MATCHED-pixel count (not the
+    # bbox area, which a single stray pixel inflates), and mean/peak luma carry the brightness
+    # trend: area rising = expanding, area flat while luma falls = fading in place.
+    area=mask.count(1)
+    # Subsample for the luma stats on a large ROI: a native-resolution 4K crop is ~8M bytes per
+    # frame and summing that per frame dominates the run. Slicing is C-speed; the mean is
+    # statistically identical for a trend, and peak is near-exact on any real feature.
+    step = 1 if len(px) <= 200000 else max(1, len(px)//200000)
+    samp = px[::step] if step > 1 else px
+    mean_l = (sum(samp)/len(samp)) if samp else 0.0
+    peak_l = max(samp) if samp else 0
     if maxx<0:                               # nothing matched the threshold this frame
-        print("%.3f,0,0,0,,,0,0" % t); continue
+        print("%.3f,0,0,0,,,0,0,0,%.1f,%d" % (t, mean_l, peak_l)); continue
     bw=maxx-minx+1; bh=maxy-miny+1; diam=bw if bw>bh else bh
-    print("%.3f,%d,%d,%d,%s,%s,%d,%d" % (t, bw, bh, diam, pct(diam,vw), pct(diam,vh),
-                                         mx+minx+bw//2, my+miny+bh//2))
+    print("%.3f,%d,%d,%d,%s,%s,%d,%d,%d,%.1f,%d" % (t, bw, bh, diam, pct(diam,vw), pct(diam,vh),
+                                         mx+minx+bw//2, my+miny+bh//2, area, mean_l, peak_l))
 PY
   local n; n="$(find "$d" -maxdepth 1 -name 'f_*.pgm' | wc -l)"
   rm -rf "$d"
@@ -1338,11 +1397,19 @@ run_probe() {
   w="$(ffprobe -v error -select_streams v:0 -show_entries stream=width  -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1)"
   h="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1)"
   fr="$(ffprobe -v error -select_streams v:0 -show_entries stream=avg_frame_rate -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1)"
-  dur="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1)"
+  # Use the shared reader (1.16.0, #124): it falls back to the last packet PTS, so a live-recorded
+  # WebM (MediaRecorder/canvas.captureStream — no duration in the header) stops printing "0.00s".
+  # This function had its own inline ffprobe, which is why the earlier fix didn't reach --probe.
+  dur="$(_video_duration)"
+  local dur_derived=""
+  if [[ -n "$dur" ]] \
+     && [[ -z "$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | grep -E '^[0-9]' || true)" ]]; then
+    dur_derived=1
+  fi
   [[ -n "$w" && -n "$h" ]] || { echo "Error: could not read dimensions from $VIDEO." >&2; exit 2; }
   # NOTE: gcd() is a top-level awk function (awk forbids defining it inside BEGIN); params use
   # distinct names from the split() array to avoid a name collision on stricter awks (mawk).
-  awk -v w="$w" -v h="$h" -v fr="${fr:-0/0}" -v dur="${dur:-}" '
+  awk -v w="$w" -v h="$h" -v fr="${fr:-0/0}" -v dur="${dur:-}" -v durderived="${dur_derived:-}" '
   function gcd(m,n,   t){ while(n){ t=m%n; m=n; n=t } return m }
   BEGIN{
     g=gcd(w,h); if(g<1)g=1;
@@ -1354,7 +1421,12 @@ run_probe() {
     printf "aspect: %d:%d (%.3f W/H)\n", w/g, h/g, w/h;
     printf "orientation: %s\n", orient;
     if (fps>0) printf "fps: %.2f\n", fps;
-    if (dur!="") printf "duration: %.2fs\n", dur;
+    if (dur!="") {
+      printf "duration: %.2fs%s\n", dur,
+             (durderived!="" ? "  (measured from packet timestamps — this container declares none, typical of a live-recorded WebM)" : "");
+    } else {
+      printf "duration: unknown (the container declares none and no packet timestamps were readable)\n";
+    }
     printf "note: on a %s capture, CSS vmin maps to viewport %s; report measurements as %% of that axis.\n", orient, vmin;
     printf "      (devicePixelRatio is not knowable from pixels alone — divide by dpr for CSS px if the capture is retina.)\n";
   }'
@@ -1400,6 +1472,18 @@ _video_duration() {
   if command -v ffprobe >/dev/null 2>&1; then
     d="$(ffprobe -v error -select_streams v:0 -show_entries stream=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
     [[ -z "$d" || "$d" == "N/A" ]] && d="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$VIDEO" 2>/dev/null | head -n1 || true)"
+    [[ "$d" == "N/A" ]] && d=""
+    # LIVE-RECORDED CONTAINERS (1.16.0, #124): a browser MediaRecorder/canvas.captureStream WebM
+    # carries no duration in the header (it's written as the stream arrives), so both queries above
+    # return empty or 0 and every duration-derived read — --probe, the cadence header, --palette
+    # --over-time's windows, --loop-check's tail seek — silently degraded. The last packet's
+    # presentation timestamp IS the duration; it costs one extra ffprobe and only runs when needed.
+    if [[ -z "$d" ]] || awk -v x="${d:-0}" 'BEGIN{exit !(x+0 <= 0)}'; then
+      local _lastpts
+      _lastpts="$(ffprobe -v error -select_streams v:0 -show_entries packet=pts_time \
+                    -of csv=p=0 "$VIDEO" 2>/dev/null | tr -d '\r' | grep -E '^[0-9.]+$' | tail -n1 || true)"
+      [[ -n "$_lastpts" ]] && awk -v x="$_lastpts" 'BEGIN{exit !(x+0 > 0)}' && d="$_lastpts"
+    fi
   fi
   [[ "$d" == "N/A" ]] && d=""
   echo "$d"
@@ -1817,13 +1901,27 @@ if nominal>0 and eff>0 and eff < 0.85*nominal:
     else:
         e.write("Effective cadence is well below nominal -> dropped/duplicated frames (stutter). Choppiest windows:\n")
     content_rows = rows[lead_dead:] if lead_dead else rows
+    # SETTLING SECOND (1.16.0, #124): with no --start/--end and no detected dead lead-in, the first
+    # ~1s of a screen recording is almost always the recorder settling, and it reliably ranks as the
+    # "choppiest window". Keep SCANNING it (a real early freeze still shows in the freeze gaps) but
+    # drop it from the RANKING — unless that would leave nothing to rank.
+    settle_trimmed = 0.0
+    if not lead_dead and not scoped and len(content_rows) > 1:
+        t0 = content_rows[0][0]
+        trimmed = [r for r in content_rows if r[0] >= t0 + 1.0]
+        if trimmed:
+            settle_trimmed = trimmed[0][0] - t0
+            content_rows = trimmed
     for ws,cnt,fps in sorted(content_rows, key=lambda r:r[2])[:3]:
         e.write("  @%.2fs: %.1f fps (%d unique in %.2fs)\n" % (ws, fps, cnt, window))
     if lead_dead:    # #70: dead lead-in was excluded from the ranking above
         e.write("(Skipped ~%.2fs of static/near-black lead-in - recording pre-roll or a splash before first paint; content starts ~@%.2fs. A frozen splash in that lead-in shows in the freeze gaps below, not here.)\n"
                 % (content_start - rows[0][0], content_start))
-    elif not scoped:  # whole-clip scan with no clear pre-roll: pre-roll can still rank (#64)
-        e.write("(Whole clip scanned - pre-roll like URL-bar typing can rank here; re-run with --start/--end to scope to the suspect window.)\n")
+    else:
+        if settle_trimmed:
+            e.write("(Excluded the first %.2fs from the RANKING - the opening second of a screen recording is usually the recorder settling; it was still scanned, and a real freeze there appears in the freeze gaps below.)\n" % settle_trimmed)
+        if not scoped:  # whole-clip scan with no clear pre-roll: later pre-roll can still rank (#64)
+            e.write("(Whole clip scanned - later pre-roll can still rank; re-run with --start/--end to scope to the suspect window.)\n")
 else:
     e.write("Cadence looks steady (effective near nominal).\n")
 # Freeze-gap detail (issue #56; the pass ran up top so the verdict could lead with the worst gap).
@@ -2104,10 +2202,10 @@ run_whiteout() {
   local base; base="$(disp_base)"
   local mfile; mfile="$(mktemp)"
   ffmpeg -hide_banner -loglevel error ${PRE_ARGS[@]+"${PRE_ARGS[@]}"} -i "$VIDEO" -vf "${vf}${mfile}" -an -f null - >/dev/null 2>&1 || true
-  python3 - "$mfile" "$base" "$FPS" "$WHITE_MIN" "$WHITE_THRESH" "$BLACK_LUMA_THRESH" <<'PY'
+  python3 - "$mfile" "$base" "$FPS" "$WHITE_MIN" "$WHITE_THRESH" "$BLACK_LUMA_THRESH" "$WHITE_REL" <<'PY'
 import sys
 mfile=sys.argv[1]; base=float(sys.argv[2]); fps=float(sys.argv[3]) or 1.0
-wmin=float(sys.argv[4]); wth=float(sys.argv[5]); bth=float(sys.argv[6])
+wmin=float(sys.argv[4]); wth=float(sys.argv[5]); bth=float(sys.argv[6]); relmul=float(sys.argv[7])
 t=None; n=0; rows=[]
 for line in open(mfile):
     line=line.strip()
@@ -2138,14 +2236,40 @@ def find_spans(pred, extremum):
             out.append((s,prev,(prev-s)+dt,ext)); s=None
     if s is not None: out.append((s,prev,(prev-s)+dt,ext))
     return out
-white=[sp for sp in find_spans(lambda y:y>=wth, max) if sp[2]>=wmin]
-black=[sp for sp in find_spans(lambda y:y<=bth, min) if sp[2]>=wmin]
 ys=[y for _,y in rows]; lo=min(ys); hi=max(ys)
+# RELATIVE detection (1.16.0, #124). An absolute-only cutoff made "washout" mean "almost pure
+# white": a real 1.5s full-frame flash at mean luma 218 on a scene whose median is 44 reported
+# "No whiteout". A span sitting at >= REL x the clip's OWN median is a washout whatever the
+# absolute level — which is also what makes this work on a dark-scene app (space/astronomy),
+# where a genuine blowout never approaches 220. The absolute rule is kept (a bright-UI app's
+# flash may not be 4x its already-high median) and the floor stops a merely-visible frame in a
+# near-black clip counting as "4x the median" of ~2.
+absfloor=140.0
+med=sorted(ys)[len(ys)//2]
+rel_th=med*relmul
+def is_white(y): return y>=wth or (y>=rel_th and y>=absfloor)
+white=[sp for sp in find_spans(is_white, max) if sp[2]>=wmin]
+black=[sp for sp in find_spans(lambda y:y<=bth, min) if sp[2]>=wmin]
+# Report the EFFECTIVE trigger, not just the absolute knob: the relative rule can never fire below
+# absfloor, so the real cutoff is min(absolute, max(rel_th, floor)) — saying "200 absolute" while
+# actually flagging at 153 would misdescribe the tool's own verdict.
+rel_eff=max(rel_th, absfloor)
+trigger=min(wth, rel_eff)
+eff=("%.0f/255" % trigger) + ((" (%.1fx the clip median %.0f, floored at %.0f; absolute cutoff %.0f)"
+     % (relmul, med, absfloor, wth)) if rel_eff < wth else " (absolute)")
 if white:
-    e.write("Whiteout(s) (mean luma >= %.0f/255 for >= %.1fs — blown highlights):\n" % (wth, wmin))
-    for s,en,dur,pk in white: e.write("  @%.2fs-@%.2fs: %.0f ms, peak luma %.0f/255\n" % (s,en,dur*1000,pk))
+    e.write("Whiteout(s) (mean luma >= %s, for >= %.1fs — blown highlights):\n" % (eff, wmin))
+    for s,en,dur,pk in white:
+        e.write("  @%.2fs-@%.2fs: %.0f ms, peak luma %.0f/255 (%.1fx the clip median %.0f)\n"
+                % (s,en,dur*1000,pk,(pk/med if med>0 else 0),med))
 else:
-    e.write("No whiteout (mean luma stayed below %.0f/255; brightest frame %.0f).\n" % (wth, hi))
+    e.write("No whiteout (mean luma stayed below %s; brightest frame %.0f, clip median %.0f).\n" % (eff, hi, med))
+    # NEAR-MISS (#124): the brightest frame and the threshold were both already computed; saying
+    # "218 vs 220" out loud as an actionable next step is the difference between a correct-but-
+    # useless verdict and one the reader can act on.
+    if hi >= trigger*0.85:
+        e.write("  NEAR-MISS: brightest frame %.0f vs the %.0f cutoff (%.1fx the median %.0f) — if that brightening IS the bug, re-run with --white-thresh %.0f (or --white-rel %.1f).\n"
+                % (hi, trigger, (hi/med if med>0 else 0), med, max(1.0, hi-10), max(1.5, (hi/med*0.9) if med>0 else relmul)))
 if black:
     e.write("Black dropout(s) (mean luma <= %.0f/255 for >= %.1fs — for pixel-ratio black use --blackdetect):\n" % (bth, wmin))
     for s,en,dur,pk in black: e.write("  @%.2fs-@%.2fs: %.0f ms, darkest luma %.0f/255\n" % (s,en,dur*1000,pk))

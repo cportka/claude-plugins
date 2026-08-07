@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/ensure-ffmpeg.sh",
-            "timeout": 120
+            "timeout": 10
           }
         ]
       }

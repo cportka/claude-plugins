@@ -60,6 +60,7 @@ jobs:
             git fetch -q origin main
             base="origin/main"
           fi
+          git fetch -q --tags origin 2>/dev/null || true
           fail=0
           for dir in plugins/*/; do
             name="$(basename "$dir")"
@@ -69,10 +70,19 @@ jobs:
               old_ver="$(git show "$base:$manifest" 2>/dev/null \
                         | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || echo "")"
               new_ver="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$manifest")"
-              # New plugin (no old_ver) passes; an unchanged version on a changed plugin fails.
+              # New plugin (no old_ver) passes; an unchanged version on a changed plugin fails —
+              # UNLESS that version was never released. Releases here are hand-cut tags (RELEASING.md),
+              # often days after the merge, so a version with no `v<ver>` tag is still UNRELEASED and
+              # more work can legitimately be folded into it. Once it's tagged, it's immutable and a
+              # further change must bump. This keeps the guard's real purpose — an installed copy is
+              # pinned by version, so a released version must never change underneath users.
               if [ -n "$old_ver" ] && [ "$old_ver" = "$new_ver" ]; then
-                echo "::error::$name changed but version is still $new_ver — bump $manifest"
-                fail=1
+                if git rev-parse -q --verify "refs/tags/v$new_ver" >/dev/null 2>&1; then
+                  echo "::error::$name changed but version is still $new_ver, and v$new_ver is already tagged/released — bump $manifest"
+                  fail=1
+                else
+                  echo "::notice::$name changed at version $new_ver — no v$new_ver tag exists, so that release is still unreleased and this is folded into it."
+                fi
               fi
             fi
           done

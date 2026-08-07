@@ -159,9 +159,12 @@ form and are triaged into the items below.
   redundant, and bootstrap flags it at detection — but nothing removes the file. A `--force`-gated
   cleanup (or a prompt) would finish the job; left manual because deleting a tracked file the user
   may still reference is not a safe default.
-- **Optional `--pages` deploy scaffold** (field report): a large share of greenfield repos are static
-  front-ends whose next question is "how does this ship?" An opt-in, collision-aware `--pages` that
-  drops a Pages workflow (+ `.nojekyll`) would round out the "green PR that merges and ships" story.
+- **Optional `--pages` deploy scaffold** (field report, #126 item 5): a large share of greenfield
+  repos are static front-ends whose next question is "how does this ship?" An opt-in,
+  collision-aware `--pages` that drops a Pages workflow (+ `.nojekyll`) would round out the "green
+  PR that merges and ships" story. *Partly addressed in 1.15.1*: the managed block now carries the
+  situational note (scaffold the workflow; the Settings → Pages source flip is a human-only step,
+  handed back like the default-branch flip). The workflow scaffold itself is still manual.
 - **End-of-run summary**: `--portka-standard` writes across several trees; a one-line "wrote N files
   across settings/version-sync/CI" at the end would confirm scope at a glance.
 - **Seed a minimal language manifest instead of bare `VERSION`** (#86): on a greenfield repo of a

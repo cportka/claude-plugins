@@ -1,6 +1,6 @@
 <!-- BEGIN portka-standard (managed by repo-bootstrap — edit between the markers, or re-run to refresh) -->
 # Portka standard workflow
-<!-- portka-standard-version: 1.14.0 -->
+<!-- portka-standard-version: 1.15.1 -->
 
 **The contract.** Describe a feature, a fix, or a next step — that's the whole request. It is
 understood, without being asked, that Claude then runs the loop: **branch fresh from `main` → build
@@ -24,14 +24,16 @@ then just talk about the work.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
    request (opening it is pre-authorized — see the note below; don't stop at "branch pushed" to
    ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
-4. **Green, then merge — with one carve-out.** Wait until every check has **registered and finished**
-   — an empty or still-populating check list is *not* green — then merge the PR. Never merge on red or
-   before CI completes. **Merge routine changes yourself on green.** But when the merge itself triggers
-   an **outward-facing or irreversible production change** — a first prod release, an auth/provider
-   cutover, a coupled multi-service deploy — **don't auto-merge: hand back the green PR** with the
-   specifics and let the owner make the go/no-go call. This mirrors the harness's own "confirm first for
-   hard-to-reverse / outward-facing actions" rule and any repo `HANDOFF.md` that asks to validate on a
-   preview deploy before flipping production.
+4. **Green, then merge.** Wait until every check has **registered and finished** — an empty or
+   still-populating check list is *not* green — then merge the PR yourself. Never merge on red or
+   before CI completes. The one carve-out is **reversibility, not firstness**: don't auto-merge when
+   merging causes something **a revert cannot undo** — a provider or auth cutover, a data migration,
+   publishing to a package registry, a coupled multi-service deploy, or anything that emails, charges,
+   or notifies real users. Hand those back with the specifics and let the owner call it.
+   **A static site deploying for the first time is NOT that** — it is self-contained and revertible, so
+   merge it. Same for a first CI run, a first preview environment, and a first Pages publish. "Outward
+   facing" alone is not the test; if reverting the commit undoes it, merge on green. In particular a
+   greenfield repo's PR #1 is normally just this: merge it, don't hold it for a go/no-go.
 5. **Hand back a short PR link.** Merged if you were able to, otherwise green and ready for them to
    merge — say which. They delete the branch when satisfied, which step 1 picks up next round.
 
@@ -53,6 +55,11 @@ cuts it from the GitHub web UI.
 
 ## Situational notes (read the one that applies)
 
+- *Repo deploys a site (GitHub Pages)?* Scaffolding the deploy workflow is ordinary work — do it. But
+  **Settings → Pages → Source: GitHub Actions is a human-only step** (no API for a typical agent
+  toolset), exactly like the default-branch flip below: set up the workflow, then hand the Settings
+  step back to the owner explicitly. The first Pages publish is revertible, so it does **not** trip
+  step 4's carve-out — merge it on green.
 - *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
   anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
   signal all assume `main` exists and is the repo's **default** branch. Flipping the default is a
@@ -66,7 +73,14 @@ cuts it from the GitHub web UI.
   The prune matters: with "Automatically delete head branches" on, GitHub deletes the merged branch
   server-side but your local `origin/<pinned>` ref lingers — and hosted git-check hooks that diff
   against it will then flag **GitHub's own squash-merge commit** as unverified authorship on every
-  turn (a hard false positive; never rewrite it). Pruned, the next push is a plain
+  turn (a hard false positive; never rewrite it). *Second variant, when the branch is NOT auto-deleted:*
+  after the restart your local pinned branch is by construction one merge commit ahead of
+  `origin/<pinned>`, so a hook measuring `origin/<branch>..HEAD` reports **"1 unpushed commit"** every
+  turn — for work that is already on `origin/main`. Confirm with `git rev-list HEAD --not --remotes
+  --count` (0 = nothing is actually unpushed) and **do not push to clear it**: that puts the merge
+  commit on a branch whose only remaining job is to be deleted as step 5's confirmation signal. The
+  corrected stop-hook this plugin ships gets this right; install it with `bootstrap-repo.sh
+  --heal-stop-hook`. Pruned, the next push is a plain
   `git push -u origin <pinned>` that **recreates** the branch; `--force-with-lease` applies only
   when the remote branch still exists carrying already-merged history. *Branch-pinned caveat:* with
   a single reused branch name, deletion can't happen mid-session, so step 5's confirmation signal
@@ -81,17 +95,28 @@ cuts it from the GitHub web UI.
 Hit a bug or rough edge in a plugin you installed (or in this standard)? **File it as a GitHub issue
 on the marketplace repo the tool came from — `cportka/claude-plugins` — using the "Plugin feedback"
 template.** Do **not** open a branch, commit, or PR on that repo: you don't have write access there
-and it isn't how feedback is collected. One command:
+and it isn't how feedback is collected.
+
+**In a hosted/web session (the usual case — there is no `gh` there):** file it with your GitHub
+tools (an MCP `create_issue` / issue-write tool) or the web UI's **New issue → Plugin feedback**
+form. Title `[feedback] <plugin>: <one-line summary>`, label `feedback`, and open the body with the
+fields the form would have asked for, since a freeform body can't populate its dropdowns:
+
+```
+**Plugin:** <name> · **Version:** <x.y.z> · **Environment:** Claude Code on the web
+
+## What you ran        (exact commands)
+## Expected vs actual  (what you predicted, what happened)
+## Suggested fix       (concrete, even if partial)
+```
+
+**Local CLI, where `gh` exists?** Same thing in one command:
 
 ```
 gh issue create --repo cportka/claude-plugins --label feedback \
   --title "[feedback] <plugin>: <one-line summary>" \
   --body "What you ran, expected vs. actual, environment, and a concrete suggestion."
 ```
-
-No `gh` in a hosted/web session? File the same issue through your GitHub tools (an MCP
-`create_issue` / issue-write tool) or the web UI's **New issue → Plugin feedback** form — same repo,
-same `feedback` label, same fields.
 
 Keep *this* repo's branches and PRs about *your* code; route tool feedback to the marketplace's
 issue tracker, where it gets triaged into a fix and a new version.
@@ -136,8 +161,10 @@ squash-merge commit (committer `noreply@github.com`, reachable from `main`).
 `noreply@anthropic.com`), the declared identity above still wins: never reset authorship to satisfy
 a hook, and never rewrite pushed/merged history — push your work; that empties the hook's range.
 The `repo-bootstrap` plugin ships a corrected hook (scoped to unpushed+unmerged commits, reads this
-repo's configured identity, treats signatures as informational) and refreshes a stock
-`~/.claude/stop-hook-git-check.sh` automatically at session start.
+repo's configured identity, treats signatures as informational). It is **not** installed
+automatically — replacing a file in `~/.claude` is outside the plugin's own directory, so it takes
+your explicit go-ahead: `bootstrap-repo.sh --heal-stop-hook` (a `.stock.bak` backup is kept). The
+SessionStart hook only *reports* that the stock hook is present.
 <!-- END portka-standard -->
 
 # This repo's specifics (outside the managed block, so a bootstrap refresh keeps them)

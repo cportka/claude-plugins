@@ -1703,7 +1703,7 @@ if [[ -f "$BOOTSTRAP" ]]; then
      && grep -q 'restart the pinned branch from' <<<"$_cmflat" \
      && grep -q 'force-with-lease' <<<"$_cmflat" \
      && grep -q 'Branch-pinned caveat' <<<"$_cmflat" \
-     && grep -q 'No .gh. in a hosted/web session' <<<"$_cmflat"; then
+     && grep -q 'there is no .gh. there' <<<"$_cmflat"; then   # 1.15.1: the no-gh path now LEADS (#126)
     pass "portka-standard CLAUDE.md documents greenfield-main / pinned-branch restart / gh fallback (#97)"
   else
     fail "portka-standard CLAUDE.md missing 1.11.0 hosted-session doc seams (#97)"
@@ -1720,14 +1720,36 @@ if [[ -f "$BOOTSTRAP" ]]; then
   # 1.12.0 (#103): step 4 carves out irreversible/outward-facing production merges (hand back the green
   # PR for a go/no-go) and the block notes how the standard applies across a multi-repo session; the
   # SemVer section explains the pre-1.0 cadence (#100).
-  if grep -q 'with one carve-out' <<<"$_cmflat" \
-     && grep -q 'outward-facing or irreversible production change' <<<"$_cmflat" \
-     && grep -q "don't auto-merge: hand back the green PR" <<<"$_cmflat" \
+  # 1.15.1 (#126 item 8, owner-confirmed): the carve-out now tests REVERSIBILITY, not firstness, and
+  # says outright that a first static-site deploy is NOT it — the old "a first prod release" wording
+  # made an agent hold a greenfield PR #1 the owner expected merged, i.e. it inverted the headline
+  # promise on the most common merge in a fresh repo.
+  if grep -q 'reversibility, not firstness' <<<"$_cmflat" \
+     && grep -q 'a revert cannot undo' <<<"$_cmflat" \
+     && grep -q 'static site deploying for the first time is NOT that' <<<"$_cmflat" \
+     && ! grep -q 'a first prod release' <<<"$_cmflat" \
      && grep -q 'Session spanning several repos' <<<"$_cmflat" \
      && grep -q 'Pre-1.0' <<<"$_cmflat"; then
-    pass "portka-standard CLAUDE.md carves out prod-cutover merges + multi-repo + 0.x cadence (#103/#100)"
+    pass "portka-standard CLAUDE.md carve-out keys on reversibility, not firstness (#126)"
   else
-    fail "portka-standard CLAUDE.md missing the 1.12.0 carve-out / multi-repo / cadence guidance (#103/#100)"
+    fail "portka-standard CLAUDE.md carve-out still keyed on firstness (#126)"
+  fi
+  # 1.15.1 (#126 item 9): the post-merge "1 unpushed commit" false positive is deterministic for
+  # anyone following the branch-pinned restart, and the standard's old advice (push to clear it)
+  # would put the merge commit on the branch whose deletion IS the confirmation signal.
+  if grep -q 'do not push to clear it' <<<"$_cmflat" \
+     && grep -q 'git rev-list HEAD --not --remotes' <<<"$_cmflat" \
+     && grep -q 'heal-stop-hook' <<<"$_cmflat"; then
+    pass "portka-standard CLAUDE.md covers the post-merge unpushed-commit false positive (#126)"
+  else
+    fail "portka-standard CLAUDE.md missing the post-merge false-positive guidance (#126)"
+  fi
+  # 1.15.1 (#126 item 6): lead with the tool that exists where this plugin is used (no gh on web).
+  if [[ "$(grep -o 'issue-write tool\|gh issue create' <<<"$_cmflat" | head -1)" == "issue-write tool" ]] \
+     && grep -q 'Pages source flip\|Source: GitHub Actions is a human-only step' <<<"$_cmflat"; then
+    pass "portka-standard CLAUDE.md leads feedback with the web path + covers the Pages hand-back (#126)"
+  else
+    fail "portka-standard CLAUDE.md feedback ordering / Pages note wrong (#126)"
   fi
   # 1.11.0 (#97 con 5): --dry-run must state what the real run would DO, not always "would write". On a
   # repo that already has tests/run-tests.sh, the dry-run reports it would leave it as-is.
@@ -2333,6 +2355,47 @@ if [[ -f "$BOOTSTRAP" ]]; then
     fail "dry-run permission listing missing"
   fi
   rm -rf "$dp" "$dph"
+  # (3g) 1.15.1 (#126): the scaffolded CI must not run twice per PR commit, and must pin Node for a
+  # JS repo instead of inheriting the runner default (`node --test` semantics moved across 18/20/22).
+  ci126="$(mktemp -d)"; ci126h="$(mktemp -d)"
+  printf '{\n  "name": "x",\n  "version": "0.1.0",\n  "engines": { "node": ">=20" }\n}\n' > "$ci126/package.json"
+  printf '# Changelog\n\n## [0.1.0]\n- x\n' > "$ci126/CHANGELOG.md"
+  bash "$BOOTSTRAP" --portka-standard --scope project --ci --dir "$ci126" --home "$ci126h" >/dev/null 2>&1
+  _wf="$ci126/.github/workflows/validate.yml"
+  ci126b="$(mktemp -d)"; ci126bh="$(mktemp -d)"
+  bash "$BOOTSTRAP" --portka-standard --scope project --ci --dir "$ci126b" --home "$ci126bh" >/dev/null 2>&1
+  _wfb="$ci126b/.github/workflows/validate.yml"
+  if [[ -s "$_wf" ]] && grep -q 'branches: \[main\]' "$_wf" \
+     && grep -q 'actions/setup-node' "$_wf" && grep -q 'node-version: "20"' "$_wf" \
+     && [[ -s "$_wfb" ]] && ! grep -q 'setup-node' "$_wfb" \
+     && ! grep -q '__SETUP_NODE__' "$_wf" && ! grep -q '__SETUP_NODE__' "$_wfb" \
+     && python3 -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))' "$_wf" 2>/dev/null \
+     && python3 -c 'import yaml,sys; yaml.safe_load(open(sys.argv[1]))' "$_wfb" 2>/dev/null; then
+    pass "scaffolded CI filters push to main and pins Node only for a JS repo (#126)"
+  else
+    fail "scaffolded CI wrong (js=$(wc -l <"$_wf" 2>/dev/null) non-js=$(wc -l <"$_wfb" 2>/dev/null))"
+  fi
+  rm -rf "$ci126" "$ci126h" "$ci126b" "$ci126bh"
+  # (3h) 1.15.1 (#126): the scripts.test heads-up was a FALSE POSITIVE for `node --test` — the very
+  # script this tool writes — which does discover tests/*.test.mjs. Reassure there; warn only when
+  # the existing command plausibly misses it, and name the `node --test tests/` trap in that case.
+  ts126="$(mktemp -d)"; ts126h="$(mktemp -d)"
+  printf '{\n  "name": "x",\n  "version": "0.1.0",\n  "scripts": { "test": "node --test" }\n}\n' > "$ts126/package.json"
+  printf '# Changelog\n\n## [0.1.0]\n- x\n' > "$ts126/CHANGELOG.md"
+  _tsok="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ts126" --home "$ts126h" 2>&1 || true)"
+  ts126n="$(mktemp -d)"; ts126nh="$(mktemp -d)"
+  printf '{\n  "name": "x",\n  "version": "0.1.0",\n  "scripts": { "test": "mocha spec/" }\n}\n' > "$ts126n/package.json"
+  printf '# Changelog\n\n## [0.1.0]\n- x\n' > "$ts126n/CHANGELOG.md"
+  _tsw="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$ts126n" --home "$ts126nh" 2>&1 || true)"
+  if grep -q "so 'npm test' covers the version sync" <<<"$_tsok" \
+     && ! grep -q 'will NOT run' <<<"$_tsok" \
+     && grep -q 'Check that it covers' <<<"$_tsw" \
+     && grep -q "node --test tests/' does NOT" <<<"$_tsw"; then
+    pass "scripts.test heads-up reassures for 'node --test', warns only when it may miss (#126)"
+  else
+    fail "scripts.test warning still misfires (#126)"
+  fi
+  rm -rf "$ts126" "$ts126h" "$ts126n" "$ts126nh"
   # (4) Greenfield repo WITH a README but no **Version:** line: the third sync point is inserted
   # under the first H1 (#114 con 4) — and the scaffolded suite is green with it.
   r14="$(mktemp -d)"; r14h="$(mktemp -d)"

@@ -43,6 +43,12 @@
 #                              Without the flag, --portka-standard seeds the file from the repo's
 #                              existing git config user.name/email when set (never from a noreply@
 #                              default), and otherwise prints how to declare it.
+#   --heal-stop-hook           Replace a STOCK ~/.claude/stop-hook-git-check.sh with the corrected
+#                              edition this plugin ships (a .stock.bak backup is kept; a customized
+#                              hook is left alone). Standalone — does this one thing and exits.
+#                              Needed because nothing installs it automatically: it lives outside
+#                              the plugin directory, so it takes an explicit go-ahead. Honors
+#                              --dry-run/--print-only and --home. (#126)
 #   --scope <user|project|both>  Where --portka-standard writes the CLAUDE.md + permissions:
 #                              user = ~/.claude (your machine), project = ./.claude (committed; web
 #                              sessions + team), both = default. The version/sync scaffold is always
@@ -126,6 +132,25 @@ try:
 except Exception:
     pass
 PY
+}
+
+# Emit an actions/setup-node step for a JS repo (#126): the scaffolded suite runs `node --test`
+# via tests/run-tests.sh, so leaving the version to the runner default is an unpinned dependency
+# that changes under you (`node --test` semantics moved across 18/20/22). Reads engines.node when
+# the manifest declares one, else pins a current LTS. Prints nothing for a non-JS repo.
+_setup_node_step() {
+  [[ -f "$DIR/package.json" ]] || return 0
+  local _nv
+  _nv="$(python3 -c '
+import json,re,sys
+try: d=json.load(open(sys.argv[1]))
+except Exception: raise SystemExit
+e=(d.get("engines") or {}).get("node") or ""
+m=re.search(r"(\d+)", e)
+print(m.group(1) if m else "")
+' "$DIR/package.json" 2>/dev/null || true)"
+  [[ -n "$_nv" ]] || _nv="22"
+  printf '      - uses: actions/setup-node@v4\n        with:\n          node-version: "%s"\n' "$_nv"
 }
 
 # Detect a repo's version source of truth, echoing "<source>\t<version>" for the first one found
@@ -314,14 +339,16 @@ then just talk about the work.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
    request (opening it is pre-authorized — see the note below; don't stop at "branch pushed" to
    ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
-4. **Green, then merge — with one carve-out.** Wait until every check has **registered and finished**
-   — an empty or still-populating check list is *not* green — then merge the PR. Never merge on red or
-   before CI completes. **Merge routine changes yourself on green.** But when the merge itself triggers
-   an **outward-facing or irreversible production change** — a first prod release, an auth/provider
-   cutover, a coupled multi-service deploy — **don't auto-merge: hand back the green PR** with the
-   specifics and let the owner make the go/no-go call. This mirrors the harness's own "confirm first for
-   hard-to-reverse / outward-facing actions" rule and any repo `HANDOFF.md` that asks to validate on a
-   preview deploy before flipping production.
+4. **Green, then merge.** Wait until every check has **registered and finished** — an empty or
+   still-populating check list is *not* green — then merge the PR yourself. Never merge on red or
+   before CI completes. The one carve-out is **reversibility, not firstness**: don't auto-merge when
+   merging causes something **a revert cannot undo** — a provider or auth cutover, a data migration,
+   publishing to a package registry, a coupled multi-service deploy, or anything that emails, charges,
+   or notifies real users. Hand those back with the specifics and let the owner call it.
+   **A static site deploying for the first time is NOT that** — it is self-contained and revertible, so
+   merge it. Same for a first CI run, a first preview environment, and a first Pages publish. "Outward
+   facing" alone is not the test; if reverting the commit undoes it, merge on green. In particular a
+   greenfield repo's PR #1 is normally just this: merge it, don't hold it for a go/no-go.
 5. **Hand back a short PR link.** Merged if you were able to, otherwise green and ready for them to
    merge — say which. They delete the branch when satisfied, which step 1 picks up next round.
 
@@ -343,6 +370,11 @@ cuts it from the GitHub web UI.
 
 ## Situational notes (read the one that applies)
 
+- *Repo deploys a site (GitHub Pages)?* Scaffolding the deploy workflow is ordinary work — do it. But
+  **Settings → Pages → Source: GitHub Actions is a human-only step** (no API for a typical agent
+  toolset), exactly like the default-branch flip below: set up the workflow, then hand the Settings
+  step back to the owner explicitly. The first Pages publish is revertible, so it does **not** trip
+  step 4's carve-out — merge it on green.
 - *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
   anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
   signal all assume `main` exists and is the repo's **default** branch. Flipping the default is a
@@ -356,7 +388,14 @@ cuts it from the GitHub web UI.
   The prune matters: with "Automatically delete head branches" on, GitHub deletes the merged branch
   server-side but your local `origin/<pinned>` ref lingers — and hosted git-check hooks that diff
   against it will then flag **GitHub's own squash-merge commit** as unverified authorship on every
-  turn (a hard false positive; never rewrite it). Pruned, the next push is a plain
+  turn (a hard false positive; never rewrite it). *Second variant, when the branch is NOT auto-deleted:*
+  after the restart your local pinned branch is by construction one merge commit ahead of
+  `origin/<pinned>`, so a hook measuring `origin/<branch>..HEAD` reports **"1 unpushed commit"** every
+  turn — for work that is already on `origin/main`. Confirm with `git rev-list HEAD --not --remotes
+  --count` (0 = nothing is actually unpushed) and **do not push to clear it**: that puts the merge
+  commit on a branch whose only remaining job is to be deleted as step 5's confirmation signal. The
+  corrected stop-hook this plugin ships gets this right; install it with `bootstrap-repo.sh
+  --heal-stop-hook`. Pruned, the next push is a plain
   `git push -u origin <pinned>` that **recreates** the branch; `--force-with-lease` applies only
   when the remote branch still exists carrying already-merged history. *Branch-pinned caveat:* with
   a single reused branch name, deletion can't happen mid-session, so step 5's confirmation signal
@@ -371,17 +410,28 @@ cuts it from the GitHub web UI.
 Hit a bug or rough edge in a plugin you installed (or in this standard)? **File it as a GitHub issue
 on the marketplace repo the tool came from — `cportka/claude-plugins` — using the "Plugin feedback"
 template.** Do **not** open a branch, commit, or PR on that repo: you don't have write access there
-and it isn't how feedback is collected. One command:
+and it isn't how feedback is collected.
+
+**In a hosted/web session (the usual case — there is no `gh` there):** file it with your GitHub
+tools (an MCP `create_issue` / issue-write tool) or the web UI's **New issue → Plugin feedback**
+form. Title `[feedback] <plugin>: <one-line summary>`, label `feedback`, and open the body with the
+fields the form would have asked for, since a freeform body can't populate its dropdowns:
+
+```
+**Plugin:** <name> · **Version:** <x.y.z> · **Environment:** Claude Code on the web
+
+## What you ran        (exact commands)
+## Expected vs actual  (what you predicted, what happened)
+## Suggested fix       (concrete, even if partial)
+```
+
+**Local CLI, where `gh` exists?** Same thing in one command:
 
 ```
 gh issue create --repo cportka/claude-plugins --label feedback \
   --title "[feedback] <plugin>: <one-line summary>" \
   --body "What you ran, expected vs. actual, environment, and a concrete suggestion."
 ```
-
-No `gh` in a hosted/web session? File the same issue through your GitHub tools (an MCP
-`create_issue` / issue-write tool) or the web UI's **New issue → Plugin feedback** form — same repo,
-same `feedback` label, same fields.
 
 Keep *this* repo's branches and PRs about *your* code; route tool feedback to the marketplace's
 issue tracker, where it gets triaged into a fix and a new version.
@@ -620,7 +670,10 @@ elif [[ -n "$ADD_CI" ]]; then
 name: validate
 
 on:
+  # push is restricted to main so a commit on a branch WITH an open PR doesn't run this workflow
+  # twice (once for push, once for pull_request) — same coverage, half the Actions minutes (#126).
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -628,7 +681,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run tests
+__SETUP_NODE__      - name: Run tests
         run: |
           if [ -f tests/run-tests.sh ]; then
             bash tests/run-tests.sh
@@ -636,6 +689,20 @@ jobs:
             echo "No tests/run-tests.sh found; nothing to validate."
           fi
 YAML
+    # Fill in (or strip) the Node setup step now that the file exists (#126).
+    # shellcheck disable=SC2016  # single quotes are deliberate: this is Python source, not shell.
+    SN="$(_setup_node_step)" python3 -c '
+import os, sys
+p = sys.argv[1]
+# READ first, THEN write: open(p,"w") truncates immediately, so doing it inline would blank the
+# file before the read ever ran (caught in testing — it produced an empty workflow).
+src = open(p).read()
+sn = os.environ.get("SN", "")
+# $(...) strips the trailing newline, which would weld the next step onto node-version.
+if sn and not sn.endswith("\n"):
+    sn += "\n"
+open(p, "w").write(src.replace("__SETUP_NODE__", sn))
+' "$WF"
     echo "Wrote $WF"
   fi
 fi
@@ -1252,7 +1319,22 @@ PY
 )"
         case "$_test_wire" in
           wrote) echo "Set package.json scripts.test = 'node --test' (wires up 'npm test')" ;;
-          keep)  echo "package.json already has a test script — leaving it as-is. Heads up: the scaffolded tests/version-sync.test.mjs will NOT run via 'npm test' now; either add 'node --test' to your test command, or ignore the .mjs if your existing suite already checks version sync (#97 con 6)." >&2 ;;
+          keep)
+            # Don't cry wolf (#126): a bare `node --test` — which is exactly what THIS script writes
+            # when the field is absent — discovers tests/*.test.mjs via its default patterns, as do
+            # vitest/jest with default config. Warning there taught people to ignore the warnings.
+            _ts="$(python3 -c '
+import json,sys
+try: print((json.load(open(sys.argv[1])).get("scripts") or {}).get("test") or "")
+except Exception: pass
+' "$DIR/package.json" 2>/dev/null || true)"
+            if [[ "$_ts" =~ (^|[^-])node[[:space:]]+--test([[:space:]]|$) ]] \
+               || [[ "$_ts" == *vitest* ]] || [[ "$_ts" == *jest* ]]; then
+              echo "package.json already has a test script ('$_ts') — leaving it as-is; it discovers tests/version-sync.test.mjs by default, so 'npm test' covers the version sync."
+            else
+              echo "package.json already has a test script ('$_ts') — leaving it as-is. Check that it covers tests/version-sync.test.mjs (a bare 'node --test' does; note 'node --test tests/' does NOT — it tries to execute the directory). Otherwise the bash runner still enforces the sync (#97 con 6, #126)." >&2
+            fi
+            ;;
         esac
       fi
       ;;
@@ -1349,7 +1431,10 @@ PYT
 name: portka-standard
 
 on:
+  # push is restricted to main so a commit on a branch WITH an open PR doesn't run this workflow
+  # twice (once for push, once for pull_request) — same coverage, half the Actions minutes (#126).
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -1357,7 +1442,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run tests
+__SETUP_NODE__      - name: Run tests
         run: |
           if [ -f tests/run-tests.sh ]; then
             bash tests/run-tests.sh
@@ -1365,6 +1450,20 @@ jobs:
             echo "No tests/run-tests.sh found; nothing to validate."
           fi
 YAML
+    # Fill in (or strip) the Node setup step now that the file exists (#126).
+    # shellcheck disable=SC2016  # single quotes are deliberate: this is Python source, not shell.
+    SN="$(_setup_node_step)" python3 -c '
+import os, sys
+p = sys.argv[1]
+# READ first, THEN write: open(p,"w") truncates immediately, so doing it inline would blank the
+# file before the read ever ran (caught in testing — it produced an empty workflow).
+src = open(p).read()
+sn = os.environ.get("SN", "")
+# $(...) strips the trailing newline, which would weld the next step onto node-version.
+if sn and not sn.endswith("\n"):
+    sn += "\n"
+open(p, "w").write(src.replace("__SETUP_NODE__", sn))
+' "$WF_STD"
     echo "Wrote $WF_STD"
   fi
 fi

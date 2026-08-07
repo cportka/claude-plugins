@@ -53,11 +53,67 @@ unchanged). MINOR.
 
 ## [1.15.1] - 2026-08-07
 
+Triage of #126, a greenfield-JS field report. Folded into this still-unreleased version rather than
+cut as a new one. **repo-bootstrap → 1.15.1.**
+
+### Fixed (repo-bootstrap → 1.15.1, #126)
+- **The step 4 carve-out keys on REVERSIBILITY, not firstness** (#126 item 8 — owner-confirmed, and
+  the most consequential item here). "A first prod release" reads as *every* greenfield PR #1, so an
+  agent correctly following the standard held a green PR the owner expected merged — silently
+  inverting the contract's headline promise on the single most common merge in a fresh repo. The
+  test is now: don't auto-merge only when merging causes something **a revert cannot undo** (auth or
+  provider cutover, data migration, registry publish, coupled multi-service deploy, anything that
+  emails/charges/notifies real users), with the explicit counter-example that **a static site
+  deploying for the first time is not that — merge it**. The old phrase is gone from the block
+  entirely, so it can't be pattern-matched again.
+- **The post-merge "1 unpushed commit" false positive is documented, with the right remedy**
+  (#126 item 9). Following the branch-pinned restart leaves the local branch exactly one merge
+  commit ahead of `origin/<pinned>`, so a hook measuring `origin/<branch>..HEAD` flags work that is
+  already on `origin/main` — deterministically, every turn. The block now says to confirm with
+  `git rev-list HEAD --not --remotes --count` and **not to push to clear it** (that would put the
+  merge commit on the branch whose deletion *is* step 5's confirmation signal), and points at
+  `--heal-stop-hook`, which installs the corrected hook that already handles this.
+- **The `scripts.test` heads-up no longer cries wolf** (#126 item 1). It fired whenever a `test`
+  script existed — including `node --test`, the very script this tool writes — and asserted the
+  scaffolded test "will NOT run", which is false: bare `node --test` discovers `tests/*.test.mjs`.
+  It now inspects the command, reassures for `node --test`/vitest/jest, and warns only when the
+  script plausibly misses it — naming the `node --test tests/` trap (that form fails with
+  MODULE_NOT_FOUND) rather than leaving the reader to find it.
+- **Scaffolded CI no longer runs twice per PR commit** (#126 item 2): `push` is filtered to `main`,
+  as this repo's own workflow has been since 1.10.0 — the template just never caught up. Same
+  coverage, half the Actions minutes, half the checks a human reads.
+- **`--heal-stop-hook` is in `--help`** (#126 item 7b) — the managed block the script writes points
+  users at a flag that `--help` didn't list, so anyone checking first concluded it didn't exist.
+- **SKILL.md no longer describes pre-1.15.0 stop-hook behavior** (#126 item 7a): it claimed the
+  corrected hook was "installed at user scope and auto-refreshed each session", which stopped being
+  true when 1.15.0 made that consent-gated. An agent trusting it never ran `--heal-stop-hook` and
+  never learned it had to — which is precisely how item 9 above reached a user.
+
+### Added (repo-bootstrap → 1.15.1, #126)
+- **Scaffolded CI pins Node for a JS repo** (#126 item 3) via `actions/setup-node`, reading
+  `engines.node` when declared and defaulting to 22 — the suite runs `node --test`, whose semantics
+  moved across 18/20/22, so inheriting the runner default was an unpinned dependency.
+- **A Pages/deploy situational note** in the managed block (#126 item 5): scaffolding the workflow is
+  ordinary work, but **Settings → Pages → Source: GitHub Actions is a human-only step**, handed back
+  explicitly like the default-branch flip it parallels. A full `--pages` scaffold stays on the roadmap.
+
 ### Changed (repo-bootstrap → 1.15.1)
+- **The feedback path leads with the tool that exists where this plugin is used** (#126 item 6).
+  `gh` was the primary instruction and the MCP/web form the fallback — backwards, since
+  repo-bootstrap's reason to exist is web sessions, where `gh` is absent. The web/MCP path now
+  leads and carries a field skeleton (the structured issue form's dropdowns can't be populated by a
+  freeform body); `gh` remains as the local-CLI shortcut.
 - **SessionStart hook timeouts cut to 10s** in both plugins' `hooks.json`. The video hook's 120s
   budget existed for the static-build download it used to perform; since 1.15.0 it only detects and
   reports, so neither hook can stall a session start. (video-bug-analyzer carries the same change
   under its own 1.16.0 entry above.)
+
+### Changed (CI)
+- **`version-bump-guard` distinguishes released from unreleased versions.** Releases here are
+  hand-cut tags, often days after the merge, so a version with no `v<ver>` tag is still mutable and
+  further work can be folded into it; once tagged it is immutable and a change must bump. This keeps
+  the guard's actual purpose — a *released* version must never change underneath an installed copy —
+  while allowing the folding this release does.
 
 ## [1.15.0] - 2026-08-06
 

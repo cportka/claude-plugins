@@ -56,7 +56,9 @@ setup, including in the bootstrapping session itself), a git/`gh`
 **permissions allowlist**, an enforced **SemVer sync** with `tests/run-tests.sh` + CI (native
 `node --test`/`pytest` version-sync tests for JS/Python repos), and the **corrected
 `stop-hook-git-check.sh`** that stops hosted sessions false-flagging GitHub's squash-merge
-commits (installed at user scope and auto-refreshed each session).
+commits — **reported** at session start and installed only on request with `--heal-stop-hook`
+(it lives outside the plugin directory, so nothing writes it unasked; a `.stock.bak` backup is
+kept). Run that flag when a session starts flagging merged commits as unpushed/unverified.
 
 The decisions the agent must make: **which plugins**, **`--scope`** (`user` = `~/.claude`,
 `project` = committed `./.claude` for web sessions + team, `both` = default), and **committing

@@ -7,4 +7,4 @@
 #
 # BUMP THIS whenever you edit STD_CLAUDE_BLOCK in scripts/bootstrap-repo.sh — use the version of
 # the release that carries the edit. Leave it alone for every other change.
-1.15.0
+1.15.1

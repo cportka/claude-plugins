@@ -19,7 +19,7 @@ the write outright, run with **`--print-only`** and create `.claude/settings.jso
 printed output — a human-authored write isn't classifier-gated.
 
 Add **`--portka-standard`** to also install the Portka standard setup — a workflow `CLAUDE.md`
-(branch per change, tests + CI, merge on green), a git/`gh` permissions allowlist, and an enforced
+(branch per change, tests + CI, merge on green), permissions allow/deny rules matched to the loop, and an enforced
 SemVer `VERSION`/`CHANGELOG`/`README` sync with a basic `tests/run-tests.sh` — across `--scope`
 `user`|`project`|`both` (default `both`). Commit the project files so they apply in web sessions.
 

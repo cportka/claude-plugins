@@ -1,6 +1,6 @@
 {
   "name": "app-website-evaluator",
-  "version": "1.13.0",
+  "version": "1.16.1",
   "description": "Audit an app or website into a standardized, coverage-honest scorecard (per-dimension 0-100 + letter grade, weighted overall, --json) from a live --url, a local --dir build, or pre-fetched --html \u2014 SEO, crawlability, AI-readiness, social, security, performance, growth.",
   "author": {
     "name": "Chris Portka"

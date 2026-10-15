@@ -6,8 +6,9 @@
 # expects skills at  plugins/all-skills/skills/<skill-name>/SKILL.md , with a per-component
 # .claude-plugin/plugin.json. This copies the canonical skill (SKILL.md + reference.md + scripts)
 # out of this repo into your fork, plus the source-pointing plugin.json next to it, then prints
-# the branch/commit/PR steps. The skill stays self-contained: extract-frames.sh installs ffmpeg
-# on first use, so it works in the directory without our SessionStart hook.
+# the branch/commit/PR steps. The skill stays self-contained: extract-frames.sh needs ffmpeg on PATH
+# and never installs it unasked (explicit VBA_ALLOW_INSTALL=1 opt-in), so it works in the directory
+# without our SessionStart hook.
 #
 # Usage:
 #   submissions/buildwithclaude/prepare.sh <path-to-your-buildwithclaude-fork>

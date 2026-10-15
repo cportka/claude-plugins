@@ -196,6 +196,11 @@ for event, entries in hooks.items():
     for entry in entries:
         for h in entry.get("hooks", []):
             assert h.get("command"), "hook entry missing 'command'"
+            # 1.16.1: an unquoted ${CLAUDE_PLUGIN_ROOT} word-splits on a path with a space, and
+            # `claude plugin validate --strict` now rejects it.
+            c = h["command"]
+            assert "${CLAUDE_PLUGIN_ROOT}" not in c or '"${CLAUDE_PLUGIN_ROOT}' in c, \
+                f"unquoted ${{CLAUDE_PLUGIN_ROOT}} in: {c}"
 PY
   then
     pass "valid hooks config: $hj"
@@ -222,7 +227,7 @@ for entries in d.get("hooks", {}).values():
         for h in entry.get("hooks", []):
             cmd = h.get("command", "")
             if "${CLAUDE_PLUGIN_ROOT}/" in cmd:
-                print(cmd.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].split()[0])
+                print(cmd.split("${CLAUDE_PLUGIN_ROOT}/", 1)[1].split()[0].strip("\"'"))
 PY
 )
 done
@@ -298,6 +303,32 @@ if [[ -x "$CHOOK" ]]; then
     pass "PORTKA_NO_IDENTITY=1 opts out of the identity write"
   else
     fail "PORTKA_NO_IDENTITY=1 did not suppress the identity write"
+  fi
+  # 1.16.1 (#128): the stop-hook fix must be reachable — the suggested command is printed with the
+  # plugin's absolute path (a bare `bootstrap-repo.sh` isn't on PATH), and that path exists.
+  _hk_cmd="$(grep -oE 'bash \\?"[^"\\]+bootstrap-repo\.sh\\?" --heal-stop-hook' <<<"$_csout" | head -1)"
+  _hk_path="$(sed -E 's/^bash \\?"([^"\\]+)\\?".*/\1/' <<<"$_hk_cmd")"
+  if [[ -n "$_hk_cmd" && "$_hk_path" == /* && -f "$_hk_path" ]] && grep -q 'ASK THE USER ONCE' <<<"$_csout"; then
+    pass "stock stop-hook report prints a copy-pasteable heal command and asks for consent (#128)"
+  else
+    fail "stop-hook heal command not copy-pasteable ('$_hk_cmd')"
+  fi
+  # 1.16.1 (#128): a repo bootstrapped before a CI-scaffold fix never receives it (workflows are
+  # never rewritten) — the hook names the gaps in an old scaffold, and stays quiet on a current one.
+  git init -q "$cs/oldci" 2>/dev/null; mkdir -p "$cs/oldci/.github/workflows"
+  printf 'name: validate\non: [push, pull_request]\njobs:\n  validate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: |\n          if [ -f tests/run-tests.sh ]; then bash tests/run-tests.sh; else echo "No tests/run-tests.sh found; nothing to validate."; fi\n' \
+    > "$cs/oldci/.github/workflows/validate.yml"
+  _oldci="$( cd "$cs/oldci" && HOME="$cs" PORTKA_NO_IDENTITY=1 PORTKA_HOOK_DIRS="$cs/none" bash "$OLDPWD/$CHOOK" 2>&1 )"
+  git init -q "$cs/newci" 2>/dev/null
+  bash "$BOOTSTRAP" --ci --dir "$cs/newci" --home "$cs" >/dev/null 2>&1 || true
+  _newci="$( cd "$cs/newci" && HOME="$cs" PORTKA_NO_IDENTITY=1 PORTKA_HOOK_DIRS="$cs/none" bash "$OLDPWD/$CHOOK" 2>&1 )"
+  if grep -q 'predates the current CI scaffold' <<<"$_oldci" && grep -q 'fails OPEN' <<<"$_oldci" \
+     && grep -q 'checkout@v4' <<<"$_oldci" && grep -q "no top-level 'permissions" <<<"$_oldci" \
+     && [[ -f "$cs/newci/.github/workflows/validate.yml" ]] \
+     && ! grep -q 'predates the current CI scaffold' <<<"$_newci"; then
+    pass "SessionStart hook flags a stale CI scaffold's gaps, quiet on a current one (#128)"
+  else
+    fail "stale-CI notice wrong (old: ${_oldci:0:120} | new: ${_newci:0:120})"
   fi
   rm -rf "$cs"
 fi
@@ -423,6 +454,18 @@ for pj in plugins/*/.claude-plugin/plugin.json; do
     fail "no CHANGELOG '## [$pv]' heading for $pn (every plugin version needs release notes)"
   fi
 done
+# 1.16.1: the buildwithclaude submission kit carries a manifest COPY for the video skill — it sat at
+# 1.0.0 for fifteen releases. Keep its version in step with the real plugin.
+_sub_pj="submissions/buildwithclaude/plugin.json"
+if [[ -f "$_sub_pj" ]]; then
+  _sv="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$_sub_pj")"
+  _vv="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"
+  if [[ "$_sv" == "$_vv" ]]; then
+    pass "buildwithclaude submission manifest matches video-bug-analyzer $_vv"
+  else
+    fail "submissions/buildwithclaude/plugin.json is $_sv, video-bug-analyzer is $_vv — sync it"
+  fi
+fi
 # extract-frames.sh embeds VBA_VERSION as a standalone fallback (issues #51/#52/#53); it must
 # stay in lockstep with the plugin's plugin.json so the feedback link never misreports the version.
 _vba_pj="$(python3 -c 'import json;print(json.load(open("plugins/video-bug-analyzer/.claude-plugin/plugin.json"))["version"])')"
@@ -2346,9 +2389,14 @@ if [[ -f "$BOOTSTRAP" ]]; then
   # permissions half of the preview unreviewable next to the full settings.json it prints).
   dp="$(mktemp -d)"; dph="$(mktemp -d)"
   _dpout="$(bash "$BOOTSTRAP" --portka-standard --scope project --dir "$dp" --home "$dph" --dry-run 2>&1 || true)"
-  if grep -q 'would add 17 permission rule(s)' <<<"$_dpout" \
+  # Counts come from the script's own lists, so growing the allowlist doesn't break this test.
+  _np="$(grep -m1 "^STD_PERMS_JSON=" "$BOOTSTRAP" | python3 -c "import json,sys; print(len(json.loads(sys.stdin.read().split('=',1)[1].strip().strip(chr(39)))))")"
+  _nd="$(grep -m1 "^STD_DENY_JSON=" "$BOOTSTRAP" | python3 -c "import json,sys; print(len(json.loads(sys.stdin.read().split('=',1)[1].strip().strip(chr(39)))))")"
+  if grep -q "would add $_np permission rule(s)" <<<"$_dpout" \
+     && grep -q "would add $_nd deny rule(s)" <<<"$_dpout" \
      && grep -qF '[dry-run]   + Bash(git status:*)' <<<"$_dpout" \
-     && grep -qF '[dry-run]   + Bash(gh issue:*)' <<<"$_dpout" \
+     && grep -qF '[dry-run]   + mcp__github__merge_pull_request' <<<"$_dpout" \
+     && grep -qF '[dry-run]   - Bash(git push --force:*)' <<<"$_dpout" \
      && [[ "$(find "$dp" -type f | wc -l)" -eq 0 ]]; then
     pass "--dry-run lists each permission rule it would add, still writing nothing (#117)"
   else
@@ -2376,6 +2424,60 @@ if [[ -f "$BOOTSTRAP" ]]; then
     fail "scaffolded CI wrong (js=$(wc -l <"$_wf" 2>/dev/null) non-js=$(wc -l <"$_wfb" 2>/dev/null))"
   fi
   rm -rf "$ci126" "$ci126h" "$ci126b" "$ci126bh"
+  # (3i) 1.16.1 (#128): the scaffolded CI fails CLOSED (the standard merges on green, so a PR that
+  # deletes the runner must go red), runs with a read-only token and no persisted credentials, is
+  # manually re-runnable, and uses Node-24 action majors. Behavioral: run the generated test step
+  # in a tree with no runner and require a non-zero exit.
+  c128="$(mktemp -d)"; c128h="$(mktemp -d)"
+  _c128out="$(bash "$BOOTSTRAP" --ci --dir "$c128" --home "$c128h" 2>&1 || true)"
+  _w128="$c128/.github/workflows/validate.yml"
+  _step128="$(python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+on = d.get("on", d.get(True))
+assert "workflow_dispatch" in on, "no workflow_dispatch"
+assert d["permissions"] == {"contents": "read"}, d.get("permissions")
+steps = d["jobs"]["validate"]["steps"]
+co = [s for s in steps if str(s.get("uses", "")).startswith("actions/checkout@")][0]
+assert co["uses"].split("@")[1].split()[0] == "v7", co["uses"]
+assert co["with"]["persist-credentials"] is False
+print([s for s in steps if s.get("name") == "Run tests"][0]["run"])
+' "$_w128" 2>/dev/null || true)"
+  _rc128=0; ( cd "$c128" && bash -c "$_step128" ) >/dev/null 2>&1 || _rc128=$?
+  if [[ -n "$_step128" && "$_rc128" -ne 0 ]] && ! grep -q 'nothing to validate' "$_w128" \
+     && grep -q 'fails closed' <<<"$_c128out"; then
+    pass "scaffolded CI fails closed, read-only token, checkout@v7 w/o persisted creds, dispatchable (#128)"
+  else
+    fail "scaffolded CI not hardened (step='$_step128' rc=$_rc128)"
+  fi
+  rm -rf "$c128" "$c128h"
+  # (3j) 1.16.1 (#128): --portka-standard writes a DENY list for what the standard forbids, merged
+  # append-only like allow (an owner's own deny rule survives a refresh), and no deny rule may catch
+  # the --force-with-lease push the branch-pinned restart needs (`:*` matches at a word boundary).
+  d128="$(mktemp -d)"; d128h="$(mktemp -d)"; mkdir -p "$d128/.claude"
+  printf '{\n  "permissions": { "deny": ["Bash(rm -rf:*)"] }\n}\n' > "$d128/.claude/settings.json"
+  bash "$BOOTSTRAP" --portka-standard --scope project --dir "$d128" --home "$d128h" >/dev/null 2>&1 || true
+  if python3 -c '
+import json, sys
+p = json.load(open(sys.argv[1]))["permissions"]
+deny, allow = p["deny"], p["allow"]
+assert "Bash(rm -rf:*)" in deny                        # owner rule kept
+for r in ("Bash(git push --force:*)", "Bash(git push origin main:*)",
+          "Bash(gh pr merge --admin:*)", "Bash(gh workflow disable:*)", "Bash(gh release create:*)"):
+    assert r in deny, r
+assert "mcp__github__merge_pull_request" in allow and "Bash(bash tests/run-tests.sh)" in allow
+assert not any(a.startswith("Bash(python3") or a.startswith("Bash(gh api") for a in allow)
+cmd = "git push --force-with-lease -u origin claude/x"
+for r in deny:
+    pre = r[len("Bash("):-1]
+    pre = pre[:-2] if pre.endswith(":*") else pre
+    assert not (cmd == pre or cmd.startswith(pre + " ")), r
+' "$d128/.claude/settings.json" 2>/dev/null; then
+    pass "--portka-standard merges a deny list append-only that spares --force-with-lease (#128)"
+  else
+    fail "deny list missing/clobbering or it blocks --force-with-lease"
+  fi
+  rm -rf "$d128" "$d128h"
   # (3h) 1.15.1 (#126): the scripts.test heads-up was a FALSE POSITIVE for `node --test` — the very
   # script this tool writes — which does discover tests/*.test.mjs. Reassure there; warn only when
   # the existing command plausibly misses it, and name the `node --test tests/` trap in that case.
@@ -2831,6 +2933,23 @@ H
     pass "evaluate-site.sh scores source-visible Security in --dir mode (meta CSP + security.txt + no 3p scripts) (#79)"
   else
     fail "source-visible Security sub-score not credited/scored in --dir mode (#79)"
+  fi
+  # 1.16.1 (#128): present in the TREE is not present on the SITE — upload-pages-artifact drops
+  # dot-paths unless include-hidden-files is set, so a Pages workflow without it means
+  # /.well-known/security.txt never ships. Warn then; with the flag, credit it (tree-scoped wording).
+  cp -R "$ev/sec" "$ev/secpg"; mkdir -p "$ev/secpg/.github/workflows"
+  printf 'jobs:\n  build:\n    steps:\n      - uses: actions/upload-pages-artifact@v4\n        with:\n          path: .\n' \
+    > "$ev/secpg/.github/workflows/pages.yml"
+  _pg1="$(bash "$EVAL" --dir "$ev/secpg" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  printf '          include-hidden-files: true\n' >> "$ev/secpg/.github/workflows/pages.yml"
+  _pg2="$(bash "$EVAL" --dir "$ev/secpg" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' || true)"
+  if grep -q "pages.yml uploads with upload-pages-artifact and no 'include-hidden-files: true'" <<<"$_pg1" \
+     && grep -q 'NOT published' <<<"$_pg1" \
+     && grep -q 'security.txt present in this tree' <<<"$_pg2" \
+     && ! grep -q 'NOT published' <<<"$_pg2"; then
+    pass "evaluate-site.sh --dir: a Pages artifact that drops .well-known/ is flagged, not credited (#128)"
+  else
+    fail "--dir security.txt credit ignores the Pages artifact dropping dot-paths (#128)"
   fi
   # Third-party <script> origins are flagged (supply-chain surface), excluding same-origin/relative.
   mkdir -p "$ev/tp"
@@ -3440,6 +3559,17 @@ else
     pass "publish.sh --skip-tests skips the advisory test suite"
   else
     fail "publish.sh --skip-tests did not skip the suite"
+  fi
+  # verify-live.sh (1.16.1): the post-merge "did the sync actually land" check. Its legs need the
+  # network + claude CLI, so the suite pins the offline contract: help names all three legs, and a
+  # bad flag is a usage error (2), never a silent pass.
+  _vl="scripts/verify-live.sh"
+  _vlh="$(bash "$_vl" --help 2>&1 || true)"; _vlrc=0; bash "$_vl" --bogus >/dev/null 2>&1 || _vlrc=$?
+  if grep -q 'RAW' <<<"$_vlh" && grep -q 'INSTALL' <<<"$_vlh" && grep -q 'COMMUNITY' <<<"$_vlh" \
+     && [[ "$_vlrc" -eq 2 ]]; then
+    pass "verify-live.sh documents its three legs and rejects unknown flags (exit 2)"
+  else
+    fail "verify-live.sh help/usage contract broken (rc=$_vlrc)"
   fi
 fi
 

@@ -52,13 +52,22 @@ for the user to delete as confirmation. Concretely (all idempotent, never clobbe
 inventory in `--help`): the managed **workflow `CLAUDE.md`** block (version-stamped; the
 SessionStart hook flags a stale copy), the committed **`.claude/commit-identity`** declaration
 (applied to git config immediately by this run *and* each session after — the end of identity
-setup, including in the bootstrapping session itself), a git/`gh`
-**permissions allowlist**, an enforced **SemVer sync** with `tests/run-tests.sh` + CI (native
+setup, including in the bootstrapping session itself), a **permissions allowlist** for the loop
+it pre-authorizes (git/`gh`, the test runner, the GitHub MCP PR/CI tools, web lookups) plus a
+**deny list** for what it forbids (force-push, push to `main`, tags/releases, admin merge,
+disabling workflows), an enforced **SemVer sync** with `tests/run-tests.sh` + CI (native
 `node --test`/`pytest` version-sync tests for JS/Python repos), and the **corrected
 `stop-hook-git-check.sh`** that stops hosted sessions false-flagging GitHub's squash-merge
 commits — **reported** at session start and installed only on request with `--heal-stop-hook`
 (it lives outside the plugin directory, so nothing writes it unasked; a `.stock.bak` backup is
-kept). Run that flag when a session starts flagging merged commits as unpushed/unverified.
+kept). Run that flag when a session starts flagging merged commits as unpushed/unverified —
+**ask the user once, early**, rather than living with the false flag all session.
+
+**Say this up front:** a committed `.claude/settings.json` only applies when the repo is the
+session's **primary** working directory. Attach two repos to one hosted session and the second
+one's allowlist never loads (it's an additional directory, not a configuration root) — attach just
+this repo, or use Auto mode. The scaffolded CI **fails closed** (no runner = red), runs with a
+read-only token, and the SessionStart hook flags an older scaffold still in a repo.
 
 The decisions the agent must make: **which plugins**, **`--scope`** (`user` = `~/.claude`,
 `project` = committed `./.claude` for web sessions + team, `both` = default), and **committing

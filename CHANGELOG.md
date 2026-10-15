@@ -5,6 +5,88 @@ All notable changes to this repository are documented here. The format is based 
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Every pull request bumps the
 version and adds an entry below.
 
+## [1.16.1] - 2026-10-15
+
+Triage of #128, a field report from a 27-PR static-site build under the Portka standard, plus its two
+follow-up comments. Most of it is the bootstrap scaffold failing *open* or out-permissioned in ways the
+standard's own merge-on-green rule turns into real merges. **repo-bootstrap → 1.16.1**,
+**app-website-evaluator → 1.16.1**, **video-bug-analyzer → 1.16.1** (hook-path quoting only;
+tab-chord-formatter unchanged). PATCH.
+
+### Fixed (repo-bootstrap → 1.16.1, #128)
+- **The scaffolded CI failed open.** `validate.yml` / `portka-standard.yml` echoed "nothing to
+  validate" and went **green** when `tests/run-tests.sh` was missing, so a PR that renamed or deleted
+  the runner merged under merge-on-green. The step is now a plain `run: bash tests/run-tests.sh`, which
+  fails closed. `--ci` without a runner says so up front.
+- **Least privilege in the scaffold.** Added a top-level `permissions: contents: read` and
+  `persist-credentials: false` on checkout (zizmor `excessive-permissions` / `artipacked`). Bumped
+  `actions/checkout` and `actions/setup-node` from v4, which are Node 20 actions, to **v7** (Node 24), and
+  added `workflow_dispatch` so a run lost to a GitHub incident can be re-run.
+- **The settings allowlist disagreed with the contract.** The standard pre-authorizes opening and
+  merging PRs, but only git/`gh` was allowlisted, so every MCP PR/CI step of an already-authorized
+  loop prompted. `--portka-standard` now also allows the test runner, the GitHub MCP PR/CI/issue tools
+  and `WebSearch`/`WebFetch`. Read-only shell isn't listed, because Claude Code already runs that set
+  without a prompt. Interpreters and `gh api` stay out.
+- **No deny list.** `Bash(git push:*)` / `gh pr:*` / `gh workflow:*` covered force-pushes, pushes to
+  `main`, `gh pr merge --admin` and `gh workflow disable`, all of which only prose forbade. Bootstrap
+  now writes **`permissions.deny`** for those plus tag pushes and `gh release create`. It merges
+  append-only like `allow`, so an owner's own rules survive a refresh. Rules use `:*` (word boundary),
+  so the `--force-with-lease` push that the branch-pinned restart needs is still allowed. Bootstrap
+  also prints a one-time hint to add a `main` ruleset, the real boundary.
+- **The stop-hook fix was reported but unreachable.** The SessionStart notice told the agent to run a
+  bare `bootstrap-repo.sh --heal-stop-hook`, which isn't on PATH, so the owner saw the "1 unpushed
+  commit" false positive on about 15 turns. The notice now prints the absolute, copy-pasteable command and
+  tells the agent to **ask the user once, early**. The stale-standard notice prints the full path too.
+- **Old repos never received scaffold fixes.** A workflow bootstrap wrote is never rewritten. The
+  SessionStart hook gains a 4th, read-only job: it names the specific gaps in an older
+  `validate.yml`/`portka-standard.yml` (fail-open fallback, no `permissions:`, Node-20 checkout) so
+  they get fixed by hand in the next PR.
+
+### Changed (repo-bootstrap → 1.16.1, the managed standard block — stamp 1.16.1)
+- Step 3: CI must **fail closed**; keep checks strict (a strict parser, dates compared against *now*,
+  and test what actually ships when it differs from the source).
+- Step 4: holding a push so an in-flight CI run isn't cancelled is fine. Say so once.
+- **Pages note:** `upload-pages-artifact` drops dot-paths, so `.well-known/security.txt` silently never
+  ships. The note now says to stage an allowlisted `_site/`, set `include-hidden-files: true` (v5), use
+  configure-pages v6 / deploy-pages v5, scope `pages`/`id-token: write` to the deploy job, and test the
+  staged tree. It also says to ask the owner to allow third-party hosts in the network policy.
+- Branch-pinned note: when the remote branch survives merges, `--force-with-lease` is the **normal**
+  push. The heal is an ask-once-early item.
+- New situational note: `.claude/settings.json` applies only when the repo is the session's
+  **primary** working directory, because a second attached repo isn't a configuration root. Make
+  settings edits in their own commit. `SKILL.md` says this up front too.
+
+### Fixed (repo-bootstrap + video-bug-analyzer → 1.16.1)
+- **SessionStart hook commands quoted `${CLAUDE_PLUGIN_ROOT}`.** Unquoted, a plugin root containing a
+  space split into several words and the hook failed to run. Current `claude plugin validate --strict`
+  rejects the unquoted form, which is how this surfaced in the pre-merge validate pass. The suite now
+  enforces the quoting. This is video-bug-analyzer's only change in this release.
+
+### Fixed (app-website-evaluator → 1.16.1, #128)
+- **`--dir` credited a `security.txt` that was never deployed.** Being present in the tree doesn't
+  mean it's on the site. When the repo's Pages workflow uses `upload-pages-artifact` without
+  `include-hidden-files: true`, the evaluator now **warns** that `/.well-known/` isn't published.
+  Otherwise its credit says "present in this tree" and points at `--url` to confirm.
+
+### Repo
+- **version-bump-guard missed real releases.** It treated a plugin version as released only if a
+  `v<plugin-version>` tag existed, but tags are *repo* releases. repo-bootstrap 1.15.1 shipped inside
+  **v1.16.0**, with no v1.15.1 tag, so the guard would have let it change underneath users. "Released"
+  now means any `v*` tag's tree carries that plugin at that version.
+- **`scripts/verify-live.sh`** — the post-merge "did the sync actually land" check, now step 6 of
+  RELEASING §1. It checks the raw files GitHub serves, does a clean `claude plugin install` of every
+  plugin in a throwaway HOME (expected version, byte-identical files, scripts parse and `--help`
+  runs), and reports whether the Anthropic community catalog lists us yet. That last check is
+  informational, because the catalog syncs nightly.
+- This repo's own workflows: checkout v7, `persist-credentials: false`, and `contents: read` on
+  `validate.yml`.
+- Fine-tune pass: the buildwithclaude submission manifest sat at 1.0.0. It's synced, and the suite now
+  enforces it. Its README and `prepare.sh` no longer claim the skill installs ffmpeg on first use; it
+  hasn't since 1.15.0. HANDOFF's state stamp, its stale untagged-versions note and the wrong
+  "open PR on anthropics' repo" line are refreshed. A shipped item came out of IMPROVEMENTS, and the
+  deferred #128 items went in: `--pages` spec, `--refresh-ci`, browser-test scaffold, network-host
+  hint, tracker-blocked forms.
+
 ## [1.16.0] - 2026-08-07
 
 Triage of #124, a field report from a WebGPU visualizer session. One real miss, one whole input
@@ -1862,6 +1944,7 @@ Polish only — no behavior changes.
 - `validate` GitHub Actions workflow that runs the test runner with `ffmpeg` and
   `shellcheck` installed.
 
+[1.16.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.16.1
 [1.16.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.16.0
 [1.15.1]: https://github.com/cportka/claude-plugins/releases/tag/v1.15.1
 [1.15.0]: https://github.com/cportka/claude-plugins/releases/tag/v1.15.0

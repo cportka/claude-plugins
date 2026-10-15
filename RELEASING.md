@@ -23,6 +23,12 @@ there's no MCP tool for repo settings / external submissions) — they're for a 
    `claude plugin validate --strict <plugin>` (and `.` for the marketplace) — a manual gate today;
    CI does not run it (hosted runners lack the CLI), so don't treat CI-green as covering it.
 5. Open the PR, let CI (`.github/workflows/validate.yml`) go green, squash-merge to `main`.
+6. **Verify the live sync — every merge that bumps a plugin.** `main` *is* the published
+   marketplace, so the merge is the sync; check it actually landed: `scripts/verify-live.sh`. It
+   confirms the raw files GitHub serves, does a clean `claude plugin install` of every plugin in a
+   throwaway HOME (expected version, byte-identical files, scripts parse and `--help` runs), and
+   reports whether `anthropics/claude-plugins-community` lists us yet (informational — that
+   catalog syncs nightly from Anthropic's review pipeline). Report the result with the PR link.
 
 ### Versioning model (the single source of truth)
 
@@ -83,7 +89,8 @@ Get the plugins listed where Claude Code users browse:
    `anthropics/claude-plugins-community` — it's a read-only mirror that auto-closes PRs. Once
    approved, the catalog pins a commit SHA but re-syncs from `main` nightly, so later releases
    flow out on their own. (All four plugins were submitted 2026-07; check status on the platform.)
-3. After listing, verify a clean install end-to-end:
+3. After listing, verify a clean install end-to-end (`scripts/verify-live.sh` automates this and
+   checks the community catalog's entry too):
    ```
    /plugin marketplace add cportka/claude-plugins
    /plugin install video-bug-analyzer@portka-tools

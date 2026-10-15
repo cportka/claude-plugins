@@ -124,23 +124,29 @@ hard way — see the issue numbers in comments):
 - **`PRIVACY.md` / `SECURITY.md` / `.well-known/security.txt`** — posture: local-only scripts, no
   data collection; vulnerabilities via GitHub private reporting.
 
-## State at handoff (refreshed each release — this stamp: 1.16.0, 2026-08-07)
+## State at handoff (refreshed each release — this stamp: 1.16.1, 2026-10-15)
 
 - Versions: the README header + plugin table and each `plugins/*/.claude-plugin/plugin.json` are
   the live source of truth (per-plugin versions diverge by design). Suite size/green-ness: run
   `bash tests/run-tests.sh`; CI mirrors it.
-- All feedback issues through #124 triaged (#122 partly deferred — see IMPROVEMENTS.md); deferred items live in `IMPROVEMENTS.md` with issue
-  numbers. Tags/GitHub Releases are the human's manual step and may lag main — that's expected
-  (v1.10.0–v1.14.1 are all untagged as of this stamp; the marketplace installs from `main`, so the
-  code is live regardless, and **that** is why the version-bump-guard still requires a bump between
-  merged releases even when the earlier tag was never cut).
+- All feedback issues through #128 triaged (#122 and parts of #128 deferred — see IMPROVEMENTS.md);
+  deferred items live in `IMPROVEMENTS.md` with issue numbers. Tags/GitHub Releases are the human's
+  manual step and may lag main — that's expected (latest tag at this stamp: v1.16.0). The
+  marketplace installs from `main`, so merged code is live before any tag. The version-bump-guard
+  treats a plugin version as released once ANY `v*` tag's tree carries it (tags are repo releases;
+  plugin versions diverge), and only then demands a bump.
 - 1.14.0 made the standard **self-updating**: the managed block carries a
   `portka-standard-version` stamp, `.claude/commit-identity` is committed + auto-applied by the
   SessionStart hook (`plugins/repo-bootstrap/hooks/portka-session-start.sh`), and
   `--portka-standard` enables the repo-bootstrap plugin in the repos it bootstraps. When touching
   the block: the BEGIN/END marker text and the suite-asserted phrases must survive any rewrite.
-- Community-directory submission state: check the open PR on anthropics' marketplace repo
-  (see `docs/DISTRIBUTION.md`); the nightly sync picks up merged work once approved.
+- **After every merge that bumps a plugin, run `scripts/verify-live.sh`** — it checks the raw files
+  GitHub serves, does a clean `claude plugin install` of every plugin in a throwaway HOME (version,
+  byte-identical files, scripts run), and reports whether `anthropics/claude-plugins-community`
+  lists us yet. As of this stamp the community catalog does not list any portka-tools plugin
+  (submitted via the form 2026-07; approval/nightly sync is Anthropic's side). The buildwithclaude
+  kit (`submissions/buildwithclaude/`) carries a manifest copy whose version the suite keeps in
+  step with video-bug-analyzer.
 
 ## The spirit of the thing
 

@@ -165,6 +165,29 @@ form and are triaged into the items below.
   PR that merges and ships" story. *Partly addressed in 1.15.1*: the managed block now carries the
   situational note (scaffold the workflow; the Settings → Pages source flip is a human-only step,
   handed back like the default-branch flip). The workflow scaffold itself is still manual.
+  *#128 adds the spec* (now in the managed block's Pages note): stage an allowlisted `_site/`
+  rather than `path: .`; upload-pages-artifact **v5** with `include-hidden-files: true` (v4 silently
+  drops `.well-known/`); configure-pages v6 / deploy-pages v5; `permissions: {}` at workflow level
+  and `pages: write` + `id-token: write` on the deploy job only; and a suite case that tests the
+  **staged** tree (reference: cportka/circular-textile-alliance-org#24 — `scripts/stage-site.sh` +
+  `tests/cases/staging.sh`). If it ships a `security.txt`, its test must parse `Expires` as RFC 3339
+  and compare to *now* (a year-vs-constant check can never fail).
+- **`--refresh-ci`** (#128 item 3): workflows bootstrap wrote are never rewritten (they may be
+  customized), so old repos keep old scaffolds. 1.16.1's SessionStart hook now *names* the gaps
+  (fail-open fallback, missing `permissions:`, Node-20 checkout); a refresh mode that patches just
+  those keys in place — preserving everything else — would close the loop without `--force`.
+- **Optional browser-test scaffold for sites** (#128): static checks can't see behaviour bugs, and
+  only a **Chromium + Firefox + WebKit** Playwright matrix caught a Safari-only CSP failure (WebKit
+  doesn't match `'self'` inside a sandboxed iframe). Ship the pitfalls with it: WebKit applies media
+  queries a frame after `setViewportSize`; seal mocked runs off the network with a dead proxy
+  (`proxy: {server: 'http://127.0.0.1:9'}` + `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK=1`)
+  so a missed mock can't reach a real service; an opt-in live mode whose test data the provider's
+  own validator *refuses* (`…@localhost`), asserted, because "undeliverable" data (`.invalid`) can
+  still create real records.
+- **Network-allowlist hint from the repo's own hosts** (#128): when a site's CSP or forms name a
+  remote host (e.g. `*.list-manage.com`), tell the owner to add it under the environment's network
+  access — a hosted session can't test the integration until they do. (1.16.1 says this in the
+  standard; detecting the hosts automatically is the open part.)
 - **End-of-run summary**: `--portka-standard` writes across several trees; a one-line "wrote N files
   across settings/version-sync/CI" at the end would confirm scope at a glance.
 - **Seed a minimal language manifest instead of bare `VERSION`** (#86): on a greenfield repo of a
@@ -194,11 +217,6 @@ form and are triaged into the items below.
 - **Python cache patterns in the scaffold's `.gitignore`** (#122): the test scaffold supports Python
   but never adds `__pycache__/` / `*.py[cod]`, so the first `pytest` run dirties the tree. Append
   idempotently when writing the Python scaffold.
-- **A managed-block skeleton matching the feedback issue FORM** (#122): the standard tells agents to
-  file feedback with `gh issue create` (freeform) or MCP `issue_write`, but this repo's
-  `plugin-feedback.yml` is a structured form with required dropdowns — an MCP-filed issue can't
-  populate them. Embed the field skeleton in the managed block so freeform reports still carry
-  Plugin/Version/Environment.
 - **Auto-refresh the stale block, not just flag it** (1.14.0 follow-on): the SessionStart hook now
   *detects* a stale `portka-standard-version` stamp and says how to refresh; a `--refresh-standard`
   one-shot (or hook-driven auto-PR) could fold the refresh in without the agent re-running the full
@@ -267,6 +285,12 @@ consent release stayed focused; these are the top of the queue, roughly in value
   **oversized-inline-data** check (a very large inline `<script>`/`<style>` block or `data:` URI that bloats
   first paint) — would let `--dir` mode earn a non-starred Perf grade on its own. Needs a size heuristic
   that doesn't false-positive on a legitimately self-contained single-file app.
+
+- **Third-party forms vs tracker blocklists** (#128): Firefox private/Strict mode and uBlock block
+  common form hosts (e.g. `list-manage.com`), and no page-side permission can lift that. When a page
+  embeds a third-party form, a growth/security note could recommend the working pattern: fall back to
+  a top-level navigation while the click's transient activation is live
+  (`navigator.userActivation.isActive`) — one press, no pop-up blocker.
 
 ## tab-chord-formatter
 

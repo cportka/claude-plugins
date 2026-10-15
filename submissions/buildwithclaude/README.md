@@ -23,9 +23,11 @@ added later the same way.
    (`cportka/claude-plugins`), MIT license, author Chris Portka.
 
 ## Notes
-- The skill is self-contained: `extract-frames.sh` installs ffmpeg on first use, so it works in
-  the directory without this repo's SessionStart hook.
-- Keep `plugin.json` here in sync with `plugins/video-bug-analyzer/.claude-plugin/plugin.json`'s
-  description/keywords when they change (this copy adds the explicit "canonical source" line).
+- The skill is self-contained: it needs `ffmpeg`/`ffprobe` on PATH and never installs them on its
+  own — `extract-frames.sh` says what's missing and honors the explicit `VBA_ALLOW_INSTALL=1` opt-in
+  — so it works in the directory without this repo's SessionStart hook.
+- Keep `plugin.json` here in sync with `plugins/video-bug-analyzer/.claude-plugin/plugin.json`
+  (description/keywords when they change; the `version` always — the suite enforces it). This copy
+  adds the explicit "canonical source" line.
 - If buildwithclaude's layout has changed since this was written, place the skill folder wherever
   their current CONTRIBUTING.md says skills go — the SKILL.md + scripts are what matter.

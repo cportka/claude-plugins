@@ -2,7 +2,7 @@
 #
 # portka-session-start.sh — SessionStart hook for the repo-bootstrap plugin (since 1.14.0).
 #
-# The standard's session healer: three jobs, each idempotent and best-effort (never fails the
+# The standard's session healer: four jobs, each idempotent and best-effort (never fails the
 # session; each emits at most one context line, and only when it actually did/found something).
 #
 # SIDE EFFECTS, IN FULL (1.15.0 — a plugin should be auditable in one read):
@@ -13,7 +13,7 @@
 #   * Job 2 writes NOTHING by default. It only reports a stock stop-hook; replacing it (a file
 #     outside the plugin directory) requires the explicit PORTKA_HEAL_STOP_HOOK=1 or a
 #     `bootstrap-repo.sh --heal-stop-hook` run you typed yourself.
-#   * Job 3 only reads. No network, no downloads, no package installs, no sudo — ever.
+#   * Jobs 3 and 4 only read. No network, no downloads, no package installs, no sudo — ever.
 #
 #   1. APPLY THE DECLARED COMMIT IDENTITY (#98/#109/user directive). The repo commits its identity
 #      in .claude/commit-identity ("Name <email>"); apply it to the repo's git config when identity
@@ -31,9 +31,16 @@
 #      unrelated fix would nag), or missing entirely (pre-1.14), say so, so the refresh gets folded
 #      into the next PR instead of the repo running an old standard forever. This is why pre-1.13
 #      repos never learned the authorship fixes.
+#   4. FLAG A STALE CI SCAFFOLD (1.16.1, #128). A workflow bootstrap wrote is never rewritten (it may
+#      have been customized), so repos bootstrapped before a scaffold fix kept running the old one —
+#      e.g. the fail-OPEN "nothing to validate" fallback, under a standard that merges on green.
+#      Name the specific gaps so they get fixed by hand in the next PR.
 set -uo pipefail
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Full path, so every suggested command below is copy-pasteable as printed (#128: a bare
+# `bootstrap-repo.sh` isn't on PATH, so the stop-hook fix was reported but never reached).
+BOOTSTRAP="$PLUGIN_ROOT/skills/repo-bootstrap/scripts/bootstrap-repo.sh"
 
 # An env opt-in must be genuinely ON (1.15.0 review): a bare `-n` test read PORTKA_HEAL_STOP_HOOK=0
 # as consent, so turning the feature OFF that way still performed the write.
@@ -120,11 +127,11 @@ if [[ -f "$CANON" ]]; then
     fi
   done
   if [[ -n "$fixed_any" ]]; then
-    echo "repo-bootstrap: PORTKA_HEAL_STOP_HOOK=1 — replaced the stock stop-hook-git-check.sh with the corrected edition at $fixed_any (backup: *.stock.bak). Merged squash commits and the declared commit identity are no longer false-flagged; unpushed-work nudges still fire.${skipped_any:+ NOT touched (outside your \$HOME): $skipped_any — heal those deliberately with bootstrap-repo.sh --heal-stop-hook --home <that home>.}"
+    echo "repo-bootstrap: PORTKA_HEAL_STOP_HOOK=1 — replaced the stock stop-hook-git-check.sh with the corrected edition at $fixed_any (backup: *.stock.bak). Merged squash commits and the declared commit identity are no longer false-flagged; unpushed-work nudges still fire.${skipped_any:+ NOT touched (outside your \$HOME): $skipped_any — heal those deliberately with bash \"$BOOTSTRAP\" --heal-stop-hook --home <that home>.}"
   elif [[ -n "$skipped_any" ]]; then
-    echo "repo-bootstrap: a stock stop-hook-git-check.sh exists at $skipped_any, but that is outside your \$HOME so this hook did not modify it. If it's yours, heal it deliberately: bootstrap-repo.sh --heal-stop-hook --home <that home>."
+    echo "repo-bootstrap: a stock stop-hook-git-check.sh exists at $skipped_any, but that is outside your \$HOME so this hook did not modify it. If it's yours, heal it deliberately: bash \"$BOOTSTRAP\" --heal-stop-hook --home <that home>."
   elif [[ -n "$found_any" ]]; then
-    echo "repo-bootstrap: the stock stop-hook-git-check.sh is installed at $found_any. It flags GitHub's own squash-merge commits as 'unverified authorship' every turn and demands a hardcoded noreply@anthropic.com committer — a false positive this plugin ships a corrected edition for. This plugin will NOT modify it on its own (it lives outside the plugin directory). To apply the fix, run: bootstrap-repo.sh --heal-stop-hook   (or set PORTKA_HEAL_STOP_HOOK=1 for this session). Either way a .stock.bak backup is kept. If you'd rather not touch it, ignore its authorship demands per the standard's Commit identity section — never rewrite merged history to satisfy it."
+    echo "repo-bootstrap: the stock stop-hook-git-check.sh is installed at $found_any. It flags GitHub's own squash-merge commits as 'unverified authorship' every turn and demands a hardcoded noreply@anthropic.com committer — a false positive this plugin ships a corrected edition for. This plugin will NOT modify it on its own (it lives outside the plugin directory). ASK THE USER ONCE, early in this session, whether to apply the fix; on a yes, run: bash \"$BOOTSTRAP\" --heal-stop-hook   (or set PORTKA_HEAL_STOP_HOOK=1 for this session). Either way a .stock.bak backup is kept. If you'd rather not touch it, ignore its authorship demands per the standard's Commit identity section — never rewrite merged history to satisfy it."
   fi
 fi
 
@@ -144,11 +151,32 @@ if [[ -n "$REPO_TOP" && -f "$REPO_TOP/.claude/CLAUDE.md" ]] \
   if [[ -n "$_pver" ]]; then
     _sbase="${_stamp%%-*}"; _pbase="${_pver%%-*}"
     if [[ -z "$_stamp" ]]; then
-      echo "repo-bootstrap: this repo's Portka standard block predates 1.14.0 (no version stamp) — it lacks the current authorship/branch-restart guidance. Fold a refresh into your next PR: bootstrap-repo.sh --portka-standard --scope project, commit the updated .claude/CLAUDE.md."
+      echo "repo-bootstrap: this repo's Portka standard block predates 1.14.0 (no version stamp) — it lacks the current authorship/branch-restart guidance. Fold a refresh into your next PR: bash \"$BOOTSTRAP\" --portka-standard --scope project, commit the updated .claude/CLAUDE.md."
     elif [[ "$_sbase" != "$_pbase" && "$(printf '%s\n%s\n' "$_sbase" "$_pbase" | sort -V | head -1)" == "$_sbase" ]]; then
-      echo "repo-bootstrap: this repo's Portka standard block is from $_stamp; the installed plugin is $_pver — fold a refresh into your next PR: bootstrap-repo.sh --portka-standard --scope project, commit the updated .claude/CLAUDE.md."
+      echo "repo-bootstrap: this repo's Portka standard block is from $_stamp; the installed plugin is $_pver — fold a refresh into your next PR: bash \"$BOOTSTRAP\" --portka-standard --scope project, commit the updated .claude/CLAUDE.md."
     fi
   fi
+fi
+
+# --- 4. stale CI scaffold --------------------------------------------------------------
+# Only workflows bootstrap writes (validate.yml via --ci, portka-standard.yml via --portka-standard),
+# and only when they still look like the scaffold (run tests/run-tests.sh) — a hand-written CI
+# under the same name that doesn't run the suite is someone else's design, not stale scaffold.
+if [[ -n "$REPO_TOP" ]]; then
+  for _wf in "$REPO_TOP/.github/workflows/validate.yml" "$REPO_TOP/.github/workflows/portka-standard.yml"; do
+    [[ -f "$_wf" ]] || continue
+    grep -q 'tests/run-tests.sh' "$_wf" 2>/dev/null || continue
+    _gaps=""
+    grep -qE 'echo .*nothing to validate' "$_wf" 2>/dev/null \
+      && _gaps="${_gaps:+$_gaps; }fails OPEN when tests/run-tests.sh is missing (use plain 'run: bash tests/run-tests.sh')"
+    grep -q '^permissions:' "$_wf" 2>/dev/null \
+      || _gaps="${_gaps:+$_gaps; }no top-level 'permissions: contents: read'"
+    grep -qE 'actions/checkout@v[1-4]([^0-9]|$)' "$_wf" 2>/dev/null \
+      && _gaps="${_gaps:+$_gaps; }actions/checkout@v4 or older (a Node 20 action; use @v7 with persist-credentials: false)"
+    if [[ -n "$_gaps" ]]; then
+      echo "repo-bootstrap: ${_wf#"$REPO_TOP"/} predates the current CI scaffold — $_gaps. Fold the fix into your next PR by hand (regenerating with --force would overwrite any customizations)."
+    fi
+  done
 fi
 
 exit 0

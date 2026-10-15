@@ -1,6 +1,6 @@
 <!-- BEGIN portka-standard (managed by repo-bootstrap — edit between the markers, or re-run to refresh) -->
 # Portka standard workflow
-<!-- portka-standard-version: 1.15.1 -->
+<!-- portka-standard-version: 1.16.1 -->
 
 **The contract.** Describe a feature, a fix, or a next step — that's the whole request. It is
 understood, without being asked, that Claude then runs the loop: **branch fresh from `main` → build
@@ -23,7 +23,11 @@ then just talk about the work.
    on *this* repo, never on it.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
    request (opening it is pre-authorized — see the note below; don't stop at "branch pushed" to
-   ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
+   ask). If the repo has no CI yet, add a basic workflow that runs the test suite — and make it
+   **fail closed** (a missing runner is red, not "nothing to validate"), since green means merge.
+   Keep checks strict: a strict parser over a forgiving one, dates compared against *now* (not a
+   constant year), and test what actually ships (the built/deployed artifact) when it differs from
+   the source tree.
 4. **Green, then merge.** Wait until every check has **registered and finished** — an empty or
    still-populating check list is *not* green — then merge the PR yourself. Never merge on red or
    before CI completes. The one carve-out is **reversibility, not firstness**: don't auto-merge when
@@ -34,6 +38,8 @@ then just talk about the work.
    merge it. Same for a first CI run, a first preview environment, and a first Pages publish. "Outward
    facing" alone is not the test; if reverting the commit undoes it, merge on green. In particular a
    greenfield repo's PR #1 is normally just this: merge it, don't hold it for a go/no-go.
+   Holding a push so it doesn't cancel an in-flight CI run is fine — say so once; a stop-hook
+   flagging those held changes meanwhile is informational.
 5. **Hand back a short PR link.** Merged if you were able to, otherwise green and ready for them to
    merge — say which. They delete the branch when satisfied, which step 1 picks up next round.
 
@@ -59,7 +65,13 @@ cuts it from the GitHub web UI.
   **Settings → Pages → Source: GitHub Actions is a human-only step** (no API for a typical agent
   toolset), exactly like the default-branch flip below: set up the workflow, then hand the Settings
   step back to the owner explicitly. The first Pages publish is revertible, so it does **not** trip
-  step 4's carve-out — merge it on green.
+  step 4's carve-out — merge it on green. **Dot-paths don't ship by default:** `upload-pages-artifact`
+  excludes hidden files, so `.well-known/security.txt` silently never publishes. Stage an allowlisted
+  `_site/` (not `path: .`, which also ships README/tests/caches), set `include-hidden-files: true`
+  (upload-pages-artifact v5; pair with configure-pages v6 / deploy-pages v5), give `pages: write` +
+  `id-token: write` to the deploy job only, and test the staged tree. A site that calls a
+  third-party host (a newsletter form, an API) can't be exercised from a hosted session until the
+  owner allows that domain under the environment's network access — ask for it.
 - *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
   anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
   signal all assume `main` exists and is the repo's **default** branch. Flipping the default is a
@@ -80,11 +92,16 @@ cuts it from the GitHub web UI.
   --count` (0 = nothing is actually unpushed) and **do not push to clear it**: that puts the merge
   commit on a branch whose only remaining job is to be deleted as step 5's confirmation signal. The
   corrected stop-hook this plugin ships gets this right; install it with `bootstrap-repo.sh
-  --heal-stop-hook`. Pruned, the next push is a plain
-  `git push -u origin <pinned>` that **recreates** the branch; `--force-with-lease` applies only
-  when the remote branch still exists carrying already-merged history. *Branch-pinned caveat:* with
+  --heal-stop-hook` (the owner's go-ahead — ask once, early). Pruned, the next push is a plain
+  `git push -u origin <pinned>` that **recreates** the branch. When the remote branch survives
+  merges (auto-delete off), `--force-with-lease` is the **normal** push every round, not an
+  exception — it only replaces already-merged history. *Branch-pinned caveat:* with
   a single reused branch name, deletion can't happen mid-session, so step 5's confirmation signal
   only fires **between** sessions — don't wait on it within one.
+- *Editing `.claude/settings.json`?* It applies only when this repo is the session's **primary**
+  working directory — a second repo attached to the same hosted session is not a configuration
+  root, so its allowlist never loads. Make settings edits in their **own commit** and say so: an
+  auto-mode classifier can view the next command warily right after a permissions change.
 - *Session spanning several repos you own?* These steps are per-repo: give each its own branch and
   PR, keep each repo's tests/`CHANGELOG`/version in its own tree, and **coordinate the merges**
   rather than firing each the instant it's green — a feature split across services should land in

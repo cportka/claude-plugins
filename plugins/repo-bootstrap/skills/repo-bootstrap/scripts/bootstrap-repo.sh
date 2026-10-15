@@ -18,8 +18,9 @@
 #   --marketplace-repo <o/r>   GitHub repo hosting the marketplace.
 #                              Default: cportka/claude-plugins.
 #   --list                     List known plugin names (if marketplace.json is locatable).
-#   --ci                       Also add .github/workflows/validate.yml (runs
-#                              tests/run-tests.sh when present).
+#   --ci                       Also add .github/workflows/validate.yml: runs tests/run-tests.sh and
+#                              fails closed if it's missing; read-only token, no persisted
+#                              credentials, manually re-runnable (workflow_dispatch).
 #   --dir <path>               Target repo root. Default: current directory.
 #   --force                    Overwrite the CI workflow if it already exists.
 #   --dry-run                  Print the resulting settings.json and planned actions; write nothing.
@@ -30,7 +31,10 @@
 #                              reliable way to get a published fix is `claude plugin update <name>`.
 #   --portka-standard          Also install the Portka standard setup: a workflow CLAUDE.md (update
 #                              main first, branch per change, tests+CI then a PR, merge on green), a
-#                              permissions allowlist for the git/gh commands it needs, and — for the
+#                              permissions allowlist for the loop it pre-authorizes (git/gh, the test
+#                              runner, the GitHub MCP PR/CI tools, web lookups) plus a deny list for
+#                              what it forbids (force-push, push to main, tags/releases, admin
+#                              merge, disabling workflows), and — for the
 #                              repo — an enforced SemVer version sync that BINDS to the repo's
 #                              existing version (package.json / pyproject.toml / Cargo.toml / VERSION
 #                              / README **Version:**), seeding a bare VERSION 0.1.0 only on a
@@ -150,7 +154,7 @@ m=re.search(r"(\d+)", e)
 print(m.group(1) if m else "")
 ' "$DIR/package.json" 2>/dev/null || true)"
   [[ -n "$_nv" ]] || _nv="22"
-  printf '      - uses: actions/setup-node@v4\n        with:\n          node-version: "%s"\n' "$_nv"
+  printf '      - uses: actions/setup-node@v7\n        with:\n          node-version: "%s"\n' "$_nv"
 }
 
 # Detect a repo's version source of truth, echoing "<source>\t<version>" for the first one found
@@ -308,7 +312,20 @@ NO_WRITE=""
 
 # Portka standard: the git/gh permissions allowlist + the workflow text, defined once so that both
 # --print-only (manual mode) and the writing path below emit the same content. ADDED (1.1.2).
-STD_PERMS_JSON='["Bash(git status:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git pull:*)","Bash(git fetch:*)","Bash(git branch:*)","Bash(git add:*)","Bash(git commit:*)","Bash(git push:*)","Bash(git merge:*)","Bash(git rebase:*)","Bash(git diff:*)","Bash(git log:*)","Bash(gh pr:*)","Bash(gh run:*)","Bash(gh workflow:*)","Bash(gh issue:*)"]'
+# 1.16.1 (#128): the allowlist now covers the WHOLE loop the standard pre-authorizes — the test
+# runner, the GitHub MCP PR/CI tools a hosted session drives it with, and web lookups — instead of
+# git/gh alone, which left every PR/CI step of an authorized loop prompting. Read-only shell (ls,
+# cat, grep, head, tail, wc, diff, read-only git) is NOT listed: Claude Code already runs that
+# built-in set without a prompt. Deliberately NOT allowed: interpreters (python3/node) and `gh api`
+# (any verb, any endpoint).
+STD_PERMS_JSON='["Bash(git status:*)","Bash(git checkout:*)","Bash(git switch:*)","Bash(git pull:*)","Bash(git fetch:*)","Bash(git branch:*)","Bash(git add:*)","Bash(git commit:*)","Bash(git push:*)","Bash(git merge:*)","Bash(git rebase:*)","Bash(git diff:*)","Bash(git log:*)","Bash(git remote prune:*)","Bash(gh pr:*)","Bash(gh run:*)","Bash(gh workflow:*)","Bash(gh issue:*)","Bash(bash tests/run-tests.sh)","Bash(bash tests/run-tests.sh:*)","mcp__github__pull_request_read","mcp__github__create_pull_request","mcp__github__update_pull_request","mcp__github__merge_pull_request","mcp__github__actions_list","mcp__github__actions_get","mcp__github__actions_run_trigger","mcp__github__get_job_logs","mcp__github__issue_read","mcp__github__issue_write","mcp__github__add_issue_comment","WebSearch","WebFetch"]'
+# ...and a DENY list for exactly what the standard forbids (#128). Deny beats allow, so the broad
+# `git push:*` / `gh pr:*` / `gh workflow:*` above stay safe: a rule's trailing `:*` matches at a
+# word boundary, so `git push --force:*` blocks --force but not the --force-with-lease the
+# branch-pinned restart needs. Prose alone was the only thing between an agent and these. A deny
+# rule matches the command text Claude writes (not `git -C . push …`), so it's a guardrail against
+# the usual form, not a security boundary — a `main` ruleset is the real one (hint printed below).
+STD_DENY_JSON='["Bash(git push --force:*)","Bash(git push -f:*)","Bash(git push origin main:*)","Bash(git push origin HEAD:main:*)","Bash(git push -u origin main:*)","Bash(git push --tags:*)","Bash(git push origin --tags:*)","Bash(gh release create:*)","Bash(gh pr merge --admin:*)","Bash(gh workflow disable:*)"]'
 BEGIN_MARK="<!-- BEGIN portka-standard (managed by repo-bootstrap — edit between the markers, or re-run to refresh) -->"
 END_MARK="<!-- END portka-standard -->"
 STD_CLAUDE_BLOCK=""
@@ -338,7 +355,11 @@ then just talk about the work.
    on *this* repo, never on it.
 3. **Tests + CI, then a PR.** Update the relevant tests, keep CI running them, and open a pull
    request (opening it is pre-authorized — see the note below; don't stop at "branch pushed" to
-   ask). If the repo has no CI yet, add a basic workflow that runs the test suite.
+   ask). If the repo has no CI yet, add a basic workflow that runs the test suite — and make it
+   **fail closed** (a missing runner is red, not "nothing to validate"), since green means merge.
+   Keep checks strict: a strict parser over a forgiving one, dates compared against *now* (not a
+   constant year), and test what actually ships (the built/deployed artifact) when it differs from
+   the source tree.
 4. **Green, then merge.** Wait until every check has **registered and finished** — an empty or
    still-populating check list is *not* green — then merge the PR yourself. Never merge on red or
    before CI completes. The one carve-out is **reversibility, not firstness**: don't auto-merge when
@@ -349,6 +370,8 @@ then just talk about the work.
    merge it. Same for a first CI run, a first preview environment, and a first Pages publish. "Outward
    facing" alone is not the test; if reverting the commit undoes it, merge on green. In particular a
    greenfield repo's PR #1 is normally just this: merge it, don't hold it for a go/no-go.
+   Holding a push so it doesn't cancel an in-flight CI run is fine — say so once; a stop-hook
+   flagging those held changes meanwhile is informational.
 5. **Hand back a short PR link.** Merged if you were able to, otherwise green and ready for them to
    merge — say which. They delete the branch when satisfied, which step 1 picks up next round.
 
@@ -374,7 +397,13 @@ cuts it from the GitHub web UI.
   **Settings → Pages → Source: GitHub Actions is a human-only step** (no API for a typical agent
   toolset), exactly like the default-branch flip below: set up the workflow, then hand the Settings
   step back to the owner explicitly. The first Pages publish is revertible, so it does **not** trip
-  step 4's carve-out — merge it on green.
+  step 4's carve-out — merge it on green. **Dot-paths don't ship by default:** `upload-pages-artifact`
+  excludes hidden files, so `.well-known/security.txt` silently never publishes. Stage an allowlisted
+  `_site/` (not `path: .`, which also ships README/tests/caches), set `include-hidden-files: true`
+  (upload-pages-artifact v5; pair with configure-pages v6 / deploy-pages v5), give `pages: write` +
+  `id-token: write` to the deploy job only, and test the staged tree. A site that calls a
+  third-party host (a newsletter form, an API) can't be exercised from a hosted session until the
+  owner allows that domain under the environment's network access — ask for it.
 - *Greenfield repo?* If `main` doesn't exist yet, establish it from your first green commit **before
   anything else** — the standard, GitHub Pages' environment protection, and the delete-the-branch
   signal all assume `main` exists and is the repo's **default** branch. Flipping the default is a
@@ -395,11 +424,16 @@ cuts it from the GitHub web UI.
   --count` (0 = nothing is actually unpushed) and **do not push to clear it**: that puts the merge
   commit on a branch whose only remaining job is to be deleted as step 5's confirmation signal. The
   corrected stop-hook this plugin ships gets this right; install it with `bootstrap-repo.sh
-  --heal-stop-hook`. Pruned, the next push is a plain
-  `git push -u origin <pinned>` that **recreates** the branch; `--force-with-lease` applies only
-  when the remote branch still exists carrying already-merged history. *Branch-pinned caveat:* with
+  --heal-stop-hook` (the owner's go-ahead — ask once, early). Pruned, the next push is a plain
+  `git push -u origin <pinned>` that **recreates** the branch. When the remote branch survives
+  merges (auto-delete off), `--force-with-lease` is the **normal** push every round, not an
+  exception — it only replaces already-merged history. *Branch-pinned caveat:* with
   a single reused branch name, deletion can't happen mid-session, so step 5's confirmation signal
   only fires **between** sessions — don't wait on it within one.
+- *Editing `.claude/settings.json`?* It applies only when this repo is the session's **primary**
+  working directory — a second repo attached to the same hosted session is not a configuration
+  root, so its allowlist never loads. Make settings edits in their **own commit** and say so: an
+  auto-mode classifier can view the next command warily right after a permissions change.
 - *Session spanning several repos you own?* These steps are per-repo: give each its own branch and
   PR, keep each repo's tests/`CHANGELOG`/version in its own tree, and **coordinate the merges**
   rather than firing each the instant it's green — a feature split across services should land in
@@ -553,6 +587,7 @@ if [[ -n "$PRINT_ONLY" ]]; then
   SETTINGS="$SETTINGS" MARKET_NAME="$MARKET_NAME" MARKET_REPO="$MARKET_REPO" \
   AUTO_UPDATE="$AUTO_UPDATE" PLUGINS_CSV="$(IFS=,; echo "${PLUGINS[*]:-}")" \
   PERMS="$([[ -n "$PORTKA_STANDARD" ]] && printf '%s' "$STD_PERMS_JSON" || printf '[]')" \
+  DENIES="$([[ -n "$PORTKA_STANDARD" ]] && printf '%s' "$STD_DENY_JSON" || printf '[]')" \
   python3 <<'PY'
 import json, os
 settings = os.environ["SETTINGS"]
@@ -561,6 +596,7 @@ repo = os.environ["MARKET_REPO"]
 plugins = [p for p in os.environ.get("PLUGINS_CSV", "").split(",") if p]
 auto = bool(os.environ.get("AUTO_UPDATE"))
 perms = json.loads(os.environ.get("PERMS", "[]"))
+denies = json.loads(os.environ.get("DENIES", "[]"))
 data = {}
 if os.path.exists(settings):
     try:
@@ -579,6 +615,11 @@ if perms:
     for r in perms:
         if r not in allow:
             allow.append(r)
+if denies:
+    deny = data.setdefault("permissions", {}).setdefault("deny", [])
+    for r in denies:
+        if r not in deny:
+            deny.append(r)
 print(json.dumps(data, indent=2))
 PY
   if [[ -n "$PORTKA_STANDARD" ]]; then
@@ -675,19 +716,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Re-run a run lost to a GitHub incident (or one whose checks never registered) by hand.
+  workflow_dispatch:
+
+# Least privilege (#128): the suite only reads the checkout. Without this block the job token gets
+# the repo's default (often write) scope while repo-controlled scripts run.
+permissions:
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-__SETUP_NODE__      - name: Run tests
-        run: |
-          if [ -f tests/run-tests.sh ]; then
-            bash tests/run-tests.sh
-          else
-            echo "No tests/run-tests.sh found; nothing to validate."
-          fi
+      - uses: actions/checkout@v7   # v5+ run on Node 24; v4 is a Node 20 action (#128)
+        with:
+          persist-credentials: false  # don't leave the token in .git/config for repo scripts
+__SETUP_NODE__      # Fail CLOSED (#128): the standard merges on green, so a PR that renames or deletes the runner
+      # must go red — the old skip-when-missing fallback turned that PR green, and green merges.
+      - name: Run tests
+        run: bash tests/run-tests.sh
 YAML
     # Fill in (or strip) the Node setup step now that the file exists (#126).
     # shellcheck disable=SC2016  # single quotes are deliberate: this is Python source, not shell.
@@ -704,6 +751,10 @@ if sn and not sn.endswith("\n"):
 open(p, "w").write(src.replace("__SETUP_NODE__", sn))
 ' "$WF"
     echo "Wrote $WF"
+    # It fails CLOSED now (#128), so say so when there's nothing for it to run yet.
+    if [[ ! -f "$DIR/tests/run-tests.sh" && -z "$PORTKA_STANDARD" ]]; then
+      echo "NOTE: no tests/run-tests.sh yet — validate.yml fails closed (red) until you add one (--portka-standard seeds it)." >&2
+    fi
   fi
 fi
 
@@ -824,10 +875,11 @@ PY
   merge_perms() {
     local path="$1"
     [[ -n "$DRY_RUN" ]] || mkdir -p "$(dirname "$path")"
-    SETTINGS="$path" PERMS="$STD_PERMS_JSON" DRY_RUN="$DRY_RUN" python3 <<'PY'
+    SETTINGS="$path" PERMS="$STD_PERMS_JSON" DENIES="$STD_DENY_JSON" DRY_RUN="$DRY_RUN" python3 <<'PY'
 import json, os
 path = os.environ["SETTINGS"]
 perms = json.loads(os.environ["PERMS"])
+denies = json.loads(os.environ["DENIES"])
 dry = bool(os.environ.get("DRY_RUN"))
 data = {}
 if os.path.exists(path):
@@ -839,6 +891,10 @@ if os.path.exists(path):
 allow = data.setdefault("permissions", {}).setdefault("allow", [])
 added = [r for r in perms if r not in allow]
 allow.extend(added)
+# Merge deny the same append-only way (#128) — a refresh never drops a rule the owner added.
+deny = data["permissions"].setdefault("deny", [])
+denied = [r for r in denies if r not in deny]
+deny.extend(denied)
 if dry:
     # List the rules, don't just count them (1.14.1, #117): the dry-run prints the full
     # settings.json it would write, so a bare count made the permissions half of the preview
@@ -846,11 +902,14 @@ if dry:
     print(f"[dry-run] would add {len(added)} permission rule(s) to {path}")
     for r in added:
         print(f"[dry-run]   + {r}")
+    print(f"[dry-run] would add {len(denied)} deny rule(s) to {path}")
+    for r in denied:
+        print(f"[dry-run]   - {r}")
 else:
     with open(path, "w") as fh:
         json.dump(data, fh, indent=2)
         fh.write("\n")
-    print(f"Updated {path}: +{len(added)} permission rule(s) (allow).")
+    print(f"Updated {path}: +{len(added)} permission rule(s) (allow), +{len(denied)} (deny).")
 PY
   }
 
@@ -927,6 +986,20 @@ PY
   if [[ -n "$WANT_PROJECT" ]]; then
     write_claude_md "$DIR/.claude/CLAUDE.md"
     merge_perms "$DIR/.claude/settings.json"
+    # Two facts the settings file can't fix on its own (#128) — said once, on stderr:
+    # 1) project settings load from the session's PRIMARY working directory only; a second repo
+    #    attached to the same hosted session is an additional directory, not a configuration root,
+    #    so its allowlist never applies (the owner saw a prompt per loop step because of this).
+    # 2) the deny list is a guardrail on the command text, not a boundary; a `main` ruleset is.
+    {
+      echo "NOTE: .claude/settings.json applies only when this repo is the session's primary working directory — attach just this repo to a hosted session (or use Auto mode) or its allowlist won't take effect."
+      echo "HINT: for a hard stop on direct pushes, add a 'main' ruleset (Settings → Rules → Rulesets: require a pull request, 0 approvals, require the CI check). The agent can still merge its own green PR."
+    } >&2
+  fi
+  # SECURITY.md / security.txt pointing at GitHub's private advisory form dead-ends unless private
+  # vulnerability reporting is enabled — it's OFF by default on new repos (#128).
+  if grep -qs 'security/advisories/new' "$DIR/SECURITY.md" "$DIR/.well-known/security.txt" 2>/dev/null; then
+    echo "HINT: your security contact links to …/security/advisories/new — make sure private vulnerability reporting is enabled (Settings → Code security), or that link offers reporters nothing." >&2
   fi
 
   # Repo scaffold: bind the version sync to the repo's existing source of truth (#59) — a project
@@ -1436,19 +1509,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Re-run a run lost to a GitHub incident (or one whose checks never registered) by hand.
+  workflow_dispatch:
+
+# Least privilege (#128): the suite only reads the checkout. Without this block the job token gets
+# the repo's default (often write) scope while repo-controlled scripts run.
+permissions:
+  contents: read
 
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-__SETUP_NODE__      - name: Run tests
-        run: |
-          if [ -f tests/run-tests.sh ]; then
-            bash tests/run-tests.sh
-          else
-            echo "No tests/run-tests.sh found; nothing to validate."
-          fi
+      - uses: actions/checkout@v7   # v5+ run on Node 24; v4 is a Node 20 action (#128)
+        with:
+          persist-credentials: false  # don't leave the token in .git/config for repo scripts
+__SETUP_NODE__      # Fail CLOSED (#128): the standard merges on green, so a PR that renames or deletes the runner
+      # must go red — the old skip-when-missing fallback turned that PR green, and green merges.
+      - name: Run tests
+        run: bash tests/run-tests.sh
 YAML
     # Fill in (or strip) the Node setup step now that the file exists (#126).
     # shellcheck disable=SC2016  # single quotes are deliberate: this is Python source, not shell.

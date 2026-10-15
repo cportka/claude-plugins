@@ -575,7 +575,28 @@ fi
 # security.txt — a machine-readable security contact (RFC 9116). root_has finds it in --dir mode
 # (./.well-known/), probes it live in --url mode, and is "unknown" in --html mode.
 case "$(root_has .well-known/security.txt)" in
-  yes) ok "security.txt present (a contact for security reports)" ;;
+  yes)
+    if [[ "$MODE" == dir ]]; then
+      # Present in THIS TREE is not present on the SITE (#128): actions/upload-pages-artifact
+      # excludes dot-paths unless include-hidden-files is set, so a repo-root .well-known/ can sit
+      # unpublished for months while every source-tree check (this one included) reads green.
+      _pages_wf=""
+      _wf_root="$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || echo "$DIR")"
+      for _f in "$_wf_root"/.github/workflows/*.yml "$_wf_root"/.github/workflows/*.yaml; do
+        [[ -f "$_f" ]] || continue
+        if grep -q 'upload-pages-artifact' "$_f" 2>/dev/null \
+           && ! grep -qE 'include-hidden-files:[[:space:]]*true' "$_f" 2>/dev/null; then
+          _pages_wf="${_f#"$_wf_root"/}"; break
+        fi
+      done
+      if [[ -n "$_pages_wf" ]]; then
+        warn "security.txt is in this tree, but $_pages_wf uploads with upload-pages-artifact and no 'include-hidden-files: true' — dot-paths are excluded, so /.well-known/ is NOT published (verify with --url)"
+      else
+        ok "security.txt present in this tree (a contact for security reports — confirm it's in the deployed artifact with --url)"
+      fi
+    else
+      ok "security.txt present (a contact for security reports)"
+    fi ;;
   no)  info "no /.well-known/security.txt (add a security contact — RFC 9116)" ;;
   *)   info "security.txt: could not determine (need --url or --dir)" ;;
 esac
